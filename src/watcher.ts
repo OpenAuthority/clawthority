@@ -18,8 +18,6 @@ const ruleCache = new Map<string, Rule[]>();
 const KNOWN_RULE_FILES: Record<string, string> = {
   default: './policy/rules/default.js',
   support: './policy/rules/support.js',
-  movolab: './policy/rules/movolab.js',
-  gorillionaire: './policy/rules/gorillionaire.js',
 };
 
 /**

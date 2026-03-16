@@ -1,8 +1,6 @@
 import type { Rule } from '../types.js';
 import defaultRules from './default.js';
 import supportRules from './support.js';
-import movolabRules from './movolab.js';
-import gorillionaireRules from './gorillionaire.js';
 
 /**
  * Merges agent-specific rules with the baseline default rules.
@@ -34,7 +32,7 @@ export function mergeRules(agentSpecificRules: Rule[], baseRules: Rule[]): Rule[
  * do not affect others.
  */
 const allRules: Rule[] = mergeRules(
-  [...supportRules, ...movolabRules, ...gorillionaireRules],
+  [...supportRules],
   defaultRules,
 );
 

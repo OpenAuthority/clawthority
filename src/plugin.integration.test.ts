@@ -58,8 +58,6 @@ import { startRulesWatcher } from './watcher.js';
 import { mergeRules } from './policy/rules/index.js';
 import defaultRules from './policy/rules/default.js';
 import supportRules from './policy/rules/support.js';
-import movolabRules from './policy/rules/movolab.js';
-import gorillionaireRules from './policy/rules/gorillionaire.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -902,6 +900,7 @@ describe('JsonlAuditLogger', () => {
     const policy = {
       id: 'p-1',
       name: 'Test Policy',
+      version: '1',
       rules: [],
       defaultEffect: 'deny' as const,
       createdAt: new Date().toISOString(),
@@ -934,6 +933,7 @@ describe('JsonlAuditLogger', () => {
     const policy = {
       id: 'p-2',
       name: 'Test',
+      version: '1',
       rules: [],
       defaultEffect: 'deny' as const,
       createdAt: new Date().toISOString(),
@@ -972,26 +972,20 @@ describe('mergeRules', () => {
 
   it('agent-specific permit wins over base forbid via Cedar first-permit pass', () => {
     // Normally, tools on channels other than default/trusted are denied.
-    // A movolab-specific rule permits write_file on the movolab channel.
+    // A support-specific rule permits the support channel.
     const engine = new CedarPolicyEngine();
-    engine.addRules(mergeRules(movolabRules, defaultRules));
+    engine.addRules(mergeRules(supportRules, defaultRules));
 
-    const movolabCtx: RuleContext = { agentId: 'movolab-bot', channel: 'movolab' };
-    // The movolab-specific rule permits write_file on the movolab channel
-    expect(engine.evaluate('tool', 'write_file', movolabCtx).effect).toBe('permit');
+    const supportCtx: RuleContext = { agentId: 'support-bot', channel: 'default' };
+    expect(engine.evaluate('channel', 'support', supportCtx).effect).toBe('permit');
   });
 
   it('agent-specific channel rule permits specialised channels', () => {
     const engine = new CedarPolicyEngine();
-    engine.addRules(mergeRules([...supportRules, ...movolabRules, ...gorillionaireRules], defaultRules));
+    engine.addRules(mergeRules([...supportRules], defaultRules));
 
     const supportCtx: RuleContext = { agentId: 'support-bot', channel: 'default' };
-    const movolabCtx: RuleContext = { agentId: 'movolab-agent', channel: 'default' };
-    const gorillionaireCtx: RuleContext = { agentId: 'gorillionaire-1', channel: 'default' };
-
     expect(engine.evaluate('channel', 'support', supportCtx).effect).toBe('permit');
-    expect(engine.evaluate('channel', 'movolab', movolabCtx).effect).toBe('permit');
-    expect(engine.evaluate('channel', 'gorillionaire', gorillionaireCtx).effect).toBe('permit');
   });
 
   it('agent-specific condition gates access to correct agent type only', () => {
@@ -999,7 +993,7 @@ describe('mergeRules', () => {
     engine.addRules(mergeRules(supportRules, defaultRules));
 
     // Only support-prefixed agents can use the support channel
-    const wrongAgentCtx: RuleContext = { agentId: 'movolab-bot', channel: 'default' };
+    const wrongAgentCtx: RuleContext = { agentId: 'random-bot', channel: 'default' };
     expect(engine.evaluate('channel', 'support', wrongAgentCtx).effect).toBe('deny');
   });
 
@@ -1033,10 +1027,10 @@ describe('mergeRules', () => {
 
   it('merged rules reflect correct total count', () => {
     const merged = mergeRules(
-      [...supportRules, ...movolabRules, ...gorillionaireRules],
+      [...supportRules],
       defaultRules,
     );
-    const agentSpecificCount = supportRules.length + movolabRules.length + gorillionaireRules.length;
+    const agentSpecificCount = supportRules.length;
     expect(merged).toHaveLength(agentSpecificCount + defaultRules.length);
   });
 });
