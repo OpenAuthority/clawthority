@@ -36,9 +36,10 @@ export class UserResponseDto {
   id: string;
   tenantId: string;
   email: string;
-  name: string;
+  name: string | undefined;
   role: UserRole;
   status: UserStatus;
+  metadata: Record<string, unknown>;
   createdAt: Date;
   updatedAt: Date;
 }

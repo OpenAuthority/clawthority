@@ -15,7 +15,7 @@ export class TenantsService {
     return this.tenantRepository.find();
   }
 
-  async findOne(id: string): Promise<TenantResponseDto> {
+  async findOne(id: string): Promise<Tenant> {
     const tenant = await this.tenantRepository.findOne({ where: { id } });
     if (!tenant) {
       throw new NotFoundException(`Tenant ${id} not found`);

@@ -50,7 +50,7 @@ export class PoliciesService {
     return { data, pagination: { page, limit, total } };
   }
 
-  async findOne(tenantId: string, id: string): Promise<PolicyResponseDto> {
+  async findOne(tenantId: string, id: string): Promise<Policy> {
     const policy = await this.policyRepository.findOne({
       where: { id, tenantId },
     });
@@ -131,7 +131,7 @@ export class PoliciesService {
     policy.status = nextStatus;
     policy.promotedAt = new Date();
 
-    if (nextStatus === PolicyStatus.ACTIVE) {
+    if (nextStatus === PolicyStatus.ACTIVE && userId) {
       policy.reviewedById = userId;
     }
 

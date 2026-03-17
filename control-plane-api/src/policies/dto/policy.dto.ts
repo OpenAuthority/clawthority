@@ -49,11 +49,11 @@ export class PolicyResponseDto {
   spec: Record<string, unknown>;
   version: number;
   status: PolicyStatus;
-  createdById: string;
-  reviewedById: string;
+  createdById: string | undefined;
+  reviewedById: string | undefined;
   createdAt: Date;
   updatedAt: Date;
-  promotedAt: Date | null;
+  promotedAt: Date | undefined;
 }
 
 export class PolicyVersionResponseDto {

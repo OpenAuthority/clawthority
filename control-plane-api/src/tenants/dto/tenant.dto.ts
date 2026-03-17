@@ -31,4 +31,6 @@ export class TenantResponseDto {
   settings: Record<string, unknown>;
   createdAt: Date;
   updatedAt: Date;
+  agents?: unknown[];
+  skills?: unknown[];
 }

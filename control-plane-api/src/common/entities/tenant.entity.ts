@@ -8,6 +8,8 @@ import {
 } from 'typeorm';
 import { User } from './user.entity';
 import { Policy } from './policy.entity';
+import { Agent } from '../../registry/entities/agent.entity';
+import { Skill } from '../../registry/entities/skill.entity';
 
 @Entity('tenants')
 export class Tenant {
@@ -34,4 +36,10 @@ export class Tenant {
 
   @OneToMany(() => Policy, (policy) => policy.tenant)
   policies: Policy[];
+
+  @OneToMany(() => Agent, (agent) => agent.tenant)
+  agents: Agent[];
+
+  @OneToMany(() => Skill, (skill) => skill.tenant)
+  skills: Skill[];
 }

@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { TenantsModule } from './tenants/tenants.module';
 import { UsersModule } from './users/users.module';
 import { PoliciesModule } from './policies/policies.module';
+import { RegistryModule } from './registry/registry.module';
 import { KafkaModule } from './common/kafka/kafka.module';
 
 @Module({
@@ -22,6 +23,7 @@ import { KafkaModule } from './common/kafka/kafka.module';
     TenantsModule,
     UsersModule,
     PoliciesModule,
+    RegistryModule,
     KafkaModule,
   ],
 })
