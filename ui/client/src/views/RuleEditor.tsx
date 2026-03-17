@@ -204,11 +204,12 @@ export function RuleEditor({ ruleId, initialRule, onSave, onCancel }: RuleEditor
     }
 
     if (form.conditionBody.trim()) {
-      try {
-        // Syntax-check only — do not execute.
-        new Function("context", form.conditionBody);
-      } catch (err) {
-        next.conditionBody = `Invalid JavaScript: ${(err as Error).message}`;
+      // Basic client-side syntax heuristics — full validation happens server-side.
+      const body = form.conditionBody.trim();
+      const openBraces = (body.match(/{/g) || []).length;
+      const closeBraces = (body.match(/}/g) || []).length;
+      if (openBraces !== closeBraces) {
+        next.conditionBody = "Mismatched braces in condition body.";
       }
     }
 
