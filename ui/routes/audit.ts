@@ -98,39 +98,6 @@ async function readFileEntries(filters: Filters): Promise<AuditEntry[]> {
 }
 
 // ---------------------------------------------------------------------------
-// Dev mock generator — only fires when SSE clients are connected
-// ---------------------------------------------------------------------------
-
-const MOCK_EFFECTS = ["permit", "forbid"] as const;
-const MOCK_RESOURCES = ["tool", "command", "channel", "prompt"] as const;
-const MOCK_ACTIONS = ["invoke", "read", "write", "execute", "list"];
-const MOCK_AGENTS = ["agent-alpha", "agent-beta", "agent-gamma"];
-
-setInterval(() => {
-  if (auditClients.size === 0) return;
-
-  const entry: AuditEntry = {
-    timestamp: new Date().toISOString(),
-    policyId: `policy-${Math.ceil(Math.random() * 5)}`,
-    policyName: `Policy ${Math.ceil(Math.random() * 5)}`,
-    agentId: MOCK_AGENTS[Math.floor(Math.random() * MOCK_AGENTS.length)],
-    resourceType:
-      MOCK_RESOURCES[Math.floor(Math.random() * MOCK_RESOURCES.length)],
-    action: MOCK_ACTIONS[Math.floor(Math.random() * MOCK_ACTIONS.length)],
-    effect: MOCK_EFFECTS[Math.floor(Math.random() * MOCK_EFFECTS.length)],
-    matchedRuleId:
-      Math.random() > 0.3
-        ? `rule-${Math.ceil(Math.random() * 10)}`
-        : undefined,
-    reason: Math.random() > 0.5 ? "Matched policy rule" : undefined,
-  };
-
-  auditLog.push(entry);
-  if (auditLog.length > MAX_IN_MEMORY) auditLog.shift();
-  broadcastAuditEntry(entry);
-}, 3000);
-
-// ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
 

@@ -45,10 +45,8 @@ const RESOURCE_LABELS: Record<Resource, string> = {
   prompt: "Prompt",
 };
 
-// Derive agents from rules that have agent-specific conditions,
-// or fall back to mock agents used in the system.
-const FALLBACK_AGENTS = ["agent-001", "agent-002", "agent-003", "agent-dev"];
-
+// Derive agents from rules that have agent-specific conditions.
+// Returns an empty array when no agent-specific rules exist.
 function extractAgentsFromRules(rules: Rule[]): string[] {
   const found = new Set<string>();
   for (const rule of rules) {
@@ -60,7 +58,6 @@ function extractAgentsFromRules(rules: Rule[]): string[] {
       }
     }
   }
-  if (found.size === 0) return FALLBACK_AGENTS;
   return Array.from(found).sort();
 }
 
