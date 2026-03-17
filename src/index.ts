@@ -335,8 +335,13 @@ const plugin: OpenclawPlugin = {
     }
 
     ctx.registerHook("before_tool_call", beforeToolCallHandler, { name: "openauthority:before_tool_call" });
-    ctx.registerHook("before_prompt_build", beforePromptBuildHandler, { name: "openauthority:before_prompt_build" });
-    ctx.registerHook("before_model_resolve", beforeModelResolveHandler, { name: "openauthority:before_model_resolve" });
+
+    // ── DIAGNOSTIC: before_prompt_build and before_model_resolve temporarily
+    // disabled to isolate rate-limit cause. If rate limit disappears with only
+    // before_tool_call registered, these hooks are triggering extra API calls
+    // inside openclaw's hook runner.
+    // ctx.registerHook("before_prompt_build", beforePromptBuildHandler, { name: "openauthority:before_prompt_build" });
+    // ctx.registerHook("before_model_resolve", beforeModelResolveHandler, { name: "openauthority:before_model_resolve" });
 
     rulesWatcher = startRulesWatcher(cedarEngineRef);
 
