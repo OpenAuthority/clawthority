@@ -204,6 +204,10 @@ const cedarEngineRef: { current: CedarPolicyEngine } = {
 };
 cedarEngineRef.current.addRules(defaultRules);
 
+/** Activation guard — prevents duplicate hook registration when openclaw
+ *  loads the plugin from multiple subsystems (gateway, CLI, etc.). */
+let activated = false;
+
 // ─── Hook implementations ─────────────────────────────────────────────────────
 
 /**
@@ -247,7 +251,7 @@ const beforeToolCallHandler: BeforeToolCallHandler = ({ toolName, params }, ctx)
  * 2. Evaluates prompt rules and can prepend policy context.
  */
 const beforePromptBuildHandler: BeforePromptBuildHandler = ({ prompt, messages }, ctx) => {
-  console.log(`[openauthority] ▶ before_prompt_build ENTER prompt="${prompt}" agentId=${ctx.agentId ?? "unknown"} channelId=${ctx.channelId ?? "unknown"} messageCount=${messages?.length ?? 0}`);
+  console.log(`[openauthority] ▶ before_prompt_build ENTER agentId=${ctx.agentId ?? "unknown"} channelId=${ctx.channelId ?? "unknown"} messageCount=${messages?.length ?? 0} promptLen=${prompt?.length ?? 0}`);
   const ruleContext: RuleContext = {
     agentId: ctx.agentId ?? "unknown",
     channel: ctx.channelId ?? "default",
@@ -294,7 +298,7 @@ const beforePromptBuildHandler: BeforePromptBuildHandler = ({ prompt, messages }
  * model is forbidden by policy.
  */
 const beforeModelResolveHandler: BeforeModelResolveHandler = ({ prompt }, ctx) => {
-  console.log(`[openauthority] ▶ before_model_resolve ENTER prompt="${prompt}" agentId=${ctx.agentId ?? "unknown"} channelId=${ctx.channelId ?? "unknown"}`);
+  console.log(`[openauthority] ▶ before_model_resolve ENTER agentId=${ctx.agentId ?? "unknown"} channelId=${ctx.channelId ?? "unknown"} promptLen=${prompt?.length ?? 0}`);
   const ruleContext: RuleContext = {
     agentId: ctx.agentId ?? "unknown",
     channel: ctx.channelId ?? "default",
@@ -329,6 +333,17 @@ const plugin: OpenclawPlugin = {
   version: "1.0.0",
 
   activate(ctx: OpenclawPluginContext) {
+    // ── Guard: only activate once ──────────────────────────────────────────
+    // OpenClaw loads plugins from multiple subsystems (CLI, gateway, channels).
+    // Without this guard, hooks are registered N times and file watchers stack
+    // up, multiplying work on every event and potentially causing API rate
+    // limits due to duplicated before_model_resolve / before_prompt_build calls.
+    if (activated) {
+      console.log("[plugin:openauthority] already activated — skipping duplicate activation");
+      return;
+    }
+    activated = true;
+
     // registerPolicyEngine / onPolicyLoad are optional — only available when
     // the host exposes a policy-evaluation extension point.
     if (typeof ctx.registerPolicyEngine === "function") {
@@ -352,6 +367,7 @@ const plugin: OpenclawPlugin = {
       await rulesWatcher.stop();
       rulesWatcher = null;
     }
+    activated = false;
     console.log("[plugin:openauthority] deactivated");
   },
 };
