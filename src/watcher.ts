@@ -1,8 +1,10 @@
 import chokidar from 'chokidar';
-import { basename, extname } from 'node:path';
+import { readFileSync, existsSync } from 'node:fs';
+import { basename, extname, resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { PolicyEngine } from './policy/engine.js';
 import { mergeRules } from './policy/rules/index.js';
-import type { Rule } from './policy/types.js';
+import type { Rule, Effect, Resource } from './policy/types.js';
 
 /**
  * In-memory cache of last-successfully-loaded Rule arrays, keyed by file stem
@@ -19,6 +21,50 @@ const KNOWN_RULE_FILES: Record<string, string> = {
   default: './policy/rules/default.js',
   support: './policy/rules/support.js',
 };
+
+/** Resolve path to data/rules.json relative to the plugin root. */
+const __srcDir = dirname(fileURLToPath(import.meta.url));
+const PLUGIN_ROOT = resolve(__srcDir, '..');
+const JSON_RULES_FILE = resolve(PLUGIN_ROOT, 'data', 'rules.json');
+
+interface JsonRule {
+  id?: string;
+  effect: string;
+  resource: string;
+  match: string;
+  reason?: string;
+  tags?: string[];
+  rateLimit?: { maxCalls: number; windowSeconds: number };
+}
+
+/**
+ * Loads rules from the UI-managed data/rules.json file and converts them
+ * to Cedar Rule objects.
+ */
+function loadJsonRules(filePath: string = JSON_RULES_FILE): Rule[] {
+  try {
+    if (!existsSync(filePath)) return [];
+    const raw = readFileSync(filePath, 'utf-8');
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return (parsed as JsonRule[])
+      .filter((r) => r.effect && r.resource && r.match)
+      .map((r) => {
+        const rule: Rule = {
+          effect: r.effect as Effect,
+          resource: r.resource as Resource,
+          match: r.match,
+        };
+        if (r.reason) rule.reason = r.reason;
+        if (r.tags) rule.tags = r.tags;
+        if (r.rateLimit) rule.rateLimit = r.rateLimit;
+        return rule;
+      });
+  } catch (err) {
+    console.error('[hot-reload] failed to load JSON rules:', err);
+    return [];
+  }
+}
 
 /**
  * Re-imports a single rules module using URL query cache-busting.
@@ -92,12 +138,22 @@ export interface WatcherHandle {
   stop(): Promise<void>;
 }
 
+/** Log all loaded rules to the console for visibility at startup / reload. */
+function logRules(rules: Rule[], source: string): void {
+  if (rules.length === 0) return;
+  console.log(`[openauthority] ${source} rules (${rules.length}):`);
+  for (const r of rules) {
+    const matchStr = r.match instanceof RegExp ? r.match.toString() : r.match;
+    const reason = r.reason ? ` — ${r.reason}` : '';
+    console.log(`[openauthority]   ${r.effect.toUpperCase().padEnd(6)} ${r.resource}:${matchStr}${reason}`);
+  }
+}
+
 /**
- * Starts a chokidar watcher on the src/policy/rules/ directory.
+ * Starts watchers on both src/policy/rules/ (TypeScript) and data/rules.json.
  *
- * On each detected change (debounced by `debounceMs`), only the changed rule
- * file is cache-busted and reloaded. A fresh PolicyEngine instance is created
- * and swapped into `engineRef.current` on successful reload.
+ * On each detected change (debounced by `debounceMs`), rules are reloaded and
+ * a fresh PolicyEngine instance is swapped into `engineRef.current`.
  */
 export function startRulesWatcher(
   engineRef: { current: PolicyEngine },
@@ -108,15 +164,27 @@ export function startRulesWatcher(
 
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
+  const rebuildEngine = (rules: Rule[]): void => {
+    const newEngine = new PolicyEngine();
+    newEngine.addRules(rules);
+    engineRef.current = newEngine;
+  };
+
   const reload = async (changedFile?: string): Promise<void> => {
     try {
       const { rules, reloadedAgents } = await importFreshRules(changedFile);
       if (reloadedAgents.length === 0) return;
-      const newEngine = new PolicyEngine();
-      newEngine.addRules(rules);
-      engineRef.current = newEngine;
+
+      // Also include JSON rules from the UI
+      const jsonRules = loadJsonRules();
+      ruleCache.set('json', jsonRules);
+      const allRules = [...jsonRules, ...rules];
+
+      rebuildEngine(allRules);
+      logRules(rules, 'compiled');
+      logRules(jsonRules, 'UI (data/rules.json)');
       console.log(
-        `[hot-reload] reloaded agent rules: ${reloadedAgents.join(', ')} - ${rules.length} rule${rules.length !== 1 ? 's' : ''} total`,
+        `[hot-reload] reloaded agent rules: ${reloadedAgents.join(', ')} - ${allRules.length} rule${allRules.length !== 1 ? 's' : ''} total`,
       );
     } catch (err) {
       const hint = changedFile ? ` (${basename(changedFile)})` : '';
@@ -127,17 +195,62 @@ export function startRulesWatcher(
     }
   };
 
-  const watcher = chokidar.watch(watchPath, {
+  const reloadJsonRules = (): void => {
+    try {
+      const jsonRules = loadJsonRules();
+      ruleCache.set('json', jsonRules);
+      const allRules = buildMergedFromCache();
+      rebuildEngine(allRules);
+      logRules(jsonRules, 'UI (data/rules.json)');
+      console.log(
+        `[hot-reload] reloaded UI rules - ${allRules.length} rule${allRules.length !== 1 ? 's' : ''} total`,
+      );
+    } catch (err) {
+      console.error(
+        '[hot-reload] failed to reload JSON rules (previous rules remain active):',
+        err,
+      );
+    }
+  };
+
+  // Watch TypeScript rule files
+  const tsWatcher = chokidar.watch(watchPath, {
     persistent: false,
     ignoreInitial: true,
   });
 
-  watcher.on('change', (filePath: string) => {
+  tsWatcher.on('change', (filePath: string) => {
     if (debounceTimer !== null) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => reload(filePath), debounceMs);
   });
 
+  // Watch data/rules.json for UI-managed rules
+  let jsonDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  const jsonWatcher = chokidar.watch(JSON_RULES_FILE, {
+    persistent: false,
+    ignoreInitial: true,
+  });
+
+  jsonWatcher.on('change', () => {
+    if (jsonDebounceTimer !== null) clearTimeout(jsonDebounceTimer);
+    jsonDebounceTimer = setTimeout(reloadJsonRules, debounceMs);
+  });
+  jsonWatcher.on('add', () => {
+    if (jsonDebounceTimer !== null) clearTimeout(jsonDebounceTimer);
+    jsonDebounceTimer = setTimeout(reloadJsonRules, debounceMs);
+  });
+
+  // Initial load of JSON rules
+  const jsonRules = loadJsonRules();
+  if (jsonRules.length > 0) {
+    ruleCache.set('json', jsonRules);
+    const allRules = buildMergedFromCache();
+    rebuildEngine(allRules);
+    logRules(jsonRules, 'UI (data/rules.json)');
+  }
+
   console.log(`[hot-reload] watching ${watchPath} for rule changes`);
+  console.log(`[hot-reload] watching ${JSON_RULES_FILE} for UI rule changes`);
 
   return {
     async stop(): Promise<void> {
@@ -145,8 +258,13 @@ export function startRulesWatcher(
         clearTimeout(debounceTimer);
         debounceTimer = null;
       }
-      await watcher.close();
-      console.log('[hot-reload] watcher stopped');
+      if (jsonDebounceTimer !== null) {
+        clearTimeout(jsonDebounceTimer);
+        jsonDebounceTimer = null;
+      }
+      await tsWatcher.close();
+      await jsonWatcher.close();
+      console.log('[hot-reload] watchers stopped');
     },
   };
 }

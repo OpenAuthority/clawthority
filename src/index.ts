@@ -204,6 +204,14 @@ const cedarEngineRef: { current: CedarPolicyEngine } = {
 };
 cedarEngineRef.current.addRules(defaultRules);
 
+// Log compiled rules at startup
+console.log(`[openauthority] compiled rules (${defaultRules.length}):`);
+for (const r of defaultRules) {
+  const matchStr = r.match instanceof RegExp ? r.match.toString() : r.match;
+  const reason = r.reason ? ` — ${r.reason}` : '';
+  console.log(`[openauthority]   ${r.effect.toUpperCase().padEnd(6)} ${r.resource}:${matchStr}${reason}`);
+}
+
 /** Activation guard — prevents duplicate hook registration when openclaw
  *  loads the plugin from multiple subsystems (gateway, CLI, etc.). */
 let activated = false;

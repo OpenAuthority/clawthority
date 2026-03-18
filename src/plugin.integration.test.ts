@@ -147,10 +147,10 @@ describe('plugin registration', () => {
 
   it('starts the file watcher on activate', () => {
     plugin.activate(mockCtx.ctx);
-    expect(chokidar.watch).toHaveBeenCalledOnce();
-    // Watcher should be watching a path that contains the rules directory name
-    const [watchedPath] = vi.mocked(chokidar.watch).mock.calls[0]!;
-    expect(watchedPath).toContain('rules');
+    // Two watchers: one for TypeScript rules dir, one for data/rules.json
+    expect(vi.mocked(chokidar.watch).mock.calls.length).toBeGreaterThanOrEqual(2);
+    const watchedPaths = vi.mocked(chokidar.watch).mock.calls.map(([p]) => p as string);
+    expect(watchedPaths.some((p) => p.includes('rules'))).toBe(true);
   });
 
   it('registers a "change" event handler on the watcher', () => {
@@ -162,7 +162,8 @@ describe('plugin registration', () => {
   it('stops the watcher on deactivate', async () => {
     plugin.activate(mockCtx.ctx);
     await plugin.deactivate?.();
-    expect(mockWatcherClose).toHaveBeenCalledOnce();
+    // Two watchers (TS rules + JSON rules) should both be closed
+    expect(mockWatcherClose).toHaveBeenCalledTimes(2);
   });
 
   it('deactivate without prior activate does not throw', async () => {
@@ -174,8 +175,8 @@ describe('plugin registration', () => {
     plugin.activate(mockCtx.ctx);
     await plugin.deactivate?.();
     await expect(plugin.deactivate?.()).resolves.not.toThrow();
-    // Close should only have been called once
-    expect(mockWatcherClose).toHaveBeenCalledOnce();
+    // Close should only have been called for the two watchers from the first deactivate
+    expect(mockWatcherClose).toHaveBeenCalledTimes(2);
   });
 
   it('adds loaded policies to the ABAC engine via onPolicyLoad', () => {
@@ -568,7 +569,8 @@ describe('hot-reload watcher', () => {
     const handle = startRulesWatcher(engineRef);
 
     await expect(handle.stop()).resolves.toBeUndefined();
-    expect(mockWatcherClose).toHaveBeenCalledOnce();
+    // Two watchers: TS rules dir + JSON rules file
+    expect(mockWatcherClose).toHaveBeenCalledTimes(2);
   });
 
   it('stop() cancels any pending debounce timer', async () => {
