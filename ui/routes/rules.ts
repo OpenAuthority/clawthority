@@ -6,10 +6,15 @@ import crypto from "crypto";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// Resolve data path relative to the plugin root (one level above ui/).
+// process.cwd() is expected to be the ui/ directory at startup, so go up one
+// level to reach the plugin root where data/rules.json lives.
+const PLUGIN_ROOT = path.resolve(process.cwd(), "..");
+
 // Read config once at module load to avoid process.env access near network calls
 const config = Object.freeze({
   rulesFile:
-    process.env.RULES_FILE ?? path.resolve(__dirname, "../../data/rules.json"),
+    process.env.RULES_FILE ?? path.join(PLUGIN_ROOT, "data", "rules.json"),
 });
 
 const RULES_FILE = config.rulesFile;
