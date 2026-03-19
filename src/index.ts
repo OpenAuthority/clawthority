@@ -52,9 +52,12 @@ import { PolicyEngine as TypeboxPolicyEngine } from "./engine.js";
 import { AuditLogger, consoleAuditHandler } from "./audit.js";
 import type { TPolicy } from "./types.js";
 import { PolicyEngine as CedarPolicyEngine } from "./policy/engine.js";
-import type { RuleContext } from "./policy/types.js";
+import type { Rule, RuleContext } from "./policy/types.js";
 import defaultRules from "./policy/rules.js";
 import { startRulesWatcher, type WatcherHandle } from "./watcher.js";
+import { readFile } from "node:fs/promises";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // ─── Hook types (matching OpenClaw's actual API) ─────────────────────────────
 
@@ -212,6 +215,97 @@ for (const r of defaultRules) {
   console.log(`[openauthority]   ${r.effect.toUpperCase().padEnd(6)} ${r.resource}:${matchStr}${reason}`);
 }
 
+/**
+ * Separate Cedar engine for rules loaded from data/rules.json.
+ * Kept isolated so the hot-reload watcher (which manages cedarEngineRef) does
+ * not inadvertently clear user-defined JSON rules on a TS file change.
+ * null until loadJsonRules() succeeds on activate.
+ */
+const jsonRulesEngineRef: { current: CedarPolicyEngine | null } = {
+  current: null,
+};
+
+/**
+ * JSON rule record as written in data/rules.json.
+ * Uses Cedar-style fields — effect, resource, match — not the TypeBox schema.
+ */
+interface JsonRuleRecord {
+  id?: string;
+  effect: "permit" | "forbid";
+  resource: "tool" | "command" | "channel" | "prompt" | "model";
+  /** Exact string or regex source (e.g. "^web_fetch$") to match resource name. */
+  match: string;
+  reason?: string;
+  tags?: string[];
+}
+
+/**
+ * Resolves data/rules.json relative to this module's dist/ directory, reads
+ * it, translates each record into a Cedar Rule, and loads them into a fresh
+ * PolicyEngine stored in jsonRulesEngineRef.current.
+ *
+ * Errors are logged but never thrown so a malformed rules file does not
+ * prevent the rest of the plugin from activating.
+ */
+async function loadJsonRules(): Promise<void> {
+  try {
+    const moduleDir = dirname(fileURLToPath(import.meta.url));
+    // data/rules.json sits two levels up from dist/ (project root/data/)
+    const rulesPath = resolve(moduleDir, "../../data/rules.json");
+
+    let raw: string;
+    try {
+      raw = await readFile(rulesPath, "utf-8");
+    } catch (readErr: unknown) {
+      const code = (readErr as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") {
+        console.log("[plugin:openauthority] no data/rules.json found — skipping JSON rule load");
+        return;
+      }
+      throw readErr;
+    }
+
+    const records: JsonRuleRecord[] = JSON.parse(raw);
+    if (!Array.isArray(records)) {
+      throw new TypeError("data/rules.json must be a JSON array of rule objects");
+    }
+
+    const cedarRules: Rule[] = records.map((rec, i) => {
+      // Convert to RegExp when regex metacharacters are present; otherwise
+      // normalise to lowercase (tool names in OpenClaw are always lowercase,
+      // so "Exec" in JSON would never match without this).
+      let match: string | RegExp = rec.match;
+      if (/[\\^$.|?*+()[\]{}]/.test(rec.match)) {
+        try {
+          match = new RegExp(rec.match);
+        } catch {
+          console.warn(
+            `[plugin:openauthority] data/rules.json rule[${i}] has invalid regex "${rec.match}" — using exact match`
+          );
+        }
+      } else {
+        match = rec.match.toLowerCase();
+      }
+
+      return {
+        effect: rec.effect,
+        resource: rec.resource,
+        match,
+        ...(rec.reason !== undefined ? { reason: rec.reason } : {}),
+        ...(rec.tags !== undefined ? { tags: rec.tags } : {}),
+      } satisfies Rule;
+    });
+
+    const engine = new CedarPolicyEngine();
+    engine.addRules(cedarRules);
+    jsonRulesEngineRef.current = engine;
+
+    console.log(`[plugin:openauthority] loaded ${cedarRules.length} rule(s) from data/rules.json`);
+  } catch (err) {
+    console.error("[plugin:openauthority] failed to load data/rules.json — JSON rules will not be enforced:", err);
+  }
+}
+
 /** Activation guard — prevents duplicate hook registration when openclaw
  *  loads the plugin from multiple subsystems (gateway, CLI, etc.). */
 let activated = false;
@@ -225,28 +319,75 @@ let activated = false;
  * Returns { block: true, blockReason } when the engine returns forbid or deny.
  * Fails closed on unexpected errors.
  */
-const beforeToolCallHandler: BeforeToolCallHandler = ({ toolName, params }, ctx) => {
+const beforeToolCallHandler: BeforeToolCallHandler = async ({ toolName, params }, ctx) => {
   console.log(`[openauthority] ▶ before_tool_call ENTER tool=${toolName} agentId=${ctx.agentId ?? "unknown"} channelId=${ctx.channelId ?? "unknown"}`);
   const ruleContext: RuleContext = {
     agentId: ctx.agentId ?? "unknown",
-    channel: ctx.channelId ?? "default",
+    // Preserve the real channel name. Only fall back to "default" when the
+    // host provides no channel at all (undefined/empty string). Do NOT remap
+    // named channels like "webchat" — rules explicitly reference them.
+    channel: ctx.channelId || "default",
   };
+
+  // ── 1. Cedar engine (TypeScript rules, hot-reloaded) ──────────────────────
   try {
     const decision = cedarEngineRef.current.evaluate("tool", toolName, ruleContext);
     if (decision.effect === "forbid" || decision.effect === "deny") {
-      const blockReason = decision.reason ?? "Tool call denied by policy";
-      console.log(`[openauthority] ✕ before_tool_call BLOCK tool=${toolName} effect=${decision.effect} reason="${blockReason}"`);
-      console.log(`[openauthority] ◀ before_tool_call EXIT  tool=${toolName} → blocked`);
+      const blockReason = decision.reason ?? "Tool call denied by Cedar policy";
+      console.log(`[openauthority] ✕ before_tool_call BLOCK (cedar) tool=${toolName} effect=${decision.effect} reason="${blockReason}"`);
       return { block: true, blockReason };
     }
-    console.log(`[openauthority] ✓ before_tool_call ALLOW tool=${toolName} effect=${decision.effect}`);
-    console.log(`[openauthority] ◀ before_tool_call EXIT  tool=${toolName} → allowed`);
-    return;
+    console.log(`[openauthority] ✓ before_tool_call cedar ALLOW tool=${toolName} effect=${decision.effect}`);
   } catch (err) {
-    console.error(`[openauthority] ✕ before_tool_call ERROR tool=${toolName}`, err);
-    console.log(`[openauthority] ◀ before_tool_call EXIT  tool=${toolName} → blocked (error)`);
-    return { block: true, blockReason: "Policy evaluation error — fail closed" };
+    console.error(`[openauthority] ✕ before_tool_call ERROR (cedar) tool=${toolName}`, err);
+    return { block: true, blockReason: "Cedar policy evaluation error — fail closed" };
   }
+
+  // ── 2. JSON Cedar engine (data/rules.json, loaded at startup) ─────────────
+  if (jsonRulesEngineRef.current !== null) {
+    try {
+      const jsonDecision = jsonRulesEngineRef.current.evaluate("tool", toolName, ruleContext);
+      if (jsonDecision.effect === "forbid" || jsonDecision.effect === "deny") {
+        const blockReason = jsonDecision.reason ?? "Tool call denied by JSON rule";
+        console.log(`[openauthority] ✕ before_tool_call BLOCK (json-rules) tool=${toolName} reason="${blockReason}"`);
+        return { block: true, blockReason };
+      }
+      console.log(`[openauthority] ✓ before_tool_call json-rules ALLOW tool=${toolName}`);
+    } catch (err) {
+      console.error(`[openauthority] ✕ before_tool_call ERROR (json-rules) tool=${toolName}`, err);
+      return { block: true, blockReason: "JSON rule evaluation error — fail closed" };
+    }
+  }
+
+  // ── 3. TypeBox/ABAC engine (policies loaded via onPolicyLoad) ─────────────
+  try {
+    const abacPolicies = abacEngine.listPolicies();
+    for (const policy of abacPolicies) {
+      const abacCtx = {
+        subject: {
+          agentId: ruleContext.agentId,
+          channel: ruleContext.channel,
+          ...(ruleContext.userId !== undefined ? { userId: ruleContext.userId } : {}),
+          ...(ruleContext.sessionId !== undefined ? { sessionId: ruleContext.sessionId } : {}),
+        },
+        resource: { type: "tool", name: toolName },
+        action: toolName,
+      };
+      const result = await abacEngine.evaluate(policy.id, abacCtx);
+      if (!result.allowed || result.effect === "deny") {
+        const blockReason = result.reason ?? `Tool call denied by ABAC policy '${policy.id}'`;
+        console.log(`[openauthority] ✕ before_tool_call BLOCK (abac) tool=${toolName} policyId=${policy.id} reason="${blockReason}"`);
+        return { block: true, blockReason };
+      }
+    }
+  } catch (err) {
+    console.error(`[openauthority] ✕ before_tool_call ERROR (abac) tool=${toolName}`, err);
+    return { block: true, blockReason: "ABAC policy evaluation error — fail closed" };
+  }
+
+  console.log(`[openauthority] ✓ before_tool_call ALLOW tool=${toolName} (all engines passed)`);
+  console.log(`[openauthority] ◀ before_tool_call EXIT  tool=${toolName} → allowed`);
+  return;
 };
 
 /**
@@ -352,6 +493,13 @@ const plugin: OpenclawPlugin = {
     // ctx.registerHook("before_model_resolve", beforeModelResolveHandler, { name: "openauthority:before_model_resolve" });
 
     rulesWatcher = startRulesWatcher(cedarEngineRef);
+
+    // Load user-defined JSON rules from data/rules.json into the dedicated
+    // JSON Cedar engine. Async but errors are swallowed so activation is
+    // never blocked by a missing or malformed rules file.
+    loadJsonRules().catch((err) =>
+      console.error("[plugin:openauthority] unexpected error in loadJsonRules:", err)
+    );
 
     console.log("[plugin:openauthority] activated – lifecycle hooks registered");
   },

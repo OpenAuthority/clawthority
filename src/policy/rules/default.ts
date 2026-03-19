@@ -85,15 +85,30 @@ const defaultRules: Rule[] = [
   },
 
   /**
-   * Permit all remaining tools for agents operating on the default channel.
-   * More specific forbid rules above will still override this catch-all.
+   * Forbid web-fetch and web-search tools by default.
+   * These tools allow agents to make outbound HTTP requests and should only
+   * be permitted when explicitly overridden by a more specific rule.
+   */
+  {
+    effect: 'forbid',
+    resource: 'tool',
+    match: /^(web_fetch|web_search)$/,
+    reason: 'Outbound web tools are forbidden by default; add a permit rule to enable them',
+    tags: ['security', 'network'],
+  },
+
+  /**
+   * Permit all remaining tools for agents operating on the default or webchat
+   * channel. More specific forbid rules above will still override this catch-all.
+   * 'webchat' is included because OpenClaw routes browser-based sessions through
+   * that channel identifier; it carries the same trust level as 'default'.
    */
   {
     effect: 'permit',
     resource: 'tool',
     match: '*',
-    condition: (ctx) => ctx.channel === 'default',
-    reason: 'Agents on the default channel have general tool access',
+    condition: (ctx) => ctx.channel === 'default' || ctx.channel === 'webchat',
+    reason: 'Agents on the default/webchat channel have general tool access',
     tags: ['default'],
   },
 
