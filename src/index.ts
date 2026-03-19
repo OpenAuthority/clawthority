@@ -525,13 +525,19 @@ const plugin: OpenclawPlugin = {
   version: "1.0.0",
 
   activate(ctx: OpenclawPluginContext) {
-    // ── Guard: only activate once ──────────────────────────────────────────
-    // OpenClaw loads plugins from multiple subsystems (CLI, gateway, channels).
-    // Without this guard, hooks are registered N times and file watchers stack
-    // up, multiplying work on every event and potentially causing API rate
-    // limits due to duplicated before_model_resolve / before_prompt_build calls.
+    // ── Typed hooks: register into EVERY registry ───────────────────────────
+    // OpenClaw loads plugins from multiple subsystems, each with its own
+    // registry. ctx.on() targets the calling registry's typedHooks array.
+    // The global hook runner is overwritten on each loadOpenClawPlugins call,
+    // so we must register into every registry to ensure the hook is present
+    // in whichever registry ends up as the active one.
+    ctx.on("before_tool_call", beforeToolCallHandler, { name: "openauthority:before_tool_call" });
+    // ctx.on("before_prompt_build", beforePromptBuildHandler, { name: "openauthority:before_prompt_build" });
+    // ctx.on("before_model_resolve", beforeModelResolveHandler, { name: "openauthority:before_model_resolve" });
+
+    // ── Guard: side effects (watchers, engines) only once ────────────────────
     if (activated) {
-      console.log("[plugin:openauthority] already activated — skipping duplicate activation");
+      console.log("[plugin:openauthority] hooks re-registered into new registry — skipping side effects");
       return;
     }
     activated = true;
@@ -544,15 +550,6 @@ const plugin: OpenclawPlugin = {
     if (typeof ctx.onPolicyLoad === "function") {
       ctx.onPolicyLoad((policy) => abacEngine.addPolicy(policy));
     }
-
-    ctx.on("before_tool_call", beforeToolCallHandler, { name: "openauthority:before_tool_call" });
-
-    // ── DIAGNOSTIC: before_prompt_build and before_model_resolve temporarily
-    // disabled to isolate rate-limit cause. If rate limit disappears with only
-    // before_tool_call registered, these hooks are triggering extra API calls
-    // inside openclaw's hook runner.
-    // ctx.on("before_prompt_build", beforePromptBuildHandler, { name: "openauthority:before_prompt_build" });
-    // ctx.on("before_model_resolve", beforeModelResolveHandler, { name: "openauthority:before_model_resolve" });
 
     rulesWatcher = startRulesWatcher(cedarEngineRef, 300, (compiledRules) => {
       writeBuiltinRulesSnapshot(compiledRules);
