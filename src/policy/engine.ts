@@ -47,7 +47,12 @@ const timerApi = globalThis as unknown as {
 };
 
 export class PolicyEngine {
-  private rules: Rule[] = [];
+  private _rules: Rule[] = [];
+
+  /** Read-only view of loaded rules (for diagnostics / logging). */
+  get rules(): readonly Rule[] {
+    return this._rules;
+  }
   /** Per-rule, per-(agentId:resourceName) sliding-window call timestamps. */
   private rateLimitTracking: Map<Rule, Map<string, number[]>> = new Map();
   private cleanupTimer?: TimerHandle;
@@ -62,17 +67,17 @@ export class PolicyEngine {
   }
 
   addRule(rule: Rule): void {
-    this.rules.push(rule);
+    this._rules.push(rule);
   }
 
   addRules(rules: Rule[]): void {
     for (const rule of rules) {
-      this.rules.push(rule);
+      this._rules.push(rule);
     }
   }
 
   clearRules(): void {
-    this.rules = [];
+    this._rules = [];
     this.rateLimitTracking.clear();
   }
 
@@ -120,7 +125,7 @@ export class PolicyEngine {
   ): EvaluationDecision {
     const matchingRules: Rule[] = [];
 
-    for (const rule of this.rules) {
+    for (const rule of this._rules) {
       if (rule.resource !== resource) continue;
       if (!matchesPattern(rule.match, resourceName)) continue;
       if (rule.condition !== undefined && !rule.condition(context)) continue;
