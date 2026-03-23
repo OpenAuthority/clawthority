@@ -1,45 +1,85 @@
 # Architecture Overview
 
-This document describes the design of the Open Authority policy engine plugin, the decisions behind the architecture, and how the components fit together.
+This document describes the design of the OpenAuthority policy engine plugin, the decisions behind the architecture, and how the components fit together.
 
 ---
 
 ## System Overview
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                         openclaw                             │
-│                                                              │
-│  ┌─────────────┐   hook events   ┌───────────────────────┐  │
-│  │   Agent /   │ ──────────────► │   policy-engine        │  │
-│  │   Gateway   │ ◄────────────── │   plugin (index.ts)    │  │
-│  └─────────────┘   allow/block   └──────────┬────────────┘  │
-│                                              │               │
-└──────────────────────────────────────────────┼───────────────┘
-                                               │
-               ┌───────────────────────────────┼──────────┐
-               │           Plugin Core          │          │
-               │                               │          │
-               │  ┌──────────────────┐  ┌──────▼───────┐  │
-               │  │  ABAC Engine     │  │  Cedar Engine │  │
-               │  │  (engine.ts)     │  │  (policy/     │  │
-               │  │                  │  │   engine.ts)  │  │
-               │  └──────────────────┘  └──────┬───────┘  │
-               │                               │          │
-               │  ┌──────────────────┐  ┌──────▼───────┐  │
-               │  │  Audit Logger    │  │  Rules Watcher│  │
-               │  │  (audit.ts)      │  │  (watcher.ts) │  │
-               │  └──────────────────┘  └──────────────┘  │
-               │                                           │
-               └────────────────────────────────────┬──────┘
-                                                    │
-                          ┌─────────────────────────▼──────┐
-                          │       UI Dashboard (ui/)         │
-                          │                                  │
-                          │  Express server ─── React SPA    │
-                          │  REST API        ─── SSE stream  │
-                          └──────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────┐
+│                           OpenClaw Gateway                        │
+│                                                                   │
+│  ┌─────────────┐   hook events   ┌─────────────────────────────┐  │
+│  │   Agent /   │ ──────────────► │   OpenAuthority Plugin      │  │
+│  │   Gateway   │ ◄────────────── │   (index.ts)                │  │
+│  └─────────────┘  allow/block/   └──────────┬──────────────────┘  │
+│                    ask-user                 │                     │
+└─────────────────────────────────────────────┼─────────────────────┘
+                                              │
+              ┌───────────────────────────────┼────────────────┐
+              │           Plugin Core         │                │
+              │                               │                │
+              │  ┌──────────────────┐  ┌──────▼────────┐       │
+              │  │  ABAC Engine     │  │  Cedar Engine │       │
+              │  │  (engine.ts)     │  │  (policy/     │       │
+              │  │                  │  │   engine.ts)  │       │
+              │  └──────────────────┘  └──────┬────────┘       │
+              │                               │                │
+              │  ┌──────────────────┐  ┌──────▼────────┐       │
+              │  │  HITL Matcher    │  │  Rules Watcher│       │
+              │  │  (hitl/)         │  │  (watcher.ts) │       │
+              │  └───────┬──────────┘  └───────────────┘       │
+              │          │                                     │
+              │          │  ┌──────────────────┐               │
+              │          │  │  Audit Logger    │               │
+              │          │  │  (audit.ts)      │               │
+              │          │  └──────────────────┘               │
+              │          │                                     │
+              └──────────┼─────────────────────────────┬───────┘
+                         │                             │
+        ┌────────────────▼────────┐  ┌─────────────────▼───────┐
+        │   Approval Channel      │  │   UI Dashboard (ui/)    │
+        │   (Telegram / Slack /   │  │                         │
+        │    Webhook / Console)   │  │   Express ─── React SPA │
+        └─────────────────────────┘  │   REST API ─── SSE      │
+                                     └─────────────────────────┘
 ```
+
+---
+
+## Action Pipeline
+
+Every agent action flows through a structured pipeline before it can execute. This is the core enforcement mechanism.
+
+```
+Agent
+ └──► 1. Normalise (raw event → action request)
+       │
+       ▼
+      2. Policy evaluation (Cedar engine: permit / forbid)
+       │── forbid → block, log, return rejection to agent
+       │── permit → continue (check rate limits)
+       │
+       ▼
+      3. Execute (if permitted) or block (if denied)
+       │
+       ▼
+      4. Audit (request + decision + result → provenance log)
+```
+
+**Planned addition:** A HITL check step will be inserted between normalisation and policy evaluation. When an action matches a HITL policy, execution will pause and route to a human for approval via Telegram or other channels. See the [roadmap](roadmap.md).
+
+### Decision outcomes
+
+The policy engine currently returns one of two outcomes:
+
+| Outcome | Meaning | What happens |
+|---|---|---|
+| `permit` | Action is allowed by policy | Tool call proceeds |
+| `forbid` | Action is blocked by policy | Call never placed, agent receives rejection |
+
+A third outcome, `ask-user`, is planned for the HITL integration. When implemented, it will pause execution and route the decision to a human via Telegram or other messaging channels. See the [roadmap](roadmap.md).
 
 ---
 
@@ -94,9 +134,16 @@ This means:
 - `forbid` rules are absolute; they cannot be overridden by any `permit` rule
 - Rate limits only reduce the scope of `permit`; they can never make a `forbid` into a `permit`
 
-### Implicit deny
+### Configurable default effect
 
-If no rule matches a request, the Cedar engine returns `forbid` with reason `"implicit deny"`. The ABAC engine uses a configurable `defaultEffect` per policy.
+If no rule matches a request, the Cedar engine returns the configured `defaultEffect`:
+
+- `'permit'` (default) --- implicit allow. No matching rule = allowed. This is the safe choice for OpenClaw plugin environments where blocking unknown tools would break the agent.
+- `'forbid'` --- implicit deny, Cedar-standard. No matching rule = denied. Use for locked-down production deployments.
+
+The default is set via the `PolicyEngine` constructor: `new PolicyEngine({ defaultEffect: 'permit' })`.
+
+The ABAC engine uses a separate configurable `defaultEffect` per policy.
 
 ---
 
@@ -184,6 +231,95 @@ On each `evaluate()` call for a permit rule with `rateLimit`:
 Expired entries are only removed during evaluation of a specific rule/caller pair, or when `cleanup()` is called. This is a deliberate trade-off: per-evaluation cleanup keeps hot paths fast, while the explicit `cleanup()` sweeps the entire map.
 
 The optional `cleanupIntervalMs` constructor parameter enables a background timer that calls `cleanup()` on an interval.
+
+---
+
+## Human-in-the-Loop Architecture
+
+> **Status: framework built, integration pending.** See [roadmap](roadmap.md).
+
+The HITL system will add a third decision outcome alongside `permit` and `forbid`: **`ask-user`**. When an action matches a HITL policy, execution will pause and the decision will be routed to a human via a messaging channel (Telegram, Slack, etc.).
+
+### Components
+
+```
+src/hitl/
+  types.ts      — TypeBox schemas: HitlPolicy, HitlApprovalConfig, HitlPolicyConfig
+  matcher.ts    — Dot-notation wildcard matching + checkAction()
+  parser.ts     — YAML/JSON policy file reader with validation
+  watcher.ts    — Hot-reload watcher for HITL policy files
+  index.ts      — Barrel exports
+```
+
+### Evaluation flow
+
+1. `checkAction(config, action)` iterates over policies in declaration order
+2. For each policy, each pattern in `actions` is tested via `matchesActionPattern()`
+3. First match wins — returns `{ requiresApproval: true, matchedPolicy }`
+4. No match — returns `{ requiresApproval: false }`
+
+### Approval routing
+
+When `requiresApproval` is true, the action enters the approval flow:
+
+1. An approval request is sent to the configured channel (e.g. Telegram bot)
+2. The request includes: action name, arguments, agent context, timestamp
+3. The system waits for a response up to `timeout` seconds
+4. Outcomes:
+   - **Approved** — action proceeds to the policy engine for further evaluation
+   - **Rejected** — action is blocked, agent receives a rejection reason
+   - **Timeout** — `fallback` applies: either `deny` (block) or `auto-approve` (proceed)
+
+### Relationship to the policy engine
+
+HITL approval does not bypass the policy engine. A human-approved action still passes through Cedar rules, rate limits, and forbid checks. The two layers are complementary:
+
+- HITL gates on **intent** ("should this action happen at all?")
+- Policy engine gates on **capability** ("is this action within allowed bounds?")
+
+### Hot reload
+
+The HITL policy file has its own watcher (`startHitlPolicyWatcher`), separate from the rules watcher. It follows the same pattern: debounced file watching, atomic swap on success, previous config preserved on failure.
+
+---
+
+## Gateway Hooks Reference
+
+OpenAuthority implements three OpenClaw gateway hooks. Currently only `before_tool_call` is registered and active:
+
+| Hook | Can block? | Status | Purpose in OpenAuthority |
+|---|---|---|---|
+| `before_tool_call` | Yes | **Active** | Primary enforcement hook. Evaluates Cedar rules, JSON rules, and ABAC policies. Returns `block: true` to deny execution. |
+| `before_prompt_build` | No (observe/mutate) | **Implemented, disabled** | Prompt injection detection (10 regex patterns). Disabled pending false-positive tuning. |
+| `before_model_resolve` | No (observe/mutate) | **Implemented, disabled** | Model routing. Disabled because OpenClaw does not yet pass the model name in the event payload. |
+
+### Hook registration
+
+Hooks are registered via `ctx.on()` inside the plugin initialisation function:
+
+```typescript
+export default function openauthorityPlugin(ctx) {
+  ctx.on('before_tool_call', async (toolCall) => {
+    const decision = await policyEngine.evaluate(toolCall);
+    if (decision.outcome === 'forbid') {
+      return { block: true, reason: decision.reason };
+    }
+    return { block: false };
+  });
+
+  ctx.on('before_prompt_build', async (promptCtx) => {
+    // Prompt injection detection + context injection
+  });
+
+  ctx.on('before_model_resolve', async (modelCtx) => {
+    // Model override logic
+  });
+}
+```
+
+### Critical constraint
+
+`before_tool_call` is the **only** plugin hook that can block execution. `before_prompt_build` and `before_model_resolve` are observation/mutation hooks only. This means all policy enforcement — Cedar rules, HITL checks, rate limits — must route through `before_tool_call`.
 
 ---
 

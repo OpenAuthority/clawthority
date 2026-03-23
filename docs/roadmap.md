@@ -83,14 +83,10 @@ Wire the HITL matcher into `before_tool_call` so that actions matching a HITL po
 - When `requiresApproval` is true, return a structured response that triggers the approval flow
 - Define the approval request/response protocol
 
-### Implicit Permit → Configurable Default
-The Cedar engine currently returns implicit **permit** when no rule matches (line 192 of `src/policy/engine.ts`). This is a permissive default. The roadmap includes making this configurable:
+### Configurable Default Effect ✅
+The Cedar engine now accepts a `defaultEffect` constructor option (`'permit' | 'forbid'`). The default is `'permit'` (implicit allow) to avoid accidentally blocking OpenClaw tool calls. Deployments that need strict deny-by-default can set `defaultEffect: 'forbid'`.
 
-- **Option A: Implicit deny** — no matching rule = denied. Stricter, requires explicit permits for everything. Better for locked-down production environments.
-- **Option B: Implicit permit** — no matching rule = allowed. Current behaviour. Easier to adopt incrementally.
-- **Option C: Configurable** — constructor option `defaultEffect: 'permit' | 'forbid'` lets the deployer choose.
-
-Option C is the target. The engine constructor will accept a `defaultEffect` parameter, defaulting to `permit` for backwards compatibility while allowing security-conscious deployments to switch to `forbid`.
+**Note:** With implicit permit, condition-gated permit rules (e.g. "git only on trusted channels") become no-ops when the condition fails — the request falls through to implicit permit. Explicit forbid rules (e.g. "block exec", "block rm") are unaffected and still enforce correctly. For condition-gated restrictions that must block, consider converting them to forbid rules with inverted conditions in a future pass.
 
 ---
 
