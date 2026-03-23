@@ -35,20 +35,22 @@ Agent reasons → picks a tool → OpenAuthority intercepts
 
 Every agent action flows through a pipeline:
 
-1. **Normalise** --- the raw tool call is converted into a structured `ActionRequest`
-2. **Evaluate** --- the policy engine checks rules (Cedar-style forbid-wins semantics)
-3. **Gate** --- if `forbid`, the call is blocked; if `ask-user`, it's routed to a human for approval; if `permit`, it proceeds
-4. **Audit** --- the full decision (request + outcome + result) is logged for provenance
+1. **Normalise** --- the raw tool call is converted into a structured action request
+2. **Evaluate** --- the Cedar-style policy engine checks rules (forbid-wins semantics)
+3. **Gate** --- if `forbid`, the call is blocked; if `permit`, it proceeds. HITL `ask-user` routing is on the [roadmap](docs/roadmap.md).
+4. **Audit** --- the decision is logged for provenance
 
 ## Human-in-the-Loop (HITL)
 
-The HITL system is the core differentiator. For irreversible or high-stakes actions, the agent pauses and asks a human before proceeding.
+> **Status: framework built, integration pending.** The HITL policy schema, action pattern matcher, file parser, and hot-reload watcher are built and tested (48 test cases). The hook integration (wiring into `before_tool_call`) and the Telegram approval adapter are the next items on the [roadmap](docs/roadmap.md).
 
-### How it works
+For irreversible or high-stakes actions, the HITL system will pause the agent and route the decision to a human for approval via Telegram or other messaging channels.
+
+### How it will work
 
 1. You declare which actions require approval in a policy file (YAML or JSON)
 2. When the agent attempts a matching action, the plugin intercepts it
-3. An approval request is sent to the configured channel (Telegram, Slack, or any messaging integration)
+3. An approval request is sent to the configured channel (Telegram, Slack, or other messaging integration)
 4. The agent waits for a response (approve/reject) or until timeout
 5. On timeout, the configured fallback applies (`deny` or `auto-approve`)
 
@@ -161,6 +163,7 @@ policies:
 | [API Reference](docs/api.md) | REST endpoints for the dashboard server |
 | [Cedar Compilation](docs/cedar-compilation.md) | Cedar policy language compilation guide |
 | [SecuritySPEC Schema](docs/securityspec-schema.md) | SecuritySPEC YAML schema reference |
+| [Roadmap](docs/roadmap.md) | What's shipped, in progress, and planned next |
 | [Troubleshooting](docs/troubleshooting.md) | Common issues and fixes |
 | [Contributing](docs/contributing.md) | Development setup and PR process |
 
@@ -177,16 +180,16 @@ policies:
 
 ### Gateway hooks
 
-The plugin registers three OpenClaw gateway hooks:
+The plugin implements three OpenClaw gateway hooks. Currently only `before_tool_call` is active:
 
-- **`before_tool_call`** --- primary enforcement hook. Evaluates Cedar rules, JSON rules, ABAC policies, and HITL policies. Can block execution.
-- **`before_prompt_build`** --- prompt injection detection (8 regex patterns). Observe/mutate only.
-- **`before_model_resolve`** --- model routing and override logic. Observe/mutate only.
+- **`before_tool_call`** (active) --- primary enforcement hook. Evaluates Cedar rules, JSON rules, and ABAC policies. Can block execution.
+- **`before_prompt_build`** (implemented, disabled) --- prompt injection detection (10 regex patterns). Will be re-enabled after false-positive tuning.
+- **`before_model_resolve`** (implemented, disabled) --- model routing. Waiting for OpenClaw to pass the model name in the event payload.
 
 ### Key design decisions
 
 - **Forbid-wins semantics** --- a single `forbid` rule overrides any number of `permit` rules. Security-conservative by default.
-- **Implicit deny** --- no matching rule = denied. You must explicitly permit.
+- **Configurable default** --- no matching rule defaults to `permit` (implicit allow) so OpenClaw tools are never accidentally blocked. Can be set to `forbid` for locked-down deployments.
 - **Hot reload** --- edit rules, save, new rules take effect in ~300ms. No restart.
 - **Fail closed** --- if the engine errors during evaluation, the action is denied.
 
@@ -212,6 +215,10 @@ src/
     matcher.ts      — Action pattern matching (dot-notation wildcards)
     parser.ts       — YAML/JSON policy file parsing and validation
     watcher.ts      — HITL policy hot-reload watcher
+skills/
+  budget/           — /budget skill for ClawHub (token tracking, spend alerts)
+  whatdidyoudo/     — /whatdidyoudo skill for ClawHub (action replay log)
+  approve/          — /approve skill for ClawHub (soft HITL approval gate)
 ui/
   server.ts         — Express dashboard server
   routes/
