@@ -69,6 +69,26 @@ export interface PolicyDecisionEntry {
   rateLimit?: PolicyDecisionRateLimit;
 }
 
+/** A HITL approval decision log entry written to the JSONL audit file. */
+export interface HitlDecisionEntry {
+  ts: string;
+  type: 'hitl';
+  decision:
+    | 'approved'
+    | 'denied'
+    | 'expired'
+    | 'fallback-deny'
+    | 'fallback-auto-approve'
+    | 'telegram-unreachable'
+    | 'slack-unreachable';
+  token: string;
+  toolName: string;
+  agentId: string;
+  channel: string;
+  policyName: string;
+  timeoutSeconds: number;
+}
+
 export interface JsonlAuditLoggerOptions {
   /** Absolute or relative path to the JSONL log file. Created if it does not exist. */
   logFile: string;
@@ -82,7 +102,7 @@ export class JsonlAuditLogger {
     this.logFile = options.logFile;
   }
 
-  async log(entry: PolicyDecisionEntry): Promise<void> {
+  async log(entry: PolicyDecisionEntry | HitlDecisionEntry): Promise<void> {
     const line = JSON.stringify(entry) + "\n";
     try {
       await mkdir(dirname(this.logFile), { recursive: true });

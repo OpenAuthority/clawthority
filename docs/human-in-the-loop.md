@@ -1,8 +1,6 @@
 # Human-in-the-Loop (HITL)
 
-> **Status: framework built, integration pending.** The policy schema, action matcher, file parser, and hot-reload watcher are built and fully tested. The remaining work is: (1) wiring `checkAction()` into the `before_tool_call` hook, and (2) building the Telegram approval adapter. See the [roadmap](roadmap.md) for details.
-
-This guide covers how OpenAuthority will route high-stakes agent actions to a human for approval before execution, using Telegram or other messaging channels.
+This guide covers how OpenAuthority routes high-stakes agent actions to a human operator for approval before execution, using Telegram or Slack.
 
 ---
 
@@ -10,7 +8,7 @@ This guide covers how OpenAuthority will route high-stakes agent actions to a hu
 
 AI agents interpret instructions. Sometimes they interpret them wrong. "Clean up this thread" becomes "delete 340 emails." "Organize my files" becomes "move everything, including `.env`."
 
-The HITL system ensures that irreversible or high-impact actions require explicit human approval before they execute. The agent pauses, a message is sent to you via Telegram (or another channel), and the action only proceeds if you approve.
+The HITL system ensures that irreversible or high-impact actions require explicit human approval before they execute. The agent pauses, a message is sent to you via Telegram or Slack, and the action only proceeds if you approve.
 
 This is not a prompt asking the model to check with you. It is a code-level gate in the execution path. The model cannot decide to skip it, forget it, or reason its way around it.
 
@@ -20,34 +18,82 @@ This is not a prompt asking the model to check with you. It is a code-level gate
 
 ```
 Agent attempts email.delete
-        │
-        ▼
-  HITL matcher checks action against policies
-        │
-        ├── No match → action proceeds to policy engine
-        │
-        └── Match found → approval required
-                │
-                ▼
-        Approval request sent to channel (e.g. Telegram)
-                │
-                ├── User approves  → action proceeds
-                ├── User rejects   → action blocked, agent notified
-                └── Timeout        → fallback applies (deny or auto-approve)
+        |
+        v
+  Cedar / JSON / ABAC policy engines evaluate
+        |
+        +-- forbid? --> action blocked (no HITL check)
+        |
+        +-- permit? --> continue to HITL
+                |
+                v
+          HITL matcher checks action against policies
+                |
+                +-- No match --> action proceeds
+                |
+                +-- Match found --> approval required
+                        |
+                        v
+                Approval request sent to channel (Telegram or Slack)
+                        |
+                        +-- Operator approves  --> action proceeds
+                        +-- Operator denies    --> action blocked
+                        +-- Timeout            --> fallback applies (deny or auto-approve)
 ```
 
-When integrated, the HITL check will happen **before** the policy engine evaluation. If an action matches a HITL policy, it will need to be approved by a human before any other rules are evaluated.
+HITL runs **after** the policy engines. If a policy engine already blocks the action, the HITL check is never reached. This means HITL adds human oversight on top of hard policy boundaries --- it cannot override a policy-level block.
+
+---
+
+## Setup
+
+### 1. Create a policy file
+
+Create `hitl-policy.yaml` in the plugin root (`~/.openclaw/plugins/openauthority/`):
+
+```yaml
+version: "1"
+
+policies:
+  - name: destructive-actions
+    actions:
+      - "email.delete"
+      - "file.delete"
+    approval:
+      channel: telegram
+      timeout: 120
+      fallback: deny
+```
+
+### 2. Configure the channel
+
+Set the required environment variables for your chosen channel (see [Telegram](#telegram) and [Slack](#slack) sections below).
+
+### 3. Restart the plugin
+
+The HITL policy file is loaded on plugin activation. After that, edits to the file are hot-reloaded automatically.
 
 ---
 
 ## Policy File Format
 
-HITL policies are defined in a YAML or JSON file. The file is hot-reloaded --- edit it while the plugin is running and the new policies take effect immediately.
+HITL policies are defined in YAML or JSON. The file is hot-reloaded --- edit it while the plugin is running and the new policies take effect immediately.
 
-### YAML example
+### Full YAML example
 
 ```yaml
 version: "1"
+
+# Channel credentials (env vars take precedence over these values)
+# telegram:
+#   botToken: ""
+#   chatId: ""
+# slack:
+#   botToken: ""
+#   channelId: ""
+#   signingSecret: ""
+#   interactionPort: 3201
+
 policies:
   - name: destructive-actions
     description: Require approval before deleting anything
@@ -66,9 +112,8 @@ policies:
     actions:
       - "email.send"
       - "slack.send"
-      - "sms.send"
     approval:
-      channel: telegram
+      channel: slack
       timeout: 180
       fallback: deny
     tags: [communication]
@@ -85,25 +130,6 @@ policies:
     tags: [ops, deploy]
 ```
 
-### JSON example
-
-```json
-{
-  "version": "1",
-  "policies": [
-    {
-      "name": "destructive-actions",
-      "actions": ["email.delete", "file.delete"],
-      "approval": {
-        "channel": "telegram",
-        "timeout": 120,
-        "fallback": "deny"
-      }
-    }
-  ]
-}
-```
-
 ---
 
 ## Schema Reference
@@ -114,6 +140,8 @@ policies:
 |---|---|---|---|
 | `version` | `string` | Yes | Schema version. Must be `"1"`. |
 | `policies` | `HitlPolicy[]` | Yes | Ordered list of policies. First match wins. |
+| `telegram` | `TelegramConfig` | No | Telegram bot credentials. |
+| `slack` | `SlackConfig` | No | Slack bot credentials and webhook config. |
 
 ### Policy: `HitlPolicy`
 
@@ -129,9 +157,25 @@ policies:
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `channel` | `string` | Yes | Channel to send approval requests to. Examples: `"telegram"`, `"slack"`, `"console"`. |
+| `channel` | `string` | Yes | Channel adapter to use: `"telegram"` or `"slack"`. |
 | `timeout` | `number` | Yes | Seconds to wait for a response. Minimum: 1. |
 | `fallback` | `"deny"` \| `"auto-approve"` | Yes | What happens when timeout elapses without a response. |
+
+### Telegram config: `TelegramConfig`
+
+| Field | Type | Description |
+|---|---|---|
+| `botToken` | `string` | Telegram Bot API token. Overridden by `TELEGRAM_BOT_TOKEN` env var. |
+| `chatId` | `string` | Telegram chat ID. Overridden by `TELEGRAM_CHAT_ID` env var. |
+
+### Slack config: `SlackConfig`
+
+| Field | Type | Description |
+|---|---|---|
+| `botToken` | `string` | Slack Bot User OAuth Token (`xoxb-...`). Overridden by `SLACK_BOT_TOKEN` env var. |
+| `channelId` | `string` | Slack channel ID. Overridden by `SLACK_CHANNEL_ID` env var. |
+| `signingSecret` | `string` | Slack Signing Secret for webhook verification. Overridden by `SLACK_SIGNING_SECRET` env var. |
+| `interactionPort` | `number` | Port for the interaction webhook server. Default: `3201`. Overridden by `SLACK_INTERACTION_PORT` env var. |
 
 ### Fallback behaviour
 
@@ -175,7 +219,7 @@ This means you can layer policies from most specific to most general:
 
 ```yaml
 policies:
-  # Specific: financial deletes need finance team approval
+  # Specific: financial deletes need longer timeout
   - name: finance-delete
     actions: ["invoice.delete", "payment.delete"]
     approval:
@@ -183,11 +227,11 @@ policies:
       timeout: 300
       fallback: deny
 
-  # General: all other deletes need standard approval
+  # General: all other deletes
   - name: general-delete
     actions: ["*.delete"]
     approval:
-      channel: telegram
+      channel: slack
       timeout: 120
       fallback: deny
 ```
@@ -196,26 +240,139 @@ policies:
 
 ## Approval Channels
 
-The `channel` field in the approval config determines where the approval request is sent. The HITL framework is channel-agnostic --- it defines the policy and matching logic, while the actual message delivery is handled by channel adapters.
-
 ### Telegram
 
-The primary integration target. When an action requires approval:
+Uses the Telegram Bot API with long polling to receive operator responses.
 
-1. The plugin sends a message to the configured Telegram chat/bot with details of the requested action (tool name, arguments, agent context)
-2. The user replies with an approve or reject decision
-3. The plugin receives the response and either allows or blocks the action
+**Setup:**
+1. Create a bot via [@BotFather](https://t.me/BotFather) and note the token
+2. Get your chat ID (message the bot, then check `https://api.telegram.org/bot<TOKEN>/getUpdates`)
+3. Set environment variables:
+   ```bash
+   export TELEGRAM_BOT_TOKEN="123456:ABC-DEF..."
+   export TELEGRAM_CHAT_ID="987654321"
+   ```
 
-**Timeout handling:** If no response is received within the configured timeout, the fallback action applies. For `deny`, the agent receives a structured rejection: `"action timed out, no operation performed."`
+**Approval flow:**
+1. Agent triggers a matched action
+2. Bot sends a message to your chat with action details and a unique 8-character token
+3. You reply `/approve <token>` or `/deny <token>`
+4. The plugin resolves the pending action and the agent continues or receives a rejection
 
-### Other channels
+**Message format:**
+```
+HITL Approval Request --- abc12345
 
-The architecture supports any messaging channel that can send a message and receive a response. Future integrations:
+Tool: email.delete
+Agent: agent-1
+Policy: destructive-actions
+Expires in: 120s
 
-- **Slack** --- approve/reject via message buttons
-- **Web dashboard** --- approve/reject from the OpenAuthority UI
-- **Console** --- interactive terminal prompt (development/testing)
-- **Webhook** --- POST to any HTTP endpoint, await callback
+Reply: /approve abc12345  or  /deny abc12345
+```
+
+### Slack
+
+Uses the Slack Web API with Block Kit interactive buttons. Requires a webhook endpoint for receiving button clicks.
+
+**Setup:**
+1. Create a Slack App at [api.slack.com/apps](https://api.slack.com/apps)
+2. Add the `chat:write` bot scope and install to your workspace
+3. Note the Bot User OAuth Token (`xoxb-...`) and Signing Secret
+4. Under **Interactivity & Shortcuts**, enable interactivity and set the Request URL to `http://<your-host>:3201/slack/interactions`
+5. Set environment variables:
+   ```bash
+   export SLACK_BOT_TOKEN="xoxb-..."
+   export SLACK_CHANNEL_ID="C0123456789"
+   export SLACK_SIGNING_SECRET="your-signing-secret"
+   # Optional: override default port 3201
+   export SLACK_INTERACTION_PORT="3201"
+   ```
+
+**Approval flow:**
+1. Agent triggers a matched action
+2. Bot posts a message to the configured channel with action details and two buttons: **Approve** and **Deny**
+3. Operator clicks a button
+4. The interaction webhook receives the click, verifies the Slack signature, and resolves the pending action
+5. The original message is updated to show the decision (buttons removed)
+
+**Security:** All incoming webhook requests are verified using Slack's `v0=` HMAC-SHA256 signing scheme. Requests older than 5 minutes are rejected.
+
+---
+
+## Approval Tokens
+
+Each HITL request generates a unique 8-character alphanumeric token (base64url). The token:
+
+- Links the approval request to the pending action
+- Is displayed in the notification message
+- Has a TTL equal to the policy's `timeout` value
+- Expires automatically --- expired tokens result in the configured `fallback` action
+- Is stored in-memory only --- pending approvals do not survive plugin restarts
+
+Multiple simultaneous HITL requests are supported. Each has an independent token and state.
+
+---
+
+## Audit Logging
+
+HITL decisions are written to the same JSONL audit log as policy decisions (`data/audit.jsonl`).
+
+### HITL audit entry schema
+
+| Field | Type | Description |
+|---|---|---|
+| `ts` | `string` (ISO 8601) | When the decision was recorded |
+| `type` | `"hitl"` | Distinguishes HITL entries from policy entries |
+| `decision` | `string` | One of: `approved`, `denied`, `expired`, `fallback-deny`, `fallback-auto-approve`, `telegram-unreachable`, `slack-unreachable` |
+| `token` | `string` | The 8-character approval token |
+| `toolName` | `string` | The tool that triggered the HITL check |
+| `agentId` | `string` | The agent that requested the action |
+| `channel` | `string` | The agent's channel context |
+| `policyName` | `string` | The HITL policy that matched |
+| `timeoutSeconds` | `number` | The configured timeout for this policy |
+
+---
+
+## Evaluation Pipeline
+
+```
+Agent action
+  |
+  v
+1. Cedar engine (TypeScript rules, hot-reloaded)
+  |-- forbid? --> BLOCK
+  |-- pass? --> continue
+  |
+  v
+2. JSON Cedar engine (data/rules.json)
+  |-- forbid? --> BLOCK
+  |-- pass? --> continue
+  |
+  v
+3. ABAC engine (TypeBox policies)
+  |-- deny? --> BLOCK
+  |-- pass? --> continue
+  |
+  v
+4. HITL check (does this action need human approval?)
+  |-- no match --> ALLOW
+  |-- match --> send approval request, await response
+      |-- approved --> ALLOW
+      |-- denied --> BLOCK
+      |-- expired + fallback=deny --> BLOCK
+      |-- expired + fallback=auto-approve --> ALLOW
+  |
+  v
+5. Audit log (all decisions recorded)
+```
+
+A HITL-approved action has already passed through all policy engines. Approval from a human does not bypass budget caps, capability gates, or forbid rules. The two systems are complementary:
+
+- **Policy engines** answer: "Is this action permitted by the rules?"
+- **HITL** answers: "Does a human consent to this action?"
+
+Both must pass for the action to execute.
 
 ---
 
@@ -232,37 +389,19 @@ This means you can add, remove, or modify HITL policies without restarting the p
 
 ---
 
-## Integration with the Policy Engine
+## Error Handling
 
-When fully integrated, the HITL check will be one layer in the action pipeline:
+The HITL system is designed to fail safely:
 
-```
-Agent action
-  │
-  ▼
-1. Normalise (raw event → action request)
-  │
-  ▼
-2. HITL check (does this action need human approval?)    ← planned
-  │── yes → route to approval channel, wait
-  │── no  → continue
-  │
-  ▼
-3. Policy evaluation (Cedar engine: permit / forbid / rate limit)
-  │
-  ▼
-4. Execute (if permitted) or block (if denied)
-  │
-  ▼
-5. Audit log (request + decision + result)
-```
-
-A HITL-approved action will still pass through the policy engine. Approval from a human will not bypass budget caps, capability gates, or forbid rules. The two systems are complementary:
-
-- **HITL** answers: "Does a human consent to this action?"
-- **Policy engine** answers: "Is this action permitted by the rules?"
-
-Both must pass for the action to execute.
+| Scenario | Behaviour |
+|---|---|
+| Channel unreachable (network error) | Fallback applies (`deny` or `auto-approve` per policy) |
+| Channel not configured (missing credentials) | Fallback applies |
+| HITL policy file missing | HITL disabled; all actions pass through to policy engines only |
+| HITL policy file invalid | Previous config remains active; error logged |
+| HITL evaluation error | Fail closed (action blocked) |
+| Token expired | Fallback applies |
+| Unknown token in response | Ignored; logged as warning |
 
 ---
 
@@ -274,20 +413,9 @@ Your agent has email access. A user types "clean up this thread." The agent inte
 
 Without HITL: 340 emails deleted. No recovery.
 
-With HITL:
-```
-Telegram message:
-  OpenAuthority: Agent is requesting email.delete on 340
-  messages in thread [Project Weekly].
-  Approve? Reply YES or NO.
+With HITL: you get a Telegram message asking to approve `email.delete`. You deny and clarify. The agent calls `email.archive` instead. Data intact.
 
-You reply: NO
-
-Agent receives rejection. You clarify: "I meant archive, not delete."
-Agent calls email.archive instead. 340 emails archived. Data intact.
-```
-
-### Budget-sensitive operations with fallback
+### Budget-sensitive operations
 
 ```yaml
 - name: expensive-operations
@@ -298,13 +426,13 @@ Agent calls email.archive instead. 340 emails archived. Data intact.
     fallback: deny
 ```
 
-The agent wants to kick off a batch job that will cost $50 in API calls. You get a Telegram ping. If you're available, you approve. If you're asleep, the timeout fires and the action is denied. Your bill stays bounded.
+The agent wants to kick off a batch job that will cost $50 in API calls. You get a Telegram ping. If you're available, you approve. If you're away, the timeout fires and the action is denied. Your bill stays bounded.
 
-### Multi-tier approval
+### Mixed channels
 
 ```yaml
 policies:
-  # Tier 1: critical actions --- long timeout, always deny on timeout
+  # Critical actions go to Telegram (direct, always on phone)
   - name: critical
     actions: ["*.delete", "*.deploy", "payment.*"]
     approval:
@@ -312,28 +440,29 @@ policies:
       timeout: 300
       fallback: deny
 
-  # Tier 2: reversible actions --- shorter timeout, auto-approve if no response
+  # Reversible actions go to Slack (team visibility)
   - name: reversible
     actions: ["email.archive", "file.move"]
     approval:
-      channel: telegram
+      channel: slack
       timeout: 60
       fallback: auto-approve
 ```
 
 ---
 
-## Testing HITL Policies
-
-The HITL system has a comprehensive test suite covering pattern matching, policy evaluation, schema validation, file parsing, and watcher behaviour.
+## Testing
 
 ```bash
 npm test
 ```
 
 Key test areas:
-- **Pattern matching**: 13 test cases covering wildcards, exact match, segment count rules, edge cases
-- **Policy evaluation**: first-match-wins semantics, no-match returns, optional fields
+- **Pattern matching**: wildcard, exact match, segment count rules
+- **Policy evaluation**: first-match-wins semantics
 - **Schema validation**: required fields, type checking, edge cases
 - **File parsing**: JSON and YAML formats, error handling
-- **Watcher**: debounce, reload on change, error isolation, idempotent stop
+- **Watcher**: debounce, reload on change, error isolation
+- **Approval manager**: token generation, TTL expiry, concurrent requests, shutdown
+- **Telegram adapter**: config resolution, message formatting, long-polling, command parsing
+- **Slack adapter**: config resolution, Block Kit formatting, signature verification, interaction server

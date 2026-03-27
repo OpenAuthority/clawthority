@@ -40,13 +40,17 @@ These features are built, tested, and working in the current codebase.
 - Custom handler support
 - PolicyDecisionEntry schema with structured fields
 
-### HITL Framework (built, integration pending)
+### Human-in-the-Loop (HITL)
 - TypeBox-validated policy schema (HitlPolicyConfig, HitlPolicy, HitlApprovalConfig)
-- Action pattern matcher with dot-notation wildcards (13 test cases)
+- Action pattern matcher with dot-notation wildcards
 - JSON and YAML policy file parser with schema validation
 - Hot-reload watcher for HITL policy files (debounced, atomic swap)
-- Comprehensive test suite (53+ test cases across matcher, validator, parser, watcher)
-- **Not yet wired into `before_tool_call`** — the framework is ready, the hook integration is next
+- In-memory approval manager with token generation, TTL expiry, and concurrent request support
+- **Telegram adapter**: long-polling listener, approval request messages, `/approve` and `/deny` command parsing
+- **Slack adapter**: Block Kit interactive buttons, interaction webhook server with signature verification, message update on decision
+- Wired into `before_tool_call` as step 4 (after Cedar, JSON Cedar, and ABAC engines)
+- HITL decisions logged to JSONL audit file
+- Fail-safe: channel unreachable or not configured applies policy fallback; evaluation errors fail closed
 
 ### UI Dashboard
 - Express server with REST API
@@ -72,17 +76,6 @@ These features are built, tested, and working in the current codebase.
 
 ## In Progress
 
-### HITL Hook Integration
-Wire the HITL matcher into `before_tool_call` so that actions matching a HITL policy pause execution and route to the approval flow.
-
-**What exists:** The `checkAction()` function, policy parser, and watcher are built and tested.
-
-**What's needed:**
-- Load HITL policy file during plugin `activate()`
-- Call `checkAction()` inside `beforeToolCallHandler` before Cedar/ABAC evaluation
-- When `requiresApproval` is true, return a structured response that triggers the approval flow
-- Define the approval request/response protocol
-
 ### Configurable Default Effect ✅
 The Cedar engine now accepts a `defaultEffect` constructor option (`'permit' | 'forbid'`). The default is `'permit'` (implicit allow) to avoid accidentally blocking OpenClaw tool calls. Deployments that need strict deny-by-default can set `defaultEffect: 'forbid'`.
 
@@ -91,14 +84,6 @@ The Cedar engine now accepts a `defaultEffect` constructor option (`'permit' | '
 ---
 
 ## Next Up
-
-### Telegram Approval Adapter
-Build the messaging bridge for HITL `ask-user` decisions:
-- Telegram bot that sends approval requests with action details
-- Approve/reject via reply or inline buttons
-- Timeout handling (configurable per-policy)
-- Fallback behaviour (deny or auto-approve on timeout)
-- Message formatting with action name, arguments, agent context
 
 ### Structured Decision Object
 Enrich the policy engine response beyond boolean permit/forbid:
@@ -128,7 +113,6 @@ Register OpenAuthority as an OpenClaw capability provider via `api.registerProvi
 ## Future
 
 ### Additional Approval Channels
-- **Slack** — approve/reject via message buttons
 - **Web dashboard** — approve/reject from the OpenAuthority UI with pending action queue
 - **Webhook** — POST to any HTTP endpoint, await callback
 - **Email** — approval via email reply (for compliance workflows)

@@ -101,6 +101,22 @@ Path is controlled by the `AUDIT_LOG_FILE` environment variable (default: `../..
 
 ## Environment Variables
 
+### HITL — Telegram
+
+| Variable | Default | Description |
+|---|---|---|
+| `TELEGRAM_BOT_TOKEN` | — | Telegram Bot API token. Takes precedence over `hitl-policy.yaml` config. |
+| `TELEGRAM_CHAT_ID` | — | Telegram chat ID to send approval requests to. Takes precedence over config. |
+
+### HITL — Slack
+
+| Variable | Default | Description |
+|---|---|---|
+| `SLACK_BOT_TOKEN` | — | Slack Bot User OAuth Token (`xoxb-...`). Takes precedence over config. |
+| `SLACK_CHANNEL_ID` | — | Slack channel ID. Takes precedence over config. |
+| `SLACK_SIGNING_SECRET` | — | Slack Signing Secret for verifying interaction webhooks. Takes precedence over config. |
+| `SLACK_INTERACTION_PORT` | `3201` | Port for the Slack interaction webhook server. Takes precedence over config. |
+
 ### UI server (`ui/`)
 
 | Variable | Default | Description |
