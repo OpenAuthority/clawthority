@@ -1,5 +1,5 @@
 ---
-name: approve
+name: human approval
 description: Soft human-in-the-loop approval gate. Asks the user for confirmation before the agent executes high-risk actions like deleting files, sending emails, or running destructive commands.
 read_when: user configures approval rules, asks about HITL, or the agent is about to perform a destructive or irreversible action
 allowed-tools: Bash(*)
