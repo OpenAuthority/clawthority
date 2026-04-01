@@ -1,11 +1,10 @@
 ---
 name: token-budget
-version: 1.0.0
+version: 1.0.1
 author: openauthority
 license: MIT-0
-description: Track your AI agent's token usage, API spend, and set soft budget thresholds with alerts via Telegram or other channels.
+description: Track your AI agent's token usage, API spend, and set soft budget thresholds with in-session warnings.
 read_when: user asks about budget, token usage, spend tracking, cost monitoring, API costs, or invokes /token-budget
-allowed-tools: Bash(*)
 ---
 
 # /token-budget — Agent Budget Tracker
@@ -63,11 +62,14 @@ Mar 15:   15,100 tokens   $0.76
 Weekly total: 145,400 tokens  $7.28
 ```
 
-### `/token-budget alert <channel>`
+### `/token-budget alert`
 
-Configure where threshold alerts are sent. Supported channels: `telegram`, `console`.
+When the daily token threshold is crossed, the skill prints a warning directly in the session:
 
-Example: `/token-budget alert telegram` — send alerts via Telegram when threshold is crossed.
+```
+⚠ Token budget warning: 42,300 / 50,000 tokens used today (84.6%)
+Consider pausing or reducing activity to stay within your threshold.
+```
 
 ## How Token Counting Works
 
@@ -94,4 +96,4 @@ The skill reads from:
 - OpenClaw session metadata (token counts per turn)
 - Local state file at `~/.openclaw/openauthority/budget-state.json` (thresholds, history)
 
-No data is sent externally. All tracking is local.
+No data is sent externally. All tracking is local and read-only from session context.
