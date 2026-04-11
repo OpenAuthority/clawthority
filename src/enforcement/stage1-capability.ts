@@ -11,6 +11,7 @@ import type { Capability } from '../adapter/types.js';
  * at the boundary and returned as a `stage1_error` forbid decision (fail closed).
  *
  * Check order:
+ *   0. Untrusted source + high/critical risk → forbid (untrusted_source_high_risk)
  *   1. hitl_mode none → permit bypass (low-risk actions)
  *   2. Missing approval_id → forbid (approval required)
  *   3. TTL expiration → forbid (capability expired)
@@ -28,6 +29,14 @@ export async function validateCapability(
   getCapability: (id: string) => Capability | undefined,
 ): Promise<CeeDecision> {
   try {
+    // 0. Untrusted source + high/critical risk → deny regardless of HITL mode.
+    if (
+      ctx.sourceTrustLevel === 'untrusted' &&
+      (ctx.risk === 'high' || ctx.risk === 'critical')
+    ) {
+      return { effect: 'forbid', reason: 'untrusted_source_high_risk', stage: 'stage1' };
+    }
+
     // 1. Low-risk bypass: hitl_mode none skips all capability checks.
     if (ctx.hitl_mode === 'none') {
       return { effect: 'permit', reason: 'hitl_mode none; capability gate bypassed', stage: 'stage1' };

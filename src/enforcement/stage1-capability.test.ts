@@ -3,6 +3,12 @@ import { validateCapability } from './stage1-capability.js';
 import type { PipelineContext, CeeDecision } from './pipeline.js';
 
 describe('validateCapability', () => {
+  it.todo('forbids when source is untrusted and risk is high');
+  it.todo('forbids when source is untrusted and risk is critical');
+  it.todo('permits when source is untrusted but risk is low');
+  it.todo('permits when source is untrusted but risk is medium');
+  it.todo('permits when source is user regardless of risk');
+  it.todo('permits when source is agent regardless of risk');
   it.todo('permits when hitl_mode is none (low-risk bypass)');
   it.todo('forbids when approval_id is missing');
   it.todo('forbids when capability is not found in the store');

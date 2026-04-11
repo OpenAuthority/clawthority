@@ -94,9 +94,12 @@ import type { HitlPolicyConfig } from "./hitl/types.js";
 import { ApprovalManager } from "./hitl/approval-manager.js";
 import { TelegramListener, sendApprovalRequest, sendConfirmation, resolveTelegramConfig } from "./hitl/telegram.js";
 import { SlackInteractionServer, sendSlackApprovalRequest, sendSlackConfirmation, resolveSlackConfig } from "./hitl/slack.js";
+import { createHash } from "node:crypto";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { normalize_action, sortedJsonStringify } from "./enforcement/normalize.js";
+import { buildEnvelope } from "./enforcement/pipeline.js";
 
 // ─── Hook types (matching OpenClaw's actual API) ─────────────────────────────
 
@@ -114,6 +117,9 @@ export interface BeforeToolCallEvent {
   toolName: string;
   /** The parameters that will be passed to the tool. */
   params?: unknown;
+  /** Source of the tool call — 'user' | 'agent' | 'external' | string.
+   *  Used to determine the source trust level for enforcement decisions. */
+  source?: string;
 }
 
 /** Return value for before_tool_call — set block=true to prevent the call. */
@@ -597,7 +603,21 @@ async function logHitlDecision(
   });
 }
 
-const beforeToolCallHandler: BeforeToolCallHandler = ({ toolName }, ctx) => {
+/**
+ * Determines the source trust level from the event source field.
+ *
+ * Mapping:
+ *   'user'               → 'user'      (direct user instruction)
+ *   'agent' | undefined  → 'agent'     (autonomous agent reasoning)
+ *   anything else        → 'untrusted' (external content: web, file, email, etc.)
+ */
+function determineSourceTrustLevel(source?: string): 'user' | 'agent' | 'untrusted' {
+  if (source === 'user') return 'user';
+  if (source === 'agent' || source === undefined) return 'agent';
+  return 'untrusted';
+}
+
+const beforeToolCallHandler: BeforeToolCallHandler = ({ toolName, params, source }, ctx) => {
   console.log(`[openauthority] ┌─ before_tool_call ──────────────────────────────────`);
   console.log(`[openauthority] │ tool=${toolName}  agent=${ctx.agentId ?? "unknown"}  channel=${ctx.channelId ?? "unknown"}`);
   const ruleContext: RuleContext = {
@@ -607,6 +627,40 @@ const beforeToolCallHandler: BeforeToolCallHandler = ({ toolName }, ctx) => {
     // named channels like "webchat" — rules explicitly reference them.
     channel: ctx.channelId || "default",
   };
+
+  // ── 0. Source trust level determination ───────────────────────────────────
+  const normalizedParams = (params !== null && typeof params === 'object' && !Array.isArray(params))
+    ? (params as Record<string, unknown>)
+    : {};
+  const sourceTrustLevel = determineSourceTrustLevel(source);
+  const normalizedAction = normalize_action(toolName, normalizedParams);
+  console.log(`[openauthority] │ [trust] source=${source ?? "undefined"} → trustLevel=${sourceTrustLevel}  actionClass=${normalizedAction.action_class}  risk=${normalizedAction.risk}`);
+
+  // Build envelope to propagate trust context for audit and pipeline tracing.
+  const _envelope = buildEnvelope(
+    {
+      action_class: normalizedAction.action_class,
+      target: normalizedAction.target,
+      summary: `tool call: ${toolName}`,
+      payload_hash: createHash('sha256').update(sortedJsonStringify(normalizedParams)).digest('hex'),
+      parameters: normalizedParams,
+    },
+    null,
+    sourceTrustLevel,
+    ctx.agentId ?? 'unknown',
+    '',
+    0,
+    '',
+  );
+
+  // ── Stage 1: trust level gate ─────────────────────────────────────────────
+  // Untrusted sources (external content: web, file, email, etc.) are blocked
+  // from triggering high/critical-risk actions.
+  if (sourceTrustLevel === 'untrusted' && (normalizedAction.risk === 'high' || normalizedAction.risk === 'critical')) {
+    console.log(`[openauthority] │ DECISION: ✕ BLOCKED (stage1/untrusted_source_high_risk) — actionClass=${normalizedAction.action_class} risk=${normalizedAction.risk}`);
+    console.log(`[openauthority] └──────────────────────────────────────────────────────`);
+    return { block: true, blockReason: 'untrusted_source_high_risk' };
+  }
 
   // ── 1. Cedar engine (TypeScript rules, hot-reloaded) ──────────────────────
   try {

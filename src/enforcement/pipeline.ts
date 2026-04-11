@@ -1,6 +1,8 @@
 import { PolicyEngine } from '../policy/engine.js';
 import type { RuleContext, Resource } from '../policy/types.js';
 import type { EvaluationDecision } from '../policy/engine.js';
+import type { RiskLevel } from './normalize.js';
+import type { ExecutionEnvelope, Intent, Capability, Metadata } from '../types.js';
 
 /** HITL enforcement mode for the capability gate. */
 export type HitlMode = 'none' | 'per_request' | 'session_approval';
@@ -21,6 +23,10 @@ export interface PipelineContext {
   hitl_mode: HitlMode;
   /** Cedar rule evaluation context forwarded to Stage 2. */
   rule_context: RuleContext;
+  /** Trust level of the source initiating this action ('user', 'agent', or 'untrusted'). */
+  sourceTrustLevel?: string;
+  /** Effective risk level of the normalized action. */
+  risk?: RiskLevel;
 }
 
 export type CeeEffect = 'permit' | 'forbid';
@@ -46,6 +52,43 @@ const ACTION_CLASS_PREFIXES: ReadonlyArray<readonly [string, Resource]> = [
   ['prompt.', 'prompt'],
   ['model.', 'model'],
 ];
+
+/**
+ * Builds an ExecutionEnvelope for the enforcement pipeline, stamping the
+ * source trust level into envelope metadata for audit and tracing.
+ *
+ * @param intent           The agent's stated intent.
+ * @param capability       Capability token, or null if not yet approved.
+ * @param sourceTrustLevel Trust level of the source issuing the intent.
+ * @param sessionId        Session identifier.
+ * @param approvalId       UUID v7 of the backing approval, or empty string.
+ * @param bundleVersion    Monotonically increasing policy bundle version.
+ * @param traceId          Distributed trace identifier.
+ */
+export function buildEnvelope(
+  intent: Intent,
+  capability: Capability | null,
+  sourceTrustLevel: string,
+  sessionId: string,
+  approvalId: string,
+  bundleVersion: number,
+  traceId: string,
+): ExecutionEnvelope {
+  const metadata: Metadata = {
+    session_id: sessionId,
+    approval_id: approvalId,
+    timestamp: new Date().toISOString(),
+    bundle_version: bundleVersion,
+    trace_id: traceId,
+    source_trust_level: sourceTrustLevel,
+  };
+  return {
+    intent,
+    capability,
+    metadata,
+    provenance: {},
+  };
+}
 
 /**
  * Extends PolicyEngine with action-class-aware evaluation.
