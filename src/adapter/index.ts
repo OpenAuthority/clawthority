@@ -1,6 +1,8 @@
 export { PolicyBundleSchema } from './types.js';
 export type {
   PolicyBundle,
+  ApprovalRequest,
+  RevocationEvent,
   Capability,
   IssueCapabilityOpts,
   WatchHandle,
