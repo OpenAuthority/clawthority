@@ -746,7 +746,7 @@ const beforeToolCallHandler: BeforeToolCallHandler = ({ toolName, params, source
     // ── 4. HITL policy check ──────────────────────────────────────────────────
     if (hitlConfigRef.current !== null) {
       try {
-        const hitlResult = checkAction(hitlConfigRef.current, toolName);
+        const hitlResult = checkAction(hitlConfigRef.current, normalizedAction.action_class);
 
         if (hitlResult.requiresApproval && hitlResult.matchedPolicy) {
           const policy = hitlResult.matchedPolicy;
