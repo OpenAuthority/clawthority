@@ -44,4 +44,6 @@ export interface Rule {
   tags?: string[];
   /** Optional rate limiting configuration */
   rateLimit?: RateLimit;
+  /** Optional action class for Stage 2 semantic evaluation matching */
+  action_class?: string;
 }
