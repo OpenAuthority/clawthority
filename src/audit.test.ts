@@ -1,13 +1,3 @@
-/**
- * Phase 4 remnant: JsonlAuditLogger tests (audit.ts)
- *
- * All tests for the deleted evaluateRule / sortRulesByPriority (rules.ts),
- * PolicyEngine (engine.ts), AuditLogger and consoleAuditHandler (audit.ts ABAC
- * section) have been removed as part of Phase 4 cleanup.
- *
- * Only JsonlAuditLogger tests are retained here pending migration to a
- * dedicated audit.test.ts file in the deletion phase.
- */
 import {
   describe,
   it,

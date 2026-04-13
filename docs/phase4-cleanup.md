@@ -82,7 +82,7 @@ but no runtime code reads from it.
 | Task | Description | Status |
 |------|-------------|--------|
 | T48 | Modify 5 files (this doc) | Done |
-| T47 | Delete `src/engine.test.ts`, `src/dashboard/`, `data/builtin-rules.json` | Pending |
+| T49 | Delete `src/engine.test.ts`, `src/dashboard/`, `data/builtin-rules.json`; migrate JsonlAuditLogger tests to `src/audit.test.ts` | Done |
 
 ---
 
@@ -92,6 +92,6 @@ but no runtime code reads from it.
 - [x] `src/audit.ts` AuditLogger section removed
 - [x] `src/index.ts` ABAC re-exports and `writeBuiltinRulesSnapshot` removed
 - [x] `src/engine.test.ts` stripped to `JsonlAuditLogger` tests only
-- [ ] `src/engine.test.ts` deleted (T47)
-- [ ] `src/dashboard/` deleted (T47)
-- [ ] `data/builtin-rules.json` deleted (T47)
+- [x] `src/engine.test.ts` deleted (T49)
+- [x] `src/dashboard/` deleted (T49)
+- [x] `data/builtin-rules.json` deleted (T49)
