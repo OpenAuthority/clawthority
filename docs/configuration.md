@@ -139,22 +139,21 @@ Defines the configuration properties accepted by the plugin in `config.json`. Al
 
 ## Rules File
 
-Authorization rules are stored as a JSON array. The active file path is controlled by the `RULES_FILE` environment variable (default: `data/rules.json`).
+Authorization rules are stored as a JSON array in the bundle file. The active bundle path is controlled by the `BUNDLE_PATH` environment variable (default: `data/bundles/active/bundle.json`).
 
-The rules file is hot-reloaded: changes are picked up within 300 ms without restarting OpenClaw.
+The rules file is hot-reloaded: changes are picked up within 300 ms without restarting OpenClaw. Rules are evaluated by the Cedar WASM engine (v0.2+).
 
 ### Rule schema
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `id` | `string` | Yes | Unique identifier. Assigned automatically by the server on creation (UUID v4). |
-| `effect` | `"permit"` \| `"forbid"` | Yes | Whether to permit or forbid the matched resource. `forbid` wins over `permit` when both match the same request. |
-| `resource` | `"tool"` \| `"command"` \| `"channel"` \| `"prompt"` \| `"model"` | Yes | Type of resource this rule targets. |
-| `match` | `string` | Yes | Pattern matched against the resource name. Supports exact strings, `*` wildcard, and `/regex/` syntax (e.g. `/^write_.*/`). |
-| `condition` | `string` | No | Serialized function body for fine-grained runtime conditions evaluated against the request context. |
-| `reason` | `string` | No | Human-readable description of why this rule exists. Shown in audit logs and the dashboard. |
-| `tags` | `string[]` | No | Category labels for filtering and grouping in the dashboard. |
-| `rateLimit` | `object` | No | Sliding-window rate limit. See below. |
+| `effect` | `"permit"` \| `"forbid"` | Yes | Whether to permit or forbid the matched action class. `forbid` wins over `permit` when both match the same request. |
+| `action_class` | `string` | Yes | Canonical action class to target (e.g. `filesystem.read`, `payment.transfer`). Must match a class from the action registry. |
+| `reason` | `string` | No | Human-readable description of why this rule exists. Shown in audit logs. |
+| `tags` | `string[]` | No | Category labels for filtering and grouping. |
+| `rateLimit` | `object` | No | Sliding-window rate limit (applies to `permit` rules only). |
+
+> **v0.2 change:** The `resource`, `match`, and `condition` fields from the TypeScript engine are no longer supported. Target actions using `action_class`. Write conditional logic in Cedar policy files (`data/policies/*.cedar`).
 
 ### `rateLimit` object
 
@@ -163,59 +162,46 @@ The rules file is hot-reloaded: changes are picked up within 300 ms without rest
 | `maxCalls` | `integer` (≥1) | Yes | Maximum calls allowed within the window. |
 | `windowSeconds` | `integer` (≥1) | Yes | Duration of the sliding window in seconds. |
 
-When a rate limit is exceeded, the request is forbidden regardless of the rule's `effect`. Rate limit state is maintained in memory and resets on plugin restart.
+When a rate limit is exceeded, the request is forbidden regardless of the rule's `effect`. Rate limit state is maintained in memory and resets on plugin restart or hot-reload.
 
-### Match patterns
-
-| Pattern | Matches |
-|---|---|
-| `"read_file"` | Exactly `read_file` |
-| `"*"` | Any resource name |
-| `"write_*"` | Any name starting with `write_` (prefix wildcard) |
-| `"/^(read\|list)_/"` | Any name matching the regular expression |
-
-### Example rules.json
+### Example bundle.json
 
 ```json
-[
-  {
-    "id": "550e8400-e29b-41d4-a716-446655440000",
-    "effect": "permit",
-    "resource": "tool",
-    "match": "read_file",
-    "reason": "File reads are permitted for all agents",
-    "tags": ["read-only", "filesystem"]
-  },
-  {
-    "id": "550e8400-e29b-41d4-a716-446655440001",
-    "effect": "forbid",
-    "resource": "command",
-    "match": "rm",
-    "reason": "Destructive shell deletions are blocked",
-    "tags": ["security", "destructive"]
-  },
-  {
-    "id": "550e8400-e29b-41d4-a716-446655440002",
-    "effect": "permit",
-    "resource": "tool",
-    "match": "write_file",
-    "rateLimit": {
-      "maxCalls": 20,
-      "windowSeconds": 60
+{
+  "version": 1,
+  "rules": [
+    {
+      "effect": "permit",
+      "action_class": "filesystem.read",
+      "reason": "File reads are permitted for all agents",
+      "tags": ["read-only", "filesystem"]
     },
-    "reason": "File writes permitted up to 20 per minute",
-    "tags": ["write", "rate-limited"]
-  },
-  {
-    "id": "550e8400-e29b-41d4-a716-446655440003",
-    "effect": "forbid",
-    "resource": "model",
-    "match": "/.*-(preview|experimental|alpha|beta)$/",
-    "reason": "Pre-release models blocked in production",
-    "tags": ["model-policy"]
-  }
-]
+    {
+      "effect": "permit",
+      "action_class": "filesystem.write",
+      "reason": "File writes permitted up to 20 per minute",
+      "tags": ["write", "rate-limited"],
+      "rateLimit": {
+        "maxCalls": 20,
+        "windowSeconds": 60
+      }
+    },
+    {
+      "effect": "forbid",
+      "action_class": "payment.transfer",
+      "reason": "Payment transfers are unconditionally blocked",
+      "tags": ["security", "payment"]
+    }
+  ],
+  "checksum": "<SHA-256 of JSON.stringify(rules)>"
+}
 ```
+
+### Cedar Policy Files
+
+Fine-grained conditional access control is authored in Cedar policy files under `data/policies/`. The Cedar engine evaluates both the JSON bundle rules and these Cedar policy files as a unified policy set.
+
+See [Policy Authoring Guide](policy-authoring.md) for `.cedar` syntax and examples.
 
 ---
 
@@ -456,38 +442,33 @@ The engine ships with built-in rules that unconditionally forbid credential acce
 | `/root/` | Root home directory |
 | `/etc/` (broadly) | System configuration |
 
-### Adding protected paths via rules
+### Adding protected paths via Cedar policies
 
-Add `forbid` rules with regex patterns to block specific paths:
+Add `forbid` policies to the appropriate Cedar policy file (e.g. `data/policies/tier100-forbids.cedar`) to block specific action classes:
 
-```json
-[
-  {
-    "id": "protect-ssh-keys",
-    "effect": "forbid",
-    "resource": "tool",
-    "match": "/\\.(ssh|gnupg)\\//",
-    "reason": "SSH and GPG key directories are protected",
-    "tags": ["security", "protected_path"]
-  },
-  {
-    "id": "protect-aws-creds",
-    "effect": "forbid",
-    "resource": "tool",
-    "match": "/\\.aws\\/(credentials|config)$/",
-    "reason": "AWS credential files are protected",
-    "tags": ["security", "protected_path"]
-  },
-  {
-    "id": "protect-env-files",
-    "effect": "forbid",
-    "resource": "tool",
-    "match": "/(\\/|^)\\.env(\\..*)?$/",
-    "reason": ".env files may contain secrets",
-    "tags": ["security", "protected_path"]
-  }
-]
+```cedar
+@id("100-credential-access")
+@tier("100")
+@reason("Credential access requires human-in-the-loop approval")
+forbid (
+  principal,
+  action == OpenAuthority::Action::"RequestAccess",
+  resource
+)
+when { resource has actionClass && resource.actionClass == "credential.access" };
+
+@id("100-credential-write")
+@tier("100")
+@reason("Credential write operations are unconditionally forbidden")
+forbid (
+  principal,
+  action == OpenAuthority::Action::"RequestAccess",
+  resource
+)
+when { resource has actionClass && resource.actionClass == "credential.write" };
 ```
+
+For path-level blocking (protecting specific file targets), add a `forbid` rule to the JSON bundle targeting the appropriate action class and document the blocked target in the rule's `reason` field. Fine-grained sub-path conditions require Cedar `when` clauses if the `target` attribute is promoted to the entity store.
 
 ### SecuritySPEC `blockedPaths`
 
@@ -515,24 +496,53 @@ identities:
 
 ### Security implications
 
-- **Forbid-wins semantics**: a single `forbid` rule blocks access regardless of how many `permit` rules match. This is the correct default — never rely on the absence of a forbid to mean "permitted."
-- **Regex escaping**: when using `/regex/` syntax in JSON rules, double-escape backslashes (`\\` for a literal `\`).
-- **Wildcard scope**: `*` in rule `match` fields is a simple glob, not a regex. Use `/regex/` for complex path patterns.
-- **Home directory variants**: protect both `~/` (tilde) and `/home/username/` forms since tools may expand or not expand tildes.
-- **Audit trail**: every blocked path access is recorded in the audit log with the matched rule ID and reason, enabling post-incident review.
+- **Forbid-wins semantics**: a single `forbid` Cedar policy blocks access regardless of how many `permit` policies match. This is Cedar's built-in behaviour — never rely on the absence of a forbid to mean "permitted."
+- **Cedar `when` guards**: always guard optional attributes with `has` before accessing them in a `when` clause (e.g. `principal has verified && principal.verified == true`). Omitting the guard causes a Cedar evaluation error, which results in a `forbid` (fail-closed).
+- **Action class targeting**: Cedar policies match on the `resource.actionClass` attribute, not on raw tool names. Ensure each action class you want to protect is covered by a `forbid` rule.
+- **Audit trail**: every blocked action is recorded in the audit log with the matched Cedar policy `@id` and `@reason`, enabling post-incident review.
 
-### Minimum recommended protected paths (production)
+### Minimum recommended Cedar forbid rules (production)
 
-```json
-[
-  { "effect": "forbid", "resource": "tool", "match": "/\\/\\.ssh\\//",      "reason": "SSH keys" },
-  { "effect": "forbid", "resource": "tool", "match": "/\\/\\.aws\\//",      "reason": "AWS credentials" },
-  { "effect": "forbid", "resource": "tool", "match": "/\\/\\.gnupg\\//",    "reason": "GPG keys" },
-  { "effect": "forbid", "resource": "tool", "match": "/\\/\\.env/",         "reason": ".env files" },
-  { "effect": "forbid", "resource": "tool", "match": "/^\\/etc\\//",        "reason": "System config" },
-  { "effect": "forbid", "resource": "tool", "match": "/^\\/root\\//",       "reason": "Root home" },
-  { "effect": "forbid", "resource": "command", "match": "/^rm\\s+-rf/",     "reason": "Recursive force delete" }
-]
+```cedar
+@id("100-credential-access")
+@tier("100")
+@reason("Credential access — SSH keys, API tokens, etc.")
+forbid (
+  principal,
+  action == OpenAuthority::Action::"RequestAccess",
+  resource
+)
+when { resource has actionClass && resource.actionClass == "credential.access" };
+
+@id("100-credential-write")
+@tier("100")
+@reason("Credential write — writing secrets or key material")
+forbid (
+  principal,
+  action == OpenAuthority::Action::"RequestAccess",
+  resource
+)
+when { resource has actionClass && resource.actionClass == "credential.write" };
+
+@id("100-system-execute")
+@tier("100")
+@reason("System execution — shell commands and code execution")
+forbid (
+  principal,
+  action == OpenAuthority::Action::"RequestAccess",
+  resource
+)
+when { resource has actionClass && resource.actionClass == "system.execute" };
+
+@id("100-payment-transfer")
+@tier("100")
+@reason("Payment transfers are unconditionally forbidden without HITL approval")
+forbid (
+  principal,
+  action == OpenAuthority::Action::"RequestAccess",
+  resource
+)
+when { resource has actionClass && resource.actionClass == "payment.transfer" };
 ```
 
 ---
@@ -595,13 +605,12 @@ environment variable > hitl-policy.yaml field > built-in default
 | `SLACK_SIGNING_SECRET` | — | Slack Signing Secret for webhook verification. **Required** for Slack interaction server. Takes precedence over `slack.signingSecret`. |
 | `SLACK_INTERACTION_PORT` | `3201` | Port for the Slack webhook server. Takes precedence over `slack.interactionPort`. |
 
-### Dashboard server
+### Policy engine
 
 | Variable | Default | Description |
 |---|---|---|
-| `PORT` | `7331` | HTTP port for the dashboard server |
-| `RULES_FILE` | `../../data/rules.json` | Absolute or relative path to the rules JSON file (relative to `ui/`) |
-| `AUDIT_LOG_FILE` | `../../data/audit.jsonl` | Absolute or relative path to the audit JSONL file (relative to `ui/`) |
+| `AUDIT_LOG_FILE` | `data/audit.jsonl` | Absolute or relative path to the JSONL audit log. Relative paths resolve from the plugin root. |
+| `BUNDLE_PATH` | `data/bundles/active/bundle.json` | Path to the active JSON rules bundle. The adapter watches this file and hot-reloads on change. |
 
 ### Environment variable override pattern
 
@@ -646,21 +655,25 @@ For production deployments, do not store secrets in `hitl-policy.yaml`. Instead:
 
 ## Engine Options
 
-### Cedar-style policy engine (`src/policy/engine.ts`)
+### Cedar WASM engine (`src/policy/cedar-engine.ts`)
 
 ```typescript
-import { PolicyEngine } from "./policy/engine.js";
+import { CedarEngine } from "./policy/cedar-engine.js";
 
-const engine = new PolicyEngine({ cleanupIntervalMs: 60_000 });
+const engine = new CedarEngine({ defaultEffect: 'forbid' });
+await engine.init();           // loads Cedar WASM (~2.6 MB, one-time per process)
+engine.policies = policyText;  // Cedar policy set text
 ```
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `cleanupIntervalMs` | `number` | `0` (disabled) | Interval in ms for automatic rate-limit window cleanup. `0` disables the timer; call `cleanup()` manually instead. |
+| `defaultEffect` | `'permit'` \| `'forbid'` | `'forbid'` | Effect returned before `init()` completes. Use `'forbid'` in production (fail-closed). Use `'permit'` in tests that do not load WASM. |
+
+**Bundle size:** The Cedar WASM binary (`@cedar-policy/cedar-wasm@4.9.1` `/nodejs` CJS subpath) adds ~2.6 MB at runtime. Total package footprint on disk is ~12.2 MB. This cost is paid once at plugin activation; subsequent evaluations use the already-loaded module.
 
 ### Hot-reload watcher (`src/watcher.ts`)
 
-The watcher starts automatically during plugin `activate()`. It monitors the rules file for changes.
+The watcher starts automatically during plugin `activate()`. It monitors `data/rules.json` for changes.
 
 | Option | Type | Default | Description |
 |---|---|---|---|
@@ -682,27 +695,27 @@ Minimal setup for local development. Uses defaults wherever possible.
 }
 ```
 
-**`data/rules.json`**
+**`data/bundles/active/bundle.json`**
 ```json
-[
-  {
-    "id": "dev-permit-all-reads",
-    "effect": "permit",
-    "resource": "tool",
-    "match": "/^read_/",
-    "reason": "All read tools permitted in development",
-    "tags": ["dev"]
-  },
-  {
-    "id": "dev-permit-writes",
-    "effect": "permit",
-    "resource": "tool",
-    "match": "write_file",
-    "rateLimit": { "maxCalls": 100, "windowSeconds": 60 },
-    "reason": "File writes permitted with loose rate limit",
-    "tags": ["dev"]
-  }
-]
+{
+  "version": 1,
+  "rules": [
+    {
+      "effect": "permit",
+      "action_class": "filesystem.read",
+      "reason": "All filesystem reads permitted in development",
+      "tags": ["dev"]
+    },
+    {
+      "effect": "permit",
+      "action_class": "filesystem.write",
+      "rateLimit": { "maxCalls": 100, "windowSeconds": 60 },
+      "reason": "Filesystem writes permitted with loose rate limit",
+      "tags": ["dev"]
+    }
+  ],
+  "checksum": "<SHA-256 of JSON.stringify(rules)>"
+}
 ```
 
 **`hitl-policy.yaml`** (optional for dev)
@@ -737,68 +750,75 @@ Hardened setup for a production deployment. All credentials are injected via env
 }
 ```
 
-**`data/rules.json`** (stored at `/var/openauthority/rules.json`)
+**`data/bundles/active/bundle.json`** (stored at `/var/openauthority/bundle.json`)
 ```json
-[
-  {
-    "id": "prod-forbid-ssh",
-    "effect": "forbid",
-    "resource": "tool",
-    "match": "/\\/\\.ssh\\//",
-    "reason": "SSH key directories are protected",
-    "tags": ["security", "protected_path"]
-  },
-  {
-    "id": "prod-forbid-env",
-    "effect": "forbid",
-    "resource": "tool",
-    "match": "/(\\/|^)\\.env/",
-    "reason": ".env files may contain secrets",
-    "tags": ["security", "protected_path"]
-  },
-  {
-    "id": "prod-forbid-aws",
-    "effect": "forbid",
-    "resource": "tool",
-    "match": "/\\/\\.aws\\//",
-    "reason": "AWS credential directories are protected",
-    "tags": ["security", "protected_path"]
-  },
-  {
-    "id": "prod-forbid-rm-rf",
-    "effect": "forbid",
-    "resource": "command",
-    "match": "/^rm\\s+-rf/",
-    "reason": "Recursive force delete is prohibited",
-    "tags": ["security", "destructive"]
-  },
-  {
-    "id": "prod-forbid-preview-models",
-    "effect": "forbid",
-    "resource": "model",
-    "match": "/-(preview|experimental|alpha|beta)$/",
-    "reason": "Pre-release models blocked in production",
-    "tags": ["model-policy"]
-  },
-  {
-    "id": "prod-permit-reads",
-    "effect": "permit",
-    "resource": "tool",
-    "match": "/^read_/",
-    "reason": "Read-only operations permitted",
-    "tags": ["read-only"],
-    "rateLimit": { "maxCalls": 200, "windowSeconds": 60 }
-  },
-  {
-    "id": "prod-permit-writes",
-    "effect": "permit",
-    "resource": "tool",
-    "match": "write_file",
-    "reason": "File writes permitted with rate limit",
-    "tags": ["write"],
-    "rateLimit": { "maxCalls": 20, "windowSeconds": 60 }
-  }
-]
+{
+  "version": 1,
+  "rules": [
+    {
+      "effect": "permit",
+      "action_class": "filesystem.read",
+      "reason": "Read-only filesystem operations permitted",
+      "tags": ["read-only"],
+      "rateLimit": { "maxCalls": 200, "windowSeconds": 60 }
+    },
+    {
+      "effect": "permit",
+      "action_class": "filesystem.write",
+      "reason": "Filesystem writes permitted with rate limit",
+      "tags": ["write"],
+      "rateLimit": { "maxCalls": 20, "windowSeconds": 60 }
+    },
+    {
+      "effect": "forbid",
+      "action_class": "credential.access",
+      "reason": "Credential access is unconditionally blocked",
+      "tags": ["security", "credential"]
+    },
+    {
+      "effect": "forbid",
+      "action_class": "credential.write",
+      "reason": "Credential writes are unconditionally blocked",
+      "tags": ["security", "credential"]
+    },
+    {
+      "effect": "forbid",
+      "action_class": "system.execute",
+      "reason": "System execution is unconditionally forbidden",
+      "tags": ["security"]
+    },
+    {
+      "effect": "forbid",
+      "action_class": "payment.transfer",
+      "reason": "Payment transfers are unconditionally blocked",
+      "tags": ["security", "payment"]
+    }
+  ],
+  "checksum": "<SHA-256 of JSON.stringify(rules)>"
+}
+```
+
+**`data/policies/tier100-forbids.cedar`** (Cedar defence-in-depth rules)
+```cedar
+@id("100-credential-access")
+@tier("100")
+@reason("Credential access is unconditionally forbidden")
+forbid (
+  principal,
+  action == OpenAuthority::Action::"RequestAccess",
+  resource
+)
+when { resource has actionClass && resource.actionClass == "credential.access" };
+
+@id("100-system-execute")
+@tier("100")
+@reason("System execution is unconditionally forbidden")
+forbid (
+  principal,
+  action == OpenAuthority::Action::"RequestAccess",
+  resource
+)
+when { resource has actionClass && resource.actionClass == "system.execute" };
 ```
 
 **`hitl-policy.yaml`** (committed — no secrets)

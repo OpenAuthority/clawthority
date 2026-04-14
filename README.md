@@ -4,6 +4,24 @@
 
 OpenAuthority is a policy engine plugin for [OpenClaw](https://github.com/openclaw/openclaw) that sits between your AI agent and every tool it calls. It evaluates rules before execution happens — not by asking the model to comply, but by intercepting the call at the code boundary. If policy says no, the call is never placed.
 
+## What's new in v0.2
+
+v0.2 replaces the TypeScript policy engine with **Cedar WASM** as the sole authorization engine.
+
+**Highlights**
+
+- **Cedar WASM engine** — `@cedar-policy/cedar-wasm@4.9.1` evaluates all Stage 2 policy decisions. Policies are authored in `.cedar` files under `data/policies/`.
+- **Forbid-wins semantics** — Cedar's built-in `forbid` overrides any `permit` for the same request; no escape hatches.
+- **Tier system** — policies are organized into tier 10 (unconditional permits), tier 50 (conditional permits), and tier 100 (hard denies) using Cedar `@tier` annotations.
+- **~2.6 MB WASM footprint** — the `/nodejs` CJS subpath is ~2.6 MB at runtime; total package on disk is ~12.2 MB. Loaded once at activation.
+- **Entity model** — `OpenAuthority::Agent` (principal), `OpenAuthority::Resource` (resource with `actionClass` attribute), `OpenAuthority::Action::RequestAccess` (single action).
+
+**Removed**
+
+- TypeScript policy engine (`src/policy/ts-engine.ts`) — no longer used in production. Cedar WASM is the sole engine.
+- `condition` field in rules (JS function bodies) — use Cedar `when` clauses in `.cedar` files instead.
+- `match` / `resource` fields for tool-name pattern matching — use `action_class` in bundle rules and `resource.actionClass` in Cedar policies.
+
 ## What's new in v0.1
 
 v0.1 is a ground-up restructure around a **two-stage enforcement pipeline** and a **canonical action registry**. It replaces the previous ABAC/JSON-rules engine and the UI/control-plane surface.
@@ -144,23 +162,55 @@ Register in `~/.openclaw/config.json`:
 }
 ```
 
-### Policy bundles
+### Policy files
 
-Rules live in `data/bundles/active/bundle.json`:
+Cedar policies live in `data/policies/*.cedar`. Add or edit these files to define what agents can and cannot do:
+
+```cedar
+// data/policies/tier10-permits.cedar
+@id("10-filesystem-read")
+@tier("10")
+@reason("Filesystem read operations are permitted for all agents")
+permit (
+  principal,
+  action == OpenAuthority::Action::"RequestAccess",
+  resource
+)
+when { resource has actionClass && resource.actionClass == "filesystem.read" };
+```
+
+```cedar
+// data/policies/tier100-forbids.cedar
+@id("100-payment-transfer")
+@tier("100")
+@reason("Payment transfers require human-in-the-loop approval")
+forbid (
+  principal,
+  action == OpenAuthority::Action::"RequestAccess",
+  resource
+)
+when { resource has actionClass && resource.actionClass == "payment.transfer" };
+```
+
+### JSON rules bundle
+
+The bundle at `data/bundles/active/bundle.json` provides a simpler JSON interface for action-class permit/forbid rules without Cedar syntax:
 
 ```json
 {
   "version": 1,
   "rules": [
-    { "effect": "permit", "action_class": "filesystem.read",  "priority": 10 },
-    { "effect": "forbid", "action_class": "system.execute",   "priority": 100 },
-    { "effect": "forbid", "action_class": "payment.transfer", "priority": 90 }
+    { "effect": "permit", "action_class": "filesystem.read",  "reason": "Low-risk read" },
+    { "effect": "forbid", "action_class": "system.execute",   "reason": "Hard deny" },
+    { "effect": "forbid", "action_class": "payment.transfer", "reason": "Hard deny" }
   ],
   "checksum": "<SHA-256 of JSON.stringify(rules)>"
 }
 ```
 
 The adapter watches the bundle directory, validates version monotonicity and checksum, and hot-reloads on change. In production, set the `active/` directory read-only for the OpenAuthority process user; only your deployment pipeline should have write access.
+
+See the [Policy Authoring Guide](docs/policy-authoring.md) for full `.cedar` syntax and the [Configuration Reference](docs/configuration.md) for the bundle schema.
 
 ## Hooks
 
@@ -173,7 +223,7 @@ The adapter watches the bundle directory, validates version monotonicity and che
 
 ```
 src/
-  index.ts                   — plugin entry, hook registration, wiring
+  index.ts                   — plugin exports (Cedar engine, HITL, audit, …)
   types.ts                   — ExecutionEnvelope, Intent, Capability, CeeDecision, …
   envelope.ts                — buildEnvelope, uuidv7, computePayloadHash, computeContextHash
   audit.ts                   — JsonlAuditLogger
@@ -181,12 +231,17 @@ src/
     pipeline.ts              — executePipeline orchestrator
     normalize.ts             — canonical action registry + normalizer
     stage1-capability.ts     — Stage 1 capability gate
-    stage2-policy.ts         — Stage 2 CEE factory
+    stage2-policy.ts         — Stage 2 Cedar engine factory
+    decision.ts              — StructuredDecision type layer
   policy/
-    engine.ts                — PolicyEngine + evaluateByActionClass
+    cedar-engine.ts          — CedarEngine (Cedar WASM evaluation)
+    cedar-entities.ts        — Cedar entity hydration from RuleContext
+    cedar/
+      schema.cedarschema.json — Cedar entity schema (OpenAuthority namespace)
     bundle.ts                — validateBundle (schema, monotonicity, checksum)
-    types.ts                 — Rule, Effect, RateLimit
-    rules/default.ts         — default action-class rules
+    types.ts                 — Rule, Effect, RateLimit, EvaluationDecision
+    coverage.ts              — CoverageMap (dashboard coverage tracking)
+    loader.ts                — loadPolicyFile (JSON bundle reader)
   adapter/
     types.ts                 — IAuthorityAdapter, ApprovalRequest, PolicyBundle
     file-adapter.ts          — FileAuthorityAdapter (watches bundles/active)
@@ -194,12 +249,16 @@ src/
     approval-manager.ts      — payload-bound approvals, session + approve_once
     matcher.ts               — action_class dot-notation matching
     telegram.ts, slack.ts    — approval channel adapters
+  watcher.ts                 — hot-reload watcher for data/rules.json
 data/
+  policies/
+    tier10-permits.cedar     — Cedar Tier 10: unconditional permit rules
+    tier100-forbids.cedar    — Cedar Tier 100: hard deny rules
   bundles/
-    active/bundle.json       — active policy bundle
+    active/bundle.json       — active JSON rules bundle (hot-reloaded)
     proposals/               — staged bundle proposals
   audit.jsonl                — append-only execution-event log
-docs/                        — architecture, action registry, HITL, configuration
+docs/                        — architecture, API, action registry, HITL, configuration
 ```
 
 ## Development
@@ -215,8 +274,11 @@ npm test        # vitest
 
 | Guide | Description |
 |---|---|
-| [Architecture](docs/architecture.md) | ExecutionEnvelope, two-stage pipeline, adapter swap path |
+| [Architecture](docs/architecture.md) | ExecutionEnvelope, two-stage pipeline, Cedar engine, adapter swap path |
+| [Policy Authoring](docs/policy-authoring.md) | Cedar `.cedar` syntax, entity model, tier system, migration guide |
+| [API Reference](docs/api.md) | Cedar policy format, JSON bundle schema, TypeScript evaluation API |
 | [Configuration](docs/configuration.md) | Full config schema with examples |
+| [Cedar Design](docs/cedar-design.md) | Entity model, attribute hydration, hot-reload, migration from regex/JS |
 | [Action Registry](docs/action-registry.md) | All canonical action classes, aliases, risk, HITL modes |
 | [Human-in-the-Loop](docs/human-in-the-loop.md) | Payload binding, session vs approve_once, message format |
 

@@ -224,14 +224,17 @@ Tool Call Event (OpenClaw hook)
  ┌──────┴────────────────────────────────────────────┐
  │  Stage 2: Cedar Engine Evaluation (stage2-policy) │
  │                                                   │
- │  EnforcementPolicyEngine.evaluateByActionClass()  │
+ │  CedarEngine.evaluateByActionClass()              │
  │                                                   │
  │  Map action_class prefix → Cedar Resource type:   │
- │    communication.* → channel                      │
- │    command.*       → command                      │
- │    prompt.*        → prompt                       │
- │    model.*         → model                        │
- │    (all others)    → tool                         │
+ │    filesystem.*   → file                          │
+ │    communication.*→ external                      │
+ │    payment.*      → payment                       │
+ │    system.*       → system                        │
+ │    credential.*   → credential                    │
+ │    browser.*      → web                           │
+ │    memory.*       → memory                        │
+ │    (all others)   → unknown                       │
  │                                                   │
  │  Cedar semantics: forbid wins over permit         │
  │  Rate limits applied to permit rules only         │
@@ -288,12 +291,17 @@ and compares it against the `binding` stored in the capability at issuance time.
 
 ### Stage 2 in Detail
 
-Stage 2 is backed by `EnforcementPolicyEngine`, which extends the Cedar-style `PolicyEngine` with action-class-aware dispatch. It is created via the factory in `src/enforcement/stage2-policy.ts`:
+Stage 2 is backed by `CedarEngine`, the Cedar WASM-powered engine, wrapped by `EnforcementPolicyEngine` for action-class-aware dispatch. It is created via the factory in `src/enforcement/stage2-policy.ts`:
 
 ```typescript
+import { CedarEngine } from './policy/cedar-engine.js';
 import { createStage2, createEnforcementEngine } from './enforcement/stage2-policy.js';
 
-const engine = createEnforcementEngine(defaultRules);
+const cedar = new CedarEngine();
+await cedar.init();           // loads Cedar WASM (~2.6 MB, one-time)
+cedar.policies = cedarPolicyText; // Cedar policy set text
+
+const engine = createEnforcementEngine(cedar);
 const stage2 = createStage2(engine);
 
 // Wire into the pipeline:
@@ -528,29 +536,28 @@ Policy rules update live without restarting the gateway.
 ### Mutable Engine Reference
 
 ```typescript
-const engineRef: { current: PolicyEngine } = {
-  current: new PolicyEngine()
+const engineRef: { current: CedarEngine } = {
+  current: new CedarEngine()
 };
 
 // Hook handlers dereference .current at call time:
 hooks.before_tool_call = async (event) => {
-  const result = engineRef.current.evaluate(...);
+  const result = engineRef.current.evaluateByActionClass(...);
 };
 // Swapping engineRef.current updates all hooks atomically.
 ```
 
-### ESM Cache Busting
-
-```typescript
-const url = new URL(`./policy/rules.js?t=${Date.now()}`, import.meta.url).href;
-const { default: rules } = await import(url);
-```
-
-Each unique URL is a separate ESM cache entry.
-
 ### Debounced File Watcher
 
-The chokidar watcher fires on every file system event; a 300 ms debounce coalesces rapid saves into a single reload. Reload errors leave the previous engine active (error isolation).
+The chokidar watcher (in `src/watcher.ts`) fires on every file system event against `data/rules.json`; a 300 ms debounce coalesces rapid saves into a single reload. On each valid change a new `CedarEngine` is constructed, `init()` is awaited asynchronously, and `engineRef.current` is swapped. Reload errors leave the previous engine active (error isolation).
+
+### Cedar WASM Initialization Window
+
+After the reference swap, there is a brief window while `newEngine.init()` loads the Cedar WASM binary (~2.6 MB for the `/nodejs` CJS subpath). During this window, `evaluate()` calls on the new engine return `forbid` (the `defaultEffect` when Cedar is not yet initialized). This is a deliberate fail-closed behaviour.
+
+### Bundle Size Impact
+
+`@cedar-policy/cedar-wasm@4.9.1` adds approximately **2.6 MB** of WASM + JS at runtime (the `/nodejs` CJS subpath used by `CedarEngine.init()`). Total package footprint on disk is ~12.2 MB. This is a one-time cost per process lifetime; subsequent evaluations use the already-loaded WASM module.
 
 ---
 
@@ -697,7 +704,7 @@ Any tool name that does not match a registry alias resolves to `unknown_sensitiv
 
 The binding check in Stage 1 ensures that a capability issued for a specific tool call cannot be reused for a different one. Without payload binding, an approval for `delete_file({ path: '/tmp/foo' })` could theoretically be reused for `delete_file({ path: '/etc/passwd' })`. The SHA-256 binding prevents this by committing the capability to the exact parameter set at approval time.
 
-### Why Cedar semantics (forbid wins)?
+### Why Cedar WASM (forbid wins)?
 
 An explicit `forbid` rule cannot be accidentally overridden by a `permit` rule. Administrators must explicitly remove `forbid` rules to expand access. This is more predictable under adversarial rule injection scenarios than permit-wins (first-match) semantics.
 
