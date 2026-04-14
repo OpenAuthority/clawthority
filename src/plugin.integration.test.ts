@@ -52,7 +52,6 @@ import { validateCapability } from './enforcement/stage1-capability.js';
 import { createStage2, createEnforcementEngine } from './enforcement/stage2-policy.js';
 import { ApprovalManager } from './hitl/approval-manager.js';
 import { FileAuthorityAdapter } from './adapter/file-adapter.js';
-import type { Rule } from './policy/types.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -127,9 +126,7 @@ describe('plugin integration suite', () => {
     plugin.activate(ctx);
 
     // Step 2 — build pipeline with a permissive Stage 2 engine
-    const engine = createEnforcementEngine([
-      { effect: 'permit', resource: 'tool', match: '*' } satisfies Rule,
-    ]);
+    const engine = createEnforcementEngine({ defaultEffect: 'permit' });
     const stage1 = (pCtx: PipelineContext) =>
       validateCapability(pCtx, approvalManager, () => undefined);
     const stage2 = createStage2(engine);
@@ -169,9 +166,7 @@ describe('plugin integration suite', () => {
     expect(normalized.action_class).toBe('filesystem.read');
     expect(normalized.hitl_mode).toBe('none');
 
-    const engine = createEnforcementEngine([
-      { effect: 'permit', resource: 'tool', match: '*' } satisfies Rule,
-    ]);
+    const engine = createEnforcementEngine({ defaultEffect: 'permit' });
     const stage1 = (pCtx: PipelineContext) =>
       validateCapability(pCtx, approvalManager, () => undefined);
     const stage2 = createStage2(engine);
@@ -200,12 +195,10 @@ describe('plugin integration suite', () => {
     // Stage 2 engine carries an unconditional forbid for all tool calls —
     // simulates a "system.execute forbidden" policy rule that overrides permits.
     const engine = new EnforcementPolicyEngine();
-    engine.addRule({
+    vi.spyOn(engine, 'evaluateByActionClass').mockReturnValue({
       effect: 'forbid',
-      resource: 'tool',
-      match: '*',
       reason: 'system execution unconditionally forbidden',
-    } satisfies Rule);
+    });
 
     // Issue a valid capability so Stage 1 passes; Stage 2 must still deny.
     const adapter = new FileAuthorityAdapter({ bundlePath: '/dev/null' });
@@ -244,15 +237,10 @@ describe('plugin integration suite', () => {
   it('TC-04: communication to an untrusted domain is forbidden by Stage 2', async () => {
     // Cedar semantics: explicit forbid wins over the catch-all permit.
     const engine = new EnforcementPolicyEngine();
-    engine.addRules([
-      {
-        effect: 'forbid',
-        resource: 'channel',
-        match: 'evil.example.com',
-        reason: 'untrusted_domain',
-      },
-      { effect: 'permit', resource: 'channel', match: '*' },
-    ] satisfies Rule[]);
+    vi.spyOn(engine, 'evaluateByActionClass').mockReturnValue({
+      effect: 'forbid',
+      reason: 'untrusted_domain',
+    });
 
     // Issue a valid capability to let Stage 1 pass.
     const adapter = new FileAuthorityAdapter({ bundlePath: '/dev/null' });
@@ -294,9 +282,7 @@ describe('plugin integration suite', () => {
     // filesystem.write is medium risk and requires per_request HITL.
     expect(normalized.hitl_mode).toBe('per_request');
 
-    const engine = createEnforcementEngine([
-      { effect: 'permit', resource: 'tool', match: '*' } satisfies Rule,
-    ]);
+    const engine = createEnforcementEngine({ defaultEffect: 'permit' });
     const stage1 = (pCtx: PipelineContext) =>
       validateCapability(pCtx, approvalManager, () => undefined);
     const stage2 = createStage2(engine);
@@ -322,9 +308,7 @@ describe('plugin integration suite', () => {
   // ── TC-06: high-risk action with valid approval → permitted ─────────────────
 
   it('TC-06: high-risk action with a valid approval token is permitted', async () => {
-    const engine = createEnforcementEngine([
-      { effect: 'permit', resource: 'tool', match: '*' } satisfies Rule,
-    ]);
+    const engine = createEnforcementEngine({ defaultEffect: 'permit' });
 
     const adapter = new FileAuthorityAdapter({ bundlePath: '/dev/null' });
     const actionClass = 'filesystem.delete';
@@ -364,9 +348,7 @@ describe('plugin integration suite', () => {
   // ── TC-07: parameter tampering (hash mismatch) denied ──────────────────────
 
   it('TC-07: capability with mismatched payload hash is denied (payload binding mismatch)', async () => {
-    const engine = createEnforcementEngine([
-      { effect: 'permit', resource: 'tool', match: '*' } satisfies Rule,
-    ]);
+    const engine = createEnforcementEngine({ defaultEffect: 'permit' });
 
     const adapter = new FileAuthorityAdapter({ bundlePath: '/dev/null' });
 
@@ -415,9 +397,7 @@ describe('plugin integration suite', () => {
   // ── TC-09: audit log / ExecutionEvent ──────────────────────────────────────
 
   it('TC-09: pipeline emits executionEvent containing decision and ISO timestamp fields', async () => {
-    const engine = createEnforcementEngine([
-      { effect: 'permit', resource: 'tool', match: '*' } satisfies Rule,
-    ]);
+    const engine = createEnforcementEngine({ defaultEffect: 'permit' });
     const stage1 = (pCtx: PipelineContext) =>
       validateCapability(pCtx, approvalManager, () => undefined);
     const stage2 = createStage2(engine);
@@ -540,9 +520,7 @@ describe('plugin integration suite', () => {
     const adapter = new FileAuthorityAdapter({ bundlePath: '/dev/null' });
     let issuedCapability: Awaited<ReturnType<typeof adapter.issueCapability>> | undefined;
 
-    const engine = createEnforcementEngine([
-      { effect: 'permit', resource: 'tool', match: '*' } satisfies Rule,
-    ]);
+    const engine = createEnforcementEngine({ defaultEffect: 'permit' });
     const stage1 = (pCtx: PipelineContext) =>
       validateCapability(pCtx, approvalManager, (id) =>
         issuedCapability?.approval_id === id ? issuedCapability : undefined,
@@ -716,9 +694,7 @@ describe('plugin integration suite', () => {
     const target = '/tmp/tc22-secret.txt';
     const payloadHash = 'tc22-hash';
 
-    const engine = createEnforcementEngine([
-      { effect: 'permit', resource: 'tool', match: '*' } satisfies Rule,
-    ]);
+    const engine = createEnforcementEngine({ defaultEffect: 'permit' });
 
     const adapter = new FileAuthorityAdapter({ bundlePath: '/dev/null' });
 

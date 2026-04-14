@@ -1,19 +1,17 @@
 /**
- * Phase 1 unit tests — watcher.ts
+ * Unit tests — watcher.ts
  *
  * Covers:
- *   - startRulesWatcher creates chokidar watchers for TS rules and JSON rules
- *   - WatcherHandle.stop closes both watchers and clears timers
+ *   - startRulesWatcher creates a chokidar watcher for data/rules.json
+ *   - WatcherHandle.stop closes the watcher and clears timers
  *   - Debounce behaviour for JSON rule change / add events
- *   - Initial JSON rules load updates engineRef when rules are present
+ *   - Initial JSON rules load rebuilds engine when rules are present
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // ─── Hoisted mock state ───────────────────────────────────────────────────────
-// All variables used inside vi.mock factories must be defined via vi.hoisted.
 
-const { createdWatchers, mockWatch, MockPolicyEngine } = vi.hoisted(() => {
-  // Track every chokidar watcher instance independently.
+const { createdWatchers, mockWatch, MockCedarEngine } = vi.hoisted(() => {
   const createdWatchers: Array<{
     on: ReturnType<typeof vi.fn>;
     close: ReturnType<typeof vi.fn>;
@@ -27,45 +25,37 @@ const { createdWatchers, mockWatch, MockPolicyEngine } = vi.hoisted(() => {
     return w;
   });
 
-  // A spy constructor that always returns a fresh instance with addRules().
-  // Using vi.fn(impl) so the implementation is baked in at creation time.
-  const MockPolicyEngine = vi.fn(function MockPE() {
-    return { addRules: vi.fn() };
+  // Mock CedarEngine constructor — returns a fresh object with init().
+  const MockCedarEngine = vi.fn(function MockCE() {
+    return { init: vi.fn().mockResolvedValue(undefined) };
   });
 
-  return { createdWatchers, mockWatch, MockPolicyEngine };
+  return { createdWatchers, mockWatch, MockCedarEngine };
 });
 
 vi.mock('chokidar', () => ({
   default: { watch: mockWatch },
 }));
 
-// Mock node:fs so loadJsonRules does not touch disk.
+// Mock node:fs so hasValidJsonRules does not touch disk.
 vi.mock('node:fs', () => ({
   existsSync: vi.fn().mockReturnValue(false),
   readFileSync: vi.fn().mockReturnValue('[]'),
 }));
 
-// Expose MockPolicyEngine as the PolicyEngine export.
-vi.mock('./policy/engine.js', () => ({
-  PolicyEngine: MockPolicyEngine,
-}));
-
-// Mock mergeRules so we don't depend on actual rule module imports.
-vi.mock('./policy/rules/index.js', () => ({
-  mergeRules: vi.fn().mockReturnValue([]),
-  default: [],
+// Expose MockCedarEngine as the CedarEngine export.
+vi.mock('./policy/cedar-engine.js', () => ({
+  CedarEngine: MockCedarEngine,
 }));
 
 // ─── Imports (after mocks are established) ───────────────────────────────────
 
 import { startRulesWatcher } from './watcher.js';
-import { PolicyEngine } from './policy/engine.js';
+import { CedarEngine } from './policy/cedar-engine.js';
 import { existsSync, readFileSync } from 'node:fs';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-/** Returns the registered handler for a given event on a watcher mock. */
 function getHandler(
   watcherMock: { on: ReturnType<typeof vi.fn> },
   event: string,
@@ -80,23 +70,17 @@ function getHandler(
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe('startRulesWatcher', () => {
-  let engineRef: { current: ReturnType<typeof MockPolicyEngine> };
+  let engineRef: { current: ReturnType<typeof MockCedarEngine> };
 
   beforeEach(() => {
-    // Reset watcher tracking arrays.
     createdWatchers.length = 0;
-
-    // Clear only the call history — NOT the implementation — on our hoisted mocks.
     mockWatch.mockClear();
-    MockPolicyEngine.mockClear();
+    MockCedarEngine.mockClear();
 
-    // Ensure the constructor always returns a fresh instance with addRules.
-    // Re-asserting here protects against any mock reset that may have occurred.
-    MockPolicyEngine.mockImplementation(function MockPE() {
-      return { addRules: vi.fn() };
+    MockCedarEngine.mockImplementation(function MockCE() {
+      return { init: vi.fn().mockResolvedValue(undefined) };
     });
 
-    // Suppress noisy console output from the watcher.
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -106,12 +90,11 @@ describe('startRulesWatcher', () => {
     vi.mocked(readFileSync).mockReturnValue('[]');
 
     engineRef = {
-      current: new PolicyEngine() as unknown as ReturnType<typeof MockPolicyEngine>,
+      current: new CedarEngine() as unknown as ReturnType<typeof MockCedarEngine>,
     };
-    // Clear call count after the beforeEach constructor call so tests start at 0.
-    MockPolicyEngine.mockClear();
-    MockPolicyEngine.mockImplementation(function MockPE() {
-      return { addRules: vi.fn() };
+    MockCedarEngine.mockClear();
+    MockCedarEngine.mockImplementation(function MockCE() {
+      return { init: vi.fn().mockResolvedValue(undefined) };
     });
   });
 
@@ -122,45 +105,31 @@ describe('startRulesWatcher', () => {
 
   // ── Watcher creation ────────────────────────────────────────────────────────
 
-  it('creates exactly two chokidar watchers', () => {
+  it('creates exactly one chokidar watcher', () => {
     startRulesWatcher(engineRef);
-    expect(mockWatch).toHaveBeenCalledTimes(2);
-    expect(createdWatchers).toHaveLength(2);
+    expect(mockWatch).toHaveBeenCalledTimes(1);
+    expect(createdWatchers).toHaveLength(1);
   });
 
-  it('first watcher targets the policy/rules directory', () => {
+  it('watcher targets data/rules.json', () => {
     startRulesWatcher(engineRef);
-    const [firstPath] = mockWatch.mock.calls[0] as [string];
-    expect(firstPath).toContain('policy/rules');
+    const [watchedPath] = mockWatch.mock.calls[0] as [string];
+    expect(watchedPath).toMatch(/rules\.json$/);
   });
 
-  it('second watcher targets data/rules.json', () => {
+  it('watcher is configured with persistent:false and ignoreInitial:true', () => {
     startRulesWatcher(engineRef);
-    const [secondPath] = mockWatch.mock.calls[1] as [string];
-    expect(secondPath).toMatch(/rules\.json$/);
-  });
-
-  it('both watchers are configured with persistent:false and ignoreInitial:true', () => {
-    startRulesWatcher(engineRef);
-    for (const [, options] of mockWatch.mock.calls as [string, Record<string, unknown>][]) {
-      expect(options.persistent).toBe(false);
-      expect(options.ignoreInitial).toBe(true);
-    }
+    const [, options] = mockWatch.mock.calls[0] as [string, Record<string, unknown>];
+    expect(options.persistent).toBe(false);
+    expect(options.ignoreInitial).toBe(true);
   });
 
   // ── Event registration ──────────────────────────────────────────────────────
 
-  it('TS watcher registers a change handler', () => {
+  it('watcher registers both change and add handlers', () => {
     startRulesWatcher(engineRef);
-    const tsWatcher = createdWatchers[0];
-    const registeredEvents = tsWatcher.on.mock.calls.map((c: unknown[]) => c[0]);
-    expect(registeredEvents).toContain('change');
-  });
-
-  it('JSON watcher registers both change and add handlers', () => {
-    startRulesWatcher(engineRef);
-    const jsonWatcher = createdWatchers[1];
-    const registeredEvents = jsonWatcher.on.mock.calls.map((c: unknown[]) => c[0]);
+    const watcher = createdWatchers[0];
+    const registeredEvents = watcher.on.mock.calls.map((c: unknown[]) => c[0]);
     expect(registeredEvents).toContain('change');
     expect(registeredEvents).toContain('add');
   });
@@ -168,11 +137,10 @@ describe('startRulesWatcher', () => {
   // ── stop() ──────────────────────────────────────────────────────────────────
 
   describe('stop()', () => {
-    it('closes both watchers', async () => {
+    it('closes the watcher', async () => {
       const handle = startRulesWatcher(engineRef);
       await handle.stop();
       expect(createdWatchers[0].close).toHaveBeenCalled();
-      expect(createdWatchers[1].close).toHaveBeenCalled();
     });
 
     it('returns a resolving Promise', async () => {
@@ -239,8 +207,8 @@ describe('startRulesWatcher', () => {
       vi.useFakeTimers();
       startRulesWatcher(engineRef, 100);
 
-      const jsonWatcher = createdWatchers[1];
-      const onChange = getHandler(jsonWatcher, 'change');
+      const watcher = createdWatchers[0];
+      const onChange = getHandler(watcher, 'change');
       const before = engineRef.current;
 
       onChange();
@@ -253,10 +221,14 @@ describe('startRulesWatcher', () => {
 
     it('engine is rebuilt after the debounce window elapses', () => {
       vi.useFakeTimers();
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue(
+        JSON.stringify([{ effect: 'permit', resource: 'tool', match: '*' }]),
+      );
       startRulesWatcher(engineRef, 100);
 
-      const jsonWatcher = createdWatchers[1];
-      const onChange = getHandler(jsonWatcher, 'change');
+      const watcher = createdWatchers[0];
+      const onChange = getHandler(watcher, 'change');
       const before = engineRef.current;
 
       onChange();
@@ -267,21 +239,22 @@ describe('startRulesWatcher', () => {
 
     it('debounces rapid successive change events — one rebuild per burst', () => {
       vi.useFakeTimers();
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue(
+        JSON.stringify([{ effect: 'permit', resource: 'tool', match: '*' }]),
+      );
       startRulesWatcher(engineRef, 100);
 
-      const jsonWatcher = createdWatchers[1];
-      const onChange = getHandler(jsonWatcher, 'change');
+      const watcher = createdWatchers[0];
+      const onChange = getHandler(watcher, 'change');
 
-      // Trigger 5 events spaced 20 ms apart (80 ms total, resets debounce each time)
       for (let i = 0; i < 5; i++) {
         onChange();
         if (i < 4) vi.advanceTimersByTime(20);
       }
 
-      // Engine should still be the original — debounce has not fired yet
       const before = engineRef.current;
 
-      // Now advance past the debounce — exactly one rebuild should occur
       vi.advanceTimersByTime(100);
       expect(engineRef.current).not.toBe(before);
     });
@@ -292,10 +265,14 @@ describe('startRulesWatcher', () => {
   describe('JSON watcher add event', () => {
     it('engine is rebuilt when the JSON file is added', () => {
       vi.useFakeTimers();
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue(
+        JSON.stringify([{ effect: 'permit', resource: 'tool', match: '*' }]),
+      );
       startRulesWatcher(engineRef, 100);
 
-      const jsonWatcher = createdWatchers[1];
-      const onAdd = getHandler(jsonWatcher, 'add');
+      const watcher = createdWatchers[0];
+      const onAdd = getHandler(watcher, 'add');
       const before = engineRef.current;
 
       onAdd();
@@ -305,35 +282,27 @@ describe('startRulesWatcher', () => {
     });
   });
 
-  // ── TS watcher change event (structural only) ───────────────────────────────
-
-  describe('TS watcher change event', () => {
-    it('the change handler is registered and callable without throwing', () => {
-      // We do NOT advance async timers here to avoid triggering dynamic imports.
-      startRulesWatcher(engineRef);
-      const tsWatcher = createdWatchers[0];
-      const onTsChange = getHandler(tsWatcher, 'change');
-      expect(() => onTsChange('/some/rules/support.ts')).not.toThrow();
-    });
-  });
-
   // ── Custom debounce argument ────────────────────────────────────────────────
 
   it('respects a custom debounceMs argument', () => {
     vi.useFakeTimers();
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(readFileSync).mockReturnValue(
+      JSON.stringify([{ effect: 'permit', resource: 'tool', match: '*' }]),
+    );
     startRulesWatcher(engineRef, 500);
 
-    const jsonWatcher = createdWatchers[1];
-    const onChange = getHandler(jsonWatcher, 'change');
+    const watcher = createdWatchers[0];
+    const onChange = getHandler(watcher, 'change');
     const before = engineRef.current;
 
     onChange();
 
-    vi.advanceTimersByTime(499); // just before debounce
-    expect(engineRef.current).toBe(before); // not yet rebuilt
+    vi.advanceTimersByTime(499);
+    expect(engineRef.current).toBe(before);
 
-    vi.advanceTimersByTime(1); // debounce fires
-    expect(engineRef.current).not.toBe(before); // rebuilt
+    vi.advanceTimersByTime(1);
+    expect(engineRef.current).not.toBe(before);
   });
 
   // ── WatcherHandle shape ─────────────────────────────────────────────────────

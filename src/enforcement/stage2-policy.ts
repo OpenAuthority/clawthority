@@ -10,12 +10,13 @@
  *   import { EnforcementPolicyEngine } from './pipeline.js';
  *
  *   const engine = new EnforcementPolicyEngine();
- *   engine.addRules(defaultRules);
+ *   await engine.init();
  *   const stage2 = createStage2(engine);
  *   // pass stage2 to runPipeline(ctx, stage1, stage2, emitter)
  */
 
 import { EnforcementPolicyEngine } from './pipeline.js';
+import type { CedarEngineOptions } from '../policy/cedar-engine.js';
 import type { Stage2Fn, CeeDecision, PipelineContext } from './pipeline.js';
 
 // ---------------------------------------------------------------------------
@@ -34,7 +35,7 @@ import type { Stage2Fn, CeeDecision, PipelineContext } from './pipeline.js';
  *   3. Any uncaught exception is caught at the boundary and returned as
  *      `{ effect: 'forbid', reason: 'stage2_error', stage: 'stage2' }` (fail closed).
  *
- * @param engine An EnforcementPolicyEngine instance with rules loaded.
+ * @param engine An EnforcementPolicyEngine instance.
  * @returns A Stage2Fn suitable for use with runPipeline.
  */
 export function createStage2(engine: EnforcementPolicyEngine): Stage2Fn {
@@ -62,19 +63,17 @@ export function createStage2(engine: EnforcementPolicyEngine): Stage2Fn {
 // ---------------------------------------------------------------------------
 
 /**
- * Creates a new `EnforcementPolicyEngine` with the given rules pre-loaded.
+ * Creates a new `EnforcementPolicyEngine` with the given options.
  *
- * Convenience wrapper so callers do not need to import EnforcementPolicyEngine
- * separately when all they need is a default-configured engine.
+ * Pass `{ defaultEffect: 'permit' }` in tests or development to get an
+ * implicit-permit engine without loading Cedar WASM. Production deployments
+ * should call `engine.init()` after construction to enable full Cedar WASM
+ * evaluation (which is deny-by-default unless policies are loaded).
  *
- * @param rules Rules to load into the engine. Defaults to an empty array.
+ * @param options Options forwarded to the underlying {@link CedarEngine}.
  */
 export function createEnforcementEngine(
-  rules: Parameters<EnforcementPolicyEngine['addRules']>[0] = [],
+  options?: CedarEngineOptions,
 ): EnforcementPolicyEngine {
-  const engine = new EnforcementPolicyEngine();
-  if (rules.length > 0) {
-    engine.addRules(rules);
-  }
-  return engine;
+  return new EnforcementPolicyEngine(options);
 }

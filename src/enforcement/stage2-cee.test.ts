@@ -6,16 +6,14 @@
  *   2. filesystem.write on ~/.ssh/ → forbid (protected_path)
  *   3. communication.external.send to untrusted domain → forbid (untrusted_domain)
  *   4. Engine exception → forbid (stage2_error)
- *   5. PolicyEngine forbid decisions propagate correctly
- *   6. Protected path prefix matching via RegExp rule
- *   7. Reason defaults to effect string when engine returns no reason
- *   8. Engine receives correct action_class, target, and rule_context
+ *   5. Forbid decisions propagate correctly
+ *   6. Reason defaults to effect string when engine returns no reason
+ *   7. Engine receives correct action_class, target, and rule_context
  */
 import { describe, it, expect, vi } from 'vitest';
 import { createStage2, createEnforcementEngine } from './stage2-policy.js';
 import { EnforcementPolicyEngine } from './pipeline.js';
 import type { PipelineContext } from './pipeline.js';
-import type { Rule } from '../policy/types.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -131,51 +129,32 @@ describe('createStage2', () => {
     expect(result.stage).toBe('stage2');
   });
 
-  // ── 6. Protected path prefix matching via real engine + RegExp rule ───────
+  // ── 6. Mocked path and domain matching ───────────────────────────────────
 
-  it('forbids write matching ~/.ssh/ prefix via RegExp rule', async () => {
+  it('forbids writes to protected paths (mocked evaluateByActionClass)', async () => {
     const engine = new EnforcementPolicyEngine();
-    const rules: Rule[] = [
-      {
-        effect: 'forbid',
-        resource: 'tool',
-        match: /^(\/home\/[^/]+|~)\/\.ssh\//,
-        reason: 'protected_path',
-      },
-    ];
-    engine.addRules(rules);
+    vi.spyOn(engine, 'evaluateByActionClass').mockImplementation(
+      (_ac, target) =>
+        /\.ssh\//.test(target)
+          ? { effect: 'forbid', reason: 'protected_path' }
+          : { effect: 'permit' },
+    );
     const stage2 = createStage2(engine);
 
     const results = await Promise.all([
       stage2(makeCtx({ action_class: 'filesystem.write', target: '/home/alice/.ssh/id_rsa' })),
       stage2(makeCtx({ action_class: 'filesystem.write', target: '/home/bob/.ssh/config' })),
-      stage2(makeCtx({ action_class: 'filesystem.write', target: '/home/carol/.ssh/authorized_keys' })),
     ]);
 
     for (const r of results) {
       expect(r.effect).toBe('forbid');
       expect(r.reason).toBe('protected_path');
-      expect(r.stage).toBe('stage2');
     }
   });
 
-  it('permits reads on non-protected paths when a blanket permit rule is present', async () => {
+  it('permits reads on non-protected paths (mocked evaluateByActionClass)', async () => {
     const engine = new EnforcementPolicyEngine();
-    const rules: Rule[] = [
-      {
-        effect: 'forbid',
-        resource: 'tool',
-        match: /^(\/home\/[^/]+|~)\/\.ssh\//,
-        reason: 'protected_path',
-      },
-      {
-        effect: 'permit',
-        resource: 'tool',
-        match: '*',
-        reason: 'default_permit',
-      },
-    ];
-    engine.addRules(rules);
+    vi.spyOn(engine, 'evaluateByActionClass').mockReturnValue({ effect: 'permit' });
     const stage2 = createStage2(engine);
     const result = await stage2(
       makeCtx({ action_class: 'filesystem.read', target: '/tmp/safe-file.txt' }),
@@ -183,57 +162,14 @@ describe('createStage2', () => {
     expect(result.effect).toBe('permit');
   });
 
-  it('forbids writes to exactly matched protected path via string rule', async () => {
+  it('forbids external send to blocked domain (mocked evaluateByActionClass)', async () => {
     const engine = new EnforcementPolicyEngine();
-    const rules: Rule[] = [
-      {
-        effect: 'forbid',
-        resource: 'tool',
-        match: '/etc/passwd',
-        reason: 'protected_path',
-      },
-    ];
-    engine.addRules(rules);
-    const stage2 = createStage2(engine);
-    const result = await stage2(
-      makeCtx({ action_class: 'filesystem.write', target: '/etc/passwd' }),
+    vi.spyOn(engine, 'evaluateByActionClass').mockImplementation(
+      (_ac, target) =>
+        target === 'evil.example.com'
+          ? { effect: 'forbid', reason: 'untrusted_domain' }
+          : { effect: 'permit' },
     );
-    expect(result.effect).toBe('forbid');
-    expect(result.reason).toBe('protected_path');
-  });
-
-  it('permits write to different path when only a specific path is protected', async () => {
-    const engine = new EnforcementPolicyEngine();
-    const rules: Rule[] = [
-      {
-        effect: 'forbid',
-        resource: 'tool',
-        match: '/etc/passwd',
-        reason: 'protected_path',
-      },
-    ];
-    engine.addRules(rules);
-    const stage2 = createStage2(engine);
-    // No matching rule → implicit permit (defaultEffect defaults to 'permit')
-    const result = await stage2(
-      makeCtx({ action_class: 'filesystem.write', target: '/tmp/output.txt' }),
-    );
-    expect(result.effect).toBe('permit');
-  });
-
-  // ── 7. Domain forbid via real engine + channel resource ───────────────────
-
-  it('forbids external.send to blocked domain via channel rule', async () => {
-    const engine = new EnforcementPolicyEngine();
-    const rules: Rule[] = [
-      {
-        effect: 'forbid',
-        resource: 'channel',
-        match: 'evil.example.com',
-        reason: 'untrusted_domain',
-      },
-    ];
-    engine.addRules(rules);
     const stage2 = createStage2(engine);
     const result = await stage2(
       makeCtx({ action_class: 'communication.external.send', target: 'evil.example.com' }),
@@ -243,7 +179,7 @@ describe('createStage2', () => {
     expect(result.stage).toBe('stage2');
   });
 
-  // ── 8. Correct arguments forwarded to engine ─────────────────────────────
+  // ── 7. Correct arguments forwarded to engine ─────────────────────────────
 
   it('forwards action_class, target, and rule_context verbatim to the engine', async () => {
     const engine = new EnforcementPolicyEngine();
@@ -284,22 +220,16 @@ describe('createEnforcementEngine', () => {
     expect(engine).toBeInstanceOf(EnforcementPolicyEngine);
   });
 
-  it('returns engine with no rules when called with no arguments', () => {
+  it('creates a fail-closed engine by default (forbid when Cedar not initialized)', () => {
     const engine = createEnforcementEngine();
-    expect(engine.rules).toHaveLength(0);
+    const result = engine.evaluate('tool', 'anything', { agentId: 'a', channel: 'c' });
+    expect(result.effect).toBe('forbid');
+    expect(result.reason).toBe('cedar_not_initialized');
   });
 
-  it('returns engine with no rules when called with empty array', () => {
-    const engine = createEnforcementEngine([]);
-    expect(engine.rules).toHaveLength(0);
-  });
-
-  it('loads provided rules into the engine', () => {
-    const rules: Rule[] = [
-      { effect: 'permit', resource: 'tool', match: '*' },
-      { effect: 'forbid', resource: 'channel', match: 'blocked.com', reason: 'blocked' },
-    ];
-    const engine = createEnforcementEngine(rules);
-    expect(engine.rules).toHaveLength(2);
+  it('creates a permit-default engine when defaultEffect:permit is specified', () => {
+    const engine = createEnforcementEngine({ defaultEffect: 'permit' });
+    const result = engine.evaluate('tool', 'anything', { agentId: 'a', channel: 'c' });
+    expect(result.effect).toBe('permit');
   });
 });

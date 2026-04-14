@@ -1,7 +1,6 @@
 import { EventEmitter } from 'node:events';
-import { PolicyEngine } from '../policy/engine.js';
-import type { RuleContext, Resource } from '../policy/types.js';
-import type { EvaluationDecision } from '../policy/engine.js';
+import { CedarEngine, type CedarEngineOptions } from '../policy/cedar-engine.js';
+import type { RuleContext, Resource, EvaluationDecision } from '../policy/types.js';
 import type { RiskLevel } from './normalize.js';
 import type { ExecutionEnvelope, Intent, Capability, Metadata } from '../types.js';
 
@@ -147,7 +146,7 @@ export async function runPipeline(
 }
 
 /**
- * Extends PolicyEngine with action-class-aware evaluation.
+ * Extends CedarEngine with enforcement-pipeline action-class mapping.
  *
  * Maps action-class prefixes to Cedar Resource types:
  *   communication.* → channel
@@ -156,7 +155,11 @@ export async function runPipeline(
  *   model.*         → model
  *   (all others)    → tool
  */
-export class EnforcementPolicyEngine extends PolicyEngine {
+export class EnforcementPolicyEngine extends CedarEngine {
+  constructor(options?: CedarEngineOptions) {
+    super(options);
+  }
+
   override evaluateByActionClass(
     action_class: string,
     target: string,

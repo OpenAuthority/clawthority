@@ -23,8 +23,7 @@
  * @module
  */
 
-import type { RuleContext, Resource } from './types.js';
-import type { EvaluationDecision } from './engine.js';
+import type { RuleContext, Resource, EvaluationDecision } from './types.js';
 import { buildEntities } from './cedar-entities.js';
 
 // ---------------------------------------------------------------------------
@@ -83,17 +82,36 @@ export class CedarPolicyLoadError extends Error {
  * Call {@link init} once to load the WASM module before calling
  * {@link evaluate} or {@link evaluateByActionClass}.
  */
+export interface CedarEngineOptions {
+  /**
+   * Effect returned when the Cedar WASM module has not yet been initialised
+   * (i.e. before {@link init} completes).
+   *
+   * - `'forbid'` (default) — fail-closed; no tool calls are permitted until
+   *   Cedar is ready. Recommended for production deployments.
+   * - `'permit'` — fail-open; useful in tests and development environments
+   *   where the full WASM module is not loaded.
+   */
+  defaultEffect?: 'permit' | 'forbid';
+}
+
 export class CedarEngine {
   private cedar: CedarWasmModule | null = null;
+  private readonly _defaultEffect: 'permit' | 'forbid';
 
   /** Cedar policy set text (populated externally or by a future loadPolicies() call). */
   policies: string = '';
+
+  constructor(options?: CedarEngineOptions) {
+    this._defaultEffect = options?.defaultEffect ?? 'forbid';
+  }
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 
   /**
    * Loads the Cedar WASM module.
-   * Must be awaited before any call to {@link evaluate}.
+   * Must be awaited before any call to {@link evaluate} (unless
+   * {@link CedarEngineOptions.defaultEffect} is set to `'permit'`).
    */
   async init(): Promise<void> {
     const mod = await import('@cedar-policy/cedar-wasm/nodejs');
@@ -119,7 +137,7 @@ export class CedarEngine {
     context: RuleContext
   ): EvaluationDecision {
     if (!this.cedar) {
-      throw new Error('CedarEngine not initialized — call init() first');
+      return { effect: this._defaultEffect, reason: 'cedar_not_initialized' };
     }
 
     const entities = buildEntities(context);

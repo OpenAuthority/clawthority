@@ -36,6 +36,29 @@ export interface RateLimit {
   windowSeconds: number;
 }
 
+export type EvaluationEffect = 'permit' | 'forbid';
+
+/** Rate limit status included in evaluation decisions when a rule carries rateLimit config. */
+export interface RateLimitStatus {
+  limited: boolean;
+  maxCalls: number;
+  windowSeconds: number;
+  currentCount: number;
+  oldestCallExpiresAt?: number;
+}
+
+/**
+ * Decision returned by {@link CedarEngine.evaluate} and
+ * {@link CedarEngine.evaluateByActionClass}.
+ */
+export interface EvaluationDecision {
+  effect: EvaluationEffect;
+  reason?: string;
+  /** The rule whose effect determined the outcome (absent when using Cedar WASM evaluation). */
+  matchedRule?: Rule;
+  rateLimit?: RateLimitStatus;
+}
+
 /** A policy rule defining access control for a resource */
 export interface Rule {
   /** Whether this rule permits or forbids access */

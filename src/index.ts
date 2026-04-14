@@ -13,11 +13,11 @@ export {
 } from "./identity.js";
 export type { RegisteredAgent, IdentityVerificationResult } from "./identity.js";
 
-// ─── Cedar-style engine re-exports ───────────────────────────────────────────
-export { PolicyEngine as CedarPolicyEngine } from "./policy/engine.js";
-export type { EvaluationDecision, EvaluationEffect } from "./policy/engine.js";
+// ─── Cedar WASM engine re-exports ────────────────────────────────────────────
+export { CedarEngine } from "./policy/cedar-engine.js";
+export type { CedarEngineOptions } from "./policy/cedar-engine.js";
+export type { EvaluationDecision, EvaluationEffect } from "./policy/types.js";
 export type { Rule, RuleContext, Resource, Effect, RateLimit } from "./policy/types.js";
-export { default as defaultRules, mergeRules } from "./policy/rules.js";
 
 // ─── Phase 2: Coverage tracking re-exports ───────────────────────────────────
 export { CoverageMap } from "./policy/coverage.js";
@@ -80,9 +80,8 @@ export type {
 // ─── Internal imports ─────────────────────────────────────────────────────────
 import { JsonlAuditLogger } from "./audit.js";
 import type { HitlDecisionEntry } from "./audit.js";
-import { PolicyEngine as CedarPolicyEngine } from "./policy/engine.js";
-import type { Rule, RuleContext } from "./policy/types.js";
-import defaultRules from "./policy/rules.js";
+import { CedarEngine } from "./policy/cedar-engine.js";
+import type { RuleContext } from "./policy/types.js";
 import { startRulesWatcher, type WatcherHandle } from "./watcher.js";
 import { CoverageMap } from "./policy/coverage.js";
 import { checkAction } from "./hitl/matcher.js";
@@ -93,7 +92,6 @@ import { ApprovalManager } from "./hitl/approval-manager.js";
 import { TelegramListener, sendApprovalRequest, sendConfirmation, resolveTelegramConfig } from "./hitl/telegram.js";
 import { SlackInteractionServer, sendSlackApprovalRequest, sendSlackConfirmation, resolveSlackConfig } from "./hitl/slack.js";
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import { readFileSync, statSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { resolve, dirname } from "node:path";
@@ -271,15 +269,14 @@ function detectPromptInjection(messages?: unknown[]): boolean {
 
 // ─── Singleton instances ──────────────────────────────────────────────────────
 
-/** Mutable container for the Cedar-style engine used by lifecycle hooks.
- *  Hot reload swaps `.current` in-place so all hook handlers pick up new rules
- *  without requiring a Gateway restart.
- *  Uses defaultEffect:'forbid' (fail-closed) so unrecognised tools/channels are
- *  blocked unless an explicit permit rule covers them. */
-const cedarEngineRef: { current: CedarPolicyEngine } = {
-  current: new CedarPolicyEngine({ defaultEffect: 'forbid' }),
+/** Mutable container for the Cedar WASM engine used by lifecycle hooks.
+ *  Hot reload swaps `.current` in-place so all hook handlers pick up the new
+ *  engine without requiring a Gateway restart.
+ *  Fail-closed: the defaultEffect is 'forbid' so all calls are blocked until
+ *  Cedar WASM initialises and explicit permit policies are loaded. */
+const cedarEngineRef: { current: CedarEngine } = {
+  current: new CedarEngine({ defaultEffect: 'forbid' }),
 };
-cedarEngineRef.current.addRules(defaultRules);
 
 /**
  * Phase 2: CoverageMap tracks every (resource, name) pair evaluated by the
@@ -287,108 +284,6 @@ cedarEngineRef.current.addRules(defaultRules);
  * hot-reload cycle so stale entries don't linger after rule changes.
  */
 export const coverageMap = new CoverageMap();
-
-// Log compiled rules at startup
-console.log(`[openauthority] compiled rules (${defaultRules.length}):`);
-for (const r of defaultRules) {
-  // Rules are either Cedar-style (resource + match) or Stage-2 (action_class).
-  const target = r.action_class
-    ? `action:${r.action_class}`
-    : `${r.resource ?? '?'}:${r.match instanceof RegExp ? r.match.toString() : (r.match ?? '*')}`;
-  const reason = r.reason ? ` — ${r.reason}` : '';
-  console.log(`[openauthority]   ${r.effect.toUpperCase().padEnd(6)} ${target}${reason}`);
-}
-
-/**
- * Separate Cedar engine for rules loaded from data/rules.json.
- * Kept isolated so the hot-reload watcher (which manages cedarEngineRef) does
- * not inadvertently clear user-defined JSON rules on a TS file change.
- * null until loadJsonRules() succeeds on activate.
- */
-const jsonRulesEngineRef: { current: CedarPolicyEngine | null } = {
-  current: null,
-};
-
-/**
- * JSON rule record as written in data/rules.json.
- * Uses Cedar-style fields — effect, resource, match — not the TypeBox schema.
- */
-interface JsonRuleRecord {
-  id?: string;
-  effect: "permit" | "forbid";
-  resource: "tool" | "command" | "channel" | "prompt" | "model";
-  /** Exact string or regex source (e.g. "^web_fetch$") to match resource name. */
-  match: string;
-  reason?: string;
-  tags?: string[];
-}
-
-/**
- * Resolves data/rules.json relative to this module's dist/ directory, reads
- * it, translates each record into a Cedar Rule, and loads them into a fresh
- * PolicyEngine stored in jsonRulesEngineRef.current.
- *
- * Errors are logged but never thrown so a malformed rules file does not
- * prevent the rest of the plugin from activating.
- */
-async function loadJsonRules(): Promise<void> {
-  try {
-    const moduleDir = dirname(fileURLToPath(import.meta.url));
-    // data/rules.json sits two levels up from dist/ (project root/data/)
-    const rulesPath = resolve(moduleDir, "../../data/rules.json");
-
-    let raw: string;
-    try {
-      raw = await readFile(rulesPath, "utf-8");
-    } catch (readErr: unknown) {
-      const code = (readErr as NodeJS.ErrnoException).code;
-      if (code === "ENOENT") {
-        console.log("[plugin:openauthority] no data/rules.json found — skipping JSON rule load");
-        return;
-      }
-      throw readErr;
-    }
-
-    const records: JsonRuleRecord[] = JSON.parse(raw);
-    if (!Array.isArray(records)) {
-      throw new TypeError("data/rules.json must be a JSON array of rule objects");
-    }
-
-    const cedarRules: Rule[] = records.map((rec, i) => {
-      // Convert to RegExp when regex metacharacters are present; otherwise
-      // normalise to lowercase (tool names in OpenClaw are always lowercase,
-      // so "Exec" in JSON would never match without this).
-      let match: string | RegExp = rec.match;
-      if (/[\\^$.|?*+()[\]{}]/.test(rec.match)) {
-        try {
-          match = new RegExp(rec.match);
-        } catch {
-          console.warn(
-            `[plugin:openauthority] data/rules.json rule[${i}] has invalid regex "${rec.match}" — using exact match`
-          );
-        }
-      } else {
-        match = rec.match.toLowerCase();
-      }
-
-      return {
-        effect: rec.effect,
-        resource: rec.resource,
-        match,
-        ...(rec.reason !== undefined ? { reason: rec.reason } : {}),
-        ...(rec.tags !== undefined ? { tags: rec.tags } : {}),
-      } satisfies Rule;
-    });
-
-    const engine = new CedarPolicyEngine();
-    engine.addRules(cedarRules);
-    jsonRulesEngineRef.current = engine;
-
-    console.log(`[plugin:openauthority] loaded ${cedarRules.length} rule(s) from data/rules.json`);
-  } catch (err) {
-    console.error("[plugin:openauthority] failed to load data/rules.json — JSON rules will not be enforced:", err);
-  }
-}
 
 // ─── HITL state ──────────────────────────────────────────────────────────────
 
@@ -661,11 +556,11 @@ const beforeToolCallHandler: BeforeToolCallHandler = ({ toolName, params, source
     return { block: true, blockReason: 'untrusted_source_high_risk' };
   }
 
-  // ── 1. Cedar engine (TypeScript rules, hot-reloaded) ──────────────────────
+  // ── 1. Cedar engine (WASM) ────────────────────────────────────────────────
   try {
     const decision = cedarEngineRef.current.evaluate("tool", toolName, ruleContext);
     console.log(`[openauthority] │ [cedar] matched: ${formatMatchedRule(decision.matchedRule)}`);
-    if (decision.matchedRule?.reason) console.log(`[openauthority] │ [cedar] reason: ${decision.matchedRule.reason}`);
+    if (decision.reason) console.log(`[openauthority] │ [cedar] reason: ${decision.reason}`);
     if (decision.rateLimit) console.log(`[openauthority] │ [cedar] rate-limit: ${decision.rateLimit.currentCount}/${decision.rateLimit.maxCalls} per ${decision.rateLimit.windowSeconds}s${decision.rateLimit.limited ? " [EXCEEDED]" : ""}`);
     // Phase 2: record in coverage map (rate-limited is a specialised forbid)
     const covState = decision.rateLimit?.limited ? 'rate-limited' : decision.effect === 'permit' ? 'permit' : 'forbid';
@@ -681,26 +576,6 @@ const beforeToolCallHandler: BeforeToolCallHandler = ({ toolName, params, source
     console.error(`[openauthority] │ [cedar] ✕ ERROR — fail closed`, err);
     console.log(`[openauthority] └──────────────────────────────────────────────────────`);
     return { block: true, blockReason: "Cedar policy evaluation error — fail closed" };
-  }
-
-  // ── 2. JSON Cedar engine (data/rules.json, loaded at startup) ─────────────
-  if (jsonRulesEngineRef.current !== null) {
-    try {
-      const jsonDecision = jsonRulesEngineRef.current.evaluate("tool", toolName, ruleContext);
-      console.log(`[openauthority] │ [json-rules] matched: ${formatMatchedRule(jsonDecision.matchedRule)}`);
-      if (jsonDecision.matchedRule?.reason) console.log(`[openauthority] │ [json-rules] reason: ${jsonDecision.matchedRule.reason}`);
-      if (jsonDecision.effect === "forbid") {
-        const blockReason = jsonDecision.reason ?? "Tool call denied by JSON rule";
-        console.log(`[openauthority] │ DECISION: ✕ BLOCKED (json-rules/${jsonDecision.effect}) — ${blockReason}`);
-        console.log(`[openauthority] └──────────────────────────────────────────────────────`);
-        return { block: true, blockReason };
-      }
-      console.log(`[openauthority] │ [json-rules] ✓ passed`);
-    } catch (err) {
-      console.error(`[openauthority] │ [json-rules] ✕ ERROR — fail closed`, err);
-      console.log(`[openauthority] └──────────────────────────────────────────────────────`);
-      return { block: true, blockReason: "JSON rule evaluation error — fail closed" };
-    }
   }
 
   // ── Fast path: no HITL — return synchronously ─────────────────────────────
@@ -893,29 +768,15 @@ const plugin: OpenclawPlugin = {
     console.log(`│  root:       ${v.pluginRoot}`.padEnd(63) + "│");
     console.log("└──────────────────────────────────────────────────────────────┘");
 
-    rulesWatcher = startRulesWatcher(cedarEngineRef, 300, undefined, { defaultEffect: 'forbid' }, defaultRules, coverageMap);
+    rulesWatcher = startRulesWatcher(cedarEngineRef, 300, coverageMap);
 
-    // Load user-defined JSON rules from data/rules.json into the dedicated
-    // JSON Cedar engine. Async but errors are swallowed so activation is
-    // never blocked by a missing or malformed rules file.
-    loadJsonRules().catch((err) =>
-      console.error("[plugin:openauthority] unexpected error in loadJsonRules:", err)
-    );
+    // ── Initialise Cedar WASM engine ─────────────────────────────────────────
+    cedarEngineRef.current.init().catch((err: unknown) => {
+      console.error("[plugin:openauthority] Cedar WASM init failed:", err);
+    });
 
-    // ── Diagnostic: log registered hooks and loaded rules ────────────────────
+    // ── Diagnostic: log registered hooks ─────────────────────────────────────
     const registeredHooks = ["before_tool_call", "before_prompt_build", "before_model_resolve"];
-    const disabledHooks: string[] = [];
-    const rules = cedarEngineRef.current.rules;
-    const rulesByResource: Record<string, Rule[]> = {};
-    for (const r of rules) {
-      // Group action_class rules under their dotted namespace prefix
-      // (e.g. "filesystem.read" → "filesystem"); fall back to resource.
-      const key = r.action_class
-        ? r.action_class.split(".")[0] ?? "action"
-        : (r.resource ?? "unknown");
-      if (!rulesByResource[key]) rulesByResource[key] = [];
-      rulesByResource[key].push(r);
-    }
     console.log("┌──────────────────────────────────────────────────────────────┐");
     console.log("│  [plugin:openauthority] ACTIVATION SUMMARY                  │");
     console.log("├──────────────────────────────────────────────────────────────┤");
@@ -923,27 +784,8 @@ const plugin: OpenclawPlugin = {
     for (const h of registeredHooks) {
       console.log(`│    ✓ ${h.padEnd(54)}│`);
     }
-    for (const h of disabledHooks) {
-      console.log(`│    ✗ ${h} (disabled)`.padEnd(63) + "│");
-    }
     console.log("├──────────────────────────────────────────────────────────────┤");
-    console.log(`│  POLICY RULES LOADED: ${String(rules.length).padEnd(38)}│`);
-    for (const [resource, resourceRules] of Object.entries(rulesByResource)) {
-      const permits = resourceRules.filter((r) => r.effect === "permit").length;
-      const forbids = resourceRules.filter((r) => r.effect === "forbid").length;
-      console.log(`│    ${resource}: ${resourceRules.length} rules (${permits} permit, ${forbids} forbid)`.padEnd(63) + "│");
-    }
-    console.log("├──────────────────────────────────────────────────────────────┤");
-    console.log("│  RULE DETAILS:                                               │");
-    for (const r of rules) {
-      const effect = r.effect === "permit" ? "✓ PERMIT" : "✕ FORBID";
-      const target = r.action_class
-        ? `action:${r.action_class}`
-        : `${r.resource ?? "?"}:${r.match instanceof RegExp ? r.match.source : String(r.match ?? "*")}`;
-      const truncTarget = target.length > 48 ? target.slice(0, 45) + "..." : target;
-      const cond = r.condition ? " [conditional]" : "";
-      console.log(`│  ${effect} ${truncTarget}${cond}`.padEnd(63) + "│");
-    }
+    console.log("│  POLICY ENGINE: Cedar WASM (policies loaded via engine.policies) │");
     console.log("└──────────────────────────────────────────────────────────────┘");
 
     // ── HITL policy loading + Telegram listener ─────────────────────────────
