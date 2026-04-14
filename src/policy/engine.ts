@@ -1,3 +1,28 @@
+/**
+ * Cedar-style policy engine for OpenAuthority.
+ *
+ * Evaluates access control rules against a `(resource, name, context)` triple
+ * using Cedar semantics: an explicit `forbid` rule always wins over any number
+ * of `permit` rules for the same resource. Rate limiting is applied to `permit`
+ * rules only — a rate-limited permit is surfaced as a `forbid` decision.
+ *
+ * @example
+ * ```typescript
+ * import { PolicyEngine } from './engine.js';
+ * import defaultRules from './rules/default.js';
+ *
+ * const engine = new PolicyEngine({ defaultEffect: 'forbid' });
+ * engine.addRules(defaultRules);
+ *
+ * const decision = engine.evaluate('tool', 'read_file', {
+ *   agentId: 'agent-1',
+ *   channel: 'default',
+ * });
+ * // decision.effect === 'permit' | 'forbid'
+ * ```
+ *
+ * @module
+ */
 import type { Rule, RuleContext, Resource } from './types.js';
 
 export type EvaluationEffect = 'permit' | 'forbid';
@@ -16,11 +41,18 @@ export interface RateLimitStatus {
   oldestCallExpiresAt?: number;
 }
 
+/**
+ * Decision returned by {@link PolicyEngine.evaluate} and
+ * {@link PolicyEngine.evaluateByActionClass}.
+ */
 export interface EvaluationDecision {
+  /** Authorization effect. */
   effect: EvaluationEffect;
+  /** Human-readable explanation of the decision. */
   reason?: string;
+  /** The rule whose effect determined the outcome. */
   matchedRule?: Rule;
-  /** Present when rate limiting was evaluated for this decision */
+  /** Present when rate limiting was evaluated for this decision. */
   rateLimit?: RateLimitStatus;
 }
 
@@ -75,16 +107,31 @@ export class PolicyEngine {
     }
   }
 
+  /**
+   * Appends a single rule to the engine's rule set.
+   *
+   * @param rule  The rule to add.
+   */
   addRule(rule: Rule): void {
     this._rules.push(rule);
   }
 
+  /**
+   * Appends an array of rules to the engine's rule set.
+   * Rules are added in the order they appear in `rules`.
+   *
+   * @param rules  Rules to add.
+   */
   addRules(rules: Rule[]): void {
     for (const rule of rules) {
       this._rules.push(rule);
     }
   }
 
+  /**
+   * Removes all rules and clears rate-limit tracking state.
+   * After this call the engine behaves as if newly constructed.
+   */
   clearRules(): void {
     this._rules = [];
     this.rateLimitTracking.clear();
@@ -122,10 +169,16 @@ export class PolicyEngine {
   }
 
   /**
-   * Evaluate access for a resource using Cedar-style semantics:
-   * - explicit forbid wins over permit
-   * - rate-limited permits synthesize a forbid decision
-   * - configurable default effect when no rules match (default: permit / implicit allow)
+   * Evaluates access for a resource using Cedar-style semantics:
+   * - an explicit `forbid` rule wins over any number of `permit` rules
+   * - rate-limited `permit` rules produce a `forbid` decision when the window is exceeded
+   * - when no rule matches, the configurable `defaultEffect` applies (default: `'permit'`)
+   *
+   * @param resource      Resource type to match rules against (e.g. `'tool'`, `'channel'`).
+   * @param resourceName  Name of the specific resource being accessed (e.g. `'read_file'`).
+   * @param context       Evaluation context — agent ID, channel, and optional metadata.
+   * @returns             An `EvaluationDecision` carrying the effect, optional reason,
+   *                      matched rule reference, and rate-limit status if applicable.
    */
   evaluate(
     resource: Resource,
@@ -136,6 +189,7 @@ export class PolicyEngine {
 
     for (const rule of this._rules) {
       if (rule.resource !== resource) continue;
+      if (rule.match === undefined) continue;
       if (!matchesPattern(rule.match, resourceName)) continue;
       if (rule.condition !== undefined && !rule.condition(context)) continue;
       matchingRules.push(rule);
@@ -204,6 +258,51 @@ export class PolicyEngine {
         ? 'No matching rule; implicit deny'
         : 'No matching rule; implicit permit',
     };
+  }
+
+  /**
+   * Maps an action class string to a Cedar resource type then delegates to
+   * {@link evaluate}. Use this when the caller works with semantic action
+   * classes (e.g. `'filesystem.read'`) rather than raw resource types.
+   *
+   * Action class prefix → Resource mapping:
+   * - `filesystem.*`              → `'file'`
+   * - `communication.*`           → `'external'`
+   * - `payment.*`                 → `'payment'`
+   * - `system.*`                  → `'system'`
+   * - `credential.*`              → `'credential'`
+   * - `browser.*`                 → `'web'`
+   * - `memory.*`                  → `'memory'`
+   * - `unknown_sensitive_action`  → `'unknown'`
+   * - *(anything else)*           → `'unknown'`
+   *
+   * @param actionClass   Semantic action class (e.g. `'filesystem.read'`).
+   * @param resourceName  Specific target resource being accessed.
+   * @param context       Evaluation context forwarded to {@link evaluate}.
+   * @returns             An `EvaluationDecision` with Cedar semantics applied.
+   */
+  evaluateByActionClass(
+    actionClass: string,
+    resourceName: string,
+    context: RuleContext
+  ): EvaluationDecision {
+    const resource = PolicyEngine.mapActionClassToResource(actionClass);
+    return this.evaluate(resource, resourceName, context);
+  }
+
+  private static mapActionClassToResource(actionClass: string): Resource {
+    if (actionClass === 'unknown_sensitive_action') return 'unknown';
+    const prefix = actionClass.split('.')[0];
+    switch (prefix) {
+      case 'filesystem':    return 'file';
+      case 'communication': return 'external';
+      case 'payment':       return 'payment';
+      case 'system':        return 'system';
+      case 'credential':    return 'credential';
+      case 'browser':       return 'web';
+      case 'memory':        return 'memory';
+      default:              return 'unknown';
+    }
   }
 
   private checkAndRecordRateLimit(

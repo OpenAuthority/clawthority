@@ -1,324 +1,133 @@
 import type { Rule } from '../types.js';
 
 /**
- * Baseline policy rules for the Open Authority openclaw plugin.
+ * Baseline action-class policy rules for the Open Authority openclaw plugin.
  *
- * Rules are evaluated with Cedar semantics: forbid always wins over permit.
- * When no rule matches, the engine's configured default effect applies
- * (implicit permit by default to avoid blocking OpenClaw tool calls).
+ * Rules are evaluated by Stage 2 using action_class semantics.  Priority
+ * determines evaluation order — lower numbers are evaluated first.
  *
- * These rules apply to all agents. Per-agent overrides and extensions live in
- * sibling rule files (e.g. support.ts) and are merged over these defaults
- * via mergeRules() in index.ts.
+ * Priority tiers:
+ *   10  — permitted baseline actions (unconditional permit)
+ *   90  — sensitive actions requiring HITL approval (forbid pending approval)
+ *   100 — unconditionally forbidden actions (hard forbid, no override)
  *
- * Organisation:
- *   1. Tool rules   — control which Claude tools may be invoked
- *   2. Command rules — control which shell commands may be run
- *   3. Channel rules — control which channels agents may operate on
- *   4. Prompt rules  — control which prompt identifiers may be used
- *   5. Model rules   — control which AI models may be resolved
+ * Per-agent overrides and extensions live in sibling rule files (e.g.
+ * support.ts) and are merged over these defaults via mergeRules() in index.ts.
  */
-const defaultRules: Rule[] = [
+const DEFAULT_RULES: Rule[] = [
 
-  // ─── Tool rules ───────────────────────────────────────────────────────────
+  // ─── Priority 10: Permitted baseline actions ────────────────────────────────
 
   /**
-   * Permit standard read-only file-system tools unconditionally.
-   * These carry no mutation risk and are safe for all agents.
+   * Permit filesystem read operations for all agents.
+   * Read-only access carries no mutation risk.
    */
   {
+    action_class: 'filesystem.read',
     effect: 'permit',
-    resource: 'tool',
-    match: /^(read_file|list_dir|search_files|get_file_info|glob)$/,
-    reason: 'Read-only file-system tools are permitted for all agents',
-    tags: ['file', 'read-only'],
+    priority: 10,
+    reason: 'Filesystem read operations are permitted for all agents',
+    tags: ['filesystem', 'read-only'],
   },
 
   /**
-   * Forbid the exec tool entirely.
-   * Direct shell execution bypasses command-level policy; use command rules
-   * to grant access to specific shell commands instead.
+   * Permit browser navigation for all agents.
+   * Navigation alone does not mutate state or exfiltrate credentials.
    */
   {
+    action_class: 'browser.navigate',
+    effect: 'permit',
+    priority: 10,
+    reason: 'Browser navigation is permitted for all agents',
+    tags: ['browser'],
+  },
+
+  // ─── Priority 90: Sensitive actions requiring HITL approval ─────────────────
+
+  /**
+   * Forbid payment transfer actions pending HITL approval.
+   * Financial transfers must be explicitly approved by a human operator.
+   */
+  {
+    action_class: 'payment.transfer',
     effect: 'forbid',
-    resource: 'tool',
-    match: 'exec',
-    reason: 'exec is forbidden; add command rules for shell access',
-    tags: ['security', 'exec'],
+    priority: 90,
+    reason: 'Payment transfers require human-in-the-loop approval',
+    tags: ['payment', 'hitl'],
   },
 
   /**
-   * Forbid tools that spawn interactive shells or raw terminal sessions.
-   * These cannot be audited at the command level.
+   * Forbid payment initiation pending HITL approval.
    */
   {
+    action_class: 'payment.initiate',
     effect: 'forbid',
-    resource: 'tool',
-    match: /^(bash|shell|terminal|run_command|spawn)$/,
-    reason: 'Shell-spawning tools are forbidden by default',
-    tags: ['security', 'shell'],
+    priority: 90,
+    reason: 'Payment initiation requires human-in-the-loop approval',
+    tags: ['payment', 'hitl'],
   },
 
   /**
-   * Permit file-write tools only when the request arrives on a trusted
-   * channel. Agents on untrusted channels must not be able to modify files.
+   * Forbid credential access pending HITL approval.
+   * Reading credentials can expose secrets; require explicit human approval.
    */
   {
-    effect: 'permit',
-    resource: 'tool',
-    match: /^(write_file|edit_file|create_file|patch_file)$/,
-    condition: (ctx) => ['admin', 'trusted', 'ci'].includes(ctx.channel),
-    reason: 'Write tools are restricted to trusted and CI channels',
-    tags: ['file', 'write'],
-  },
-
-  /**
-   * Forbid the delete_file tool for all non-admin agents.
-   * Deletion is irreversible; only admin-prefixed agents may use it.
-   */
-  {
+    action_class: 'credential.access',
     effect: 'forbid',
-    resource: 'tool',
-    match: 'delete_file',
-    condition: (ctx) => !ctx.agentId.startsWith('admin-'),
-    reason: 'File deletion is restricted to admin agents',
-    tags: ['file', 'destructive'],
+    priority: 90,
+    reason: 'Credential access requires human-in-the-loop approval',
+    tags: ['credential', 'hitl'],
   },
 
   /**
-   * Forbid web-fetch and web-search tools by default.
-   * These tools allow agents to make outbound HTTP requests and should only
-   * be permitted when explicitly overridden by a more specific rule.
+   * Forbid credential write operations pending HITL approval.
    */
   {
+    action_class: 'credential.write',
     effect: 'forbid',
-    resource: 'tool',
-    match: /^(web_fetch|web_search)$/,
-    reason: 'Outbound web tools are forbidden by default; add a permit rule to enable them',
-    tags: ['security', 'network'],
+    priority: 90,
+    reason: 'Credential write operations require human-in-the-loop approval',
+    tags: ['credential', 'hitl'],
   },
 
-  /**
-   * Permit all remaining tools for agents operating on the default or webchat
-   * channel. More specific forbid rules above will still override this catch-all.
-   * 'webchat' is included because OpenClaw routes browser-based sessions through
-   * that channel identifier; it carries the same trust level as 'default'.
-   */
-  {
-    effect: 'permit',
-    resource: 'tool',
-    match: '*',
-    condition: (ctx) => ctx.channel === 'default' || ctx.channel === 'webchat',
-    reason: 'Agents on the default/webchat channel have general tool access',
-    tags: ['default'],
-  },
-
-  // ─── Command rules ────────────────────────────────────────────────────────
+  // ─── Priority 100: Unconditionally forbidden actions ────────────────────────
 
   /**
-   * Permit a safe allow-list of read-only shell commands.
-   * These commands do not modify system state and are suitable for any agent.
+   * Unconditionally forbid system execution.
+   * Direct shell/process execution bypasses all command-level policy.
    */
   {
-    effect: 'permit',
-    resource: 'command',
-    match: /^(ls|cat|pwd|echo|date|whoami|uname|env|ps|df|du|wc|head|tail|grep|find|sort|uniq)$/,
-    reason: 'Safe read-only shell commands are permitted',
-    tags: ['command', 'read-only'],
-  },
-
-  /**
-   * Forbid destructive file-system commands.
-   * Data loss from these commands is typically unrecoverable.
-   */
-  {
+    action_class: 'system.execute',
     effect: 'forbid',
-    resource: 'command',
-    match: /^(rm|rmdir|dd|shred|mkfs|fdisk|wipefs|truncate)$/,
-    reason: 'Destructive file-system commands are forbidden',
-    tags: ['command', 'destructive'],
+    priority: 100,
+    reason: 'System execution is unconditionally forbidden',
+    tags: ['system', 'security'],
   },
 
   /**
-   * Forbid privilege-escalation commands.
-   * Agents must not be able to elevate their own permissions.
+   * Unconditionally forbid account permission changes.
+   * Privilege escalation must never be performed autonomously.
    */
   {
+    action_class: 'account.permission.change',
     effect: 'forbid',
-    resource: 'command',
-    match: /^(sudo|su|chmod|chown|chattr|setuid|setgid|newgrp)$/,
-    reason: 'Privilege-escalation commands are forbidden',
-    tags: ['command', 'privilege'],
+    priority: 100,
+    reason: 'Account permission changes are unconditionally forbidden',
+    tags: ['account', 'security'],
   },
 
   /**
-   * Permit git commands on trusted and CI channels only.
-   * git operations on production repositories must be controlled.
+   * Unconditionally forbid any action classified as unknown and sensitive.
+   * Fail-closed: unrecognised high-risk actions are blocked by default.
    */
   {
-    effect: 'permit',
-    resource: 'command',
-    match: 'git',
-    condition: (ctx) => ['admin', 'trusted', 'ci'].includes(ctx.channel),
-    reason: 'git is permitted on trusted and CI channels',
-    tags: ['command', 'git'],
-  },
-
-  /**
-   * Permit package-manager invocations only for authenticated users on
-   * trusted channels. This prevents arbitrary package installation.
-   */
-  {
-    effect: 'permit',
-    resource: 'command',
-    match: /^(npm|yarn|pnpm|bun|pip|cargo|go)$/,
-    condition: (ctx) =>
-      Boolean(ctx.userId) && ['admin', 'trusted', 'ci'].includes(ctx.channel),
-    reason: 'Package managers require an authenticated user on a trusted channel',
-    tags: ['command', 'package-manager'],
-  },
-
-  // ─── Channel rules ────────────────────────────────────────────────────────
-
-  /**
-   * Permit the default channel for all agents.
-   * This is the baseline channel every agent can access.
-   */
-  {
-    effect: 'permit',
-    resource: 'channel',
-    match: 'default',
-    reason: 'Default channel is accessible to all agents',
-    tags: ['channel'],
-  },
-
-  /**
-   * Forbid the untrusted channel entirely.
-   * Requests arriving on this channel must always be rejected.
-   */
-  {
+    action_class: 'unknown_sensitive_action',
     effect: 'forbid',
-    resource: 'channel',
-    match: 'untrusted',
-    reason: 'Untrusted channel is blocked by policy',
-    tags: ['channel', 'security'],
-  },
-
-  /**
-   * Permit the admin channel only for agents whose ID carries the admin-
-   * prefix. This enforces a naming convention for privileged agents.
-   */
-  {
-    effect: 'permit',
-    resource: 'channel',
-    match: 'admin',
-    condition: (ctx) => ctx.agentId.startsWith('admin-'),
-    reason: 'Admin channel is restricted to agents with the admin- id prefix',
-    tags: ['channel', 'admin'],
-  },
-
-  /**
-   * Permit the named trusted channels (trusted, ci, readonly).
-   * These are purpose-built channels with pre-approved access profiles.
-   */
-  {
-    effect: 'permit',
-    resource: 'channel',
-    match: /^(trusted|ci|readonly)$/,
-    reason: 'Pre-approved named channels are permitted',
-    tags: ['channel'],
-  },
-
-  // ─── Prompt rules ─────────────────────────────────────────────────────────
-
-  /**
-   * Permit standard user-scoped prompts.
-   * Prompts prefixed with "user:" represent normal end-user interactions.
-   */
-  {
-    effect: 'permit',
-    resource: 'prompt',
-    match: /^user:/,
-    reason: 'User-scoped prompts are permitted',
-    tags: ['prompt'],
-  },
-
-  /**
-   * Forbid system prompt overrides.
-   * Agents must not be able to replace or inject into the system prompt.
-   */
-  {
-    effect: 'forbid',
-    resource: 'prompt',
-    match: /^system:/,
-    reason: 'System prompt overrides are forbidden',
-    tags: ['prompt', 'security'],
-  },
-
-  /**
-   * Forbid known jailbreak prompt prefixes.
-   * These patterns are commonly used to attempt policy bypass.
-   */
-  {
-    effect: 'forbid',
-    resource: 'prompt',
-    match: /^(jailbreak:|override:|ignore-policy:|DAN:)/i,
-    reason: 'Known jailbreak prompt prefixes are forbidden',
-    tags: ['prompt', 'security'],
-  },
-
-  /**
-   * Permit custom prompts only for sessions with an authenticated user.
-   * Unauthenticated agents may not define arbitrary prompt identifiers.
-   */
-  {
-    effect: 'permit',
-    resource: 'prompt',
-    match: /^custom:/,
-    condition: (ctx) => Boolean(ctx.userId),
-    reason: 'Custom prompts require an authenticated user',
-    tags: ['prompt', 'custom'],
-  },
-
-  // ─── Model rules ──────────────────────────────────────────────────────────
-
-  /**
-   * Permit all Anthropic Claude models.
-   * Matches both "claude-<version>" and "anthropic/claude-<version>" formats.
-   */
-  {
-    effect: 'permit',
-    resource: 'model',
-    match: /^(anthropic\/)?claude-/,
-    reason: 'Anthropic Claude models are permitted',
-    tags: ['model', 'anthropic'],
-  },
-
-  /**
-   * Forbid preview, experimental, alpha, and beta model variants for
-   * non-admin agents. These variants have not been approved for production.
-   */
-  {
-    effect: 'forbid',
-    resource: 'model',
-    match: /-(preview|experimental|alpha|beta)(\b|-|$)/i,
-    condition: (ctx) => !ctx.agentId.startsWith('admin-'),
-    reason: 'Preview and experimental model variants are restricted to admin agents',
-    tags: ['model', 'security'],
-  },
-
-  /**
-   * Forbid any model that specifies a non-Anthropic provider prefix.
-   * Third-party providers (openai/, google/, etc.) are blocked by default.
-   */
-  {
-    effect: 'forbid',
-    resource: 'model',
-    match: /^(?!anthropic\/).+\/.+/,
-    reason: 'Non-Anthropic model providers are forbidden by default',
-    tags: ['model', 'security'],
+    priority: 100,
+    reason: 'Unknown sensitive actions are unconditionally forbidden',
+    tags: ['security'],
   },
 
 ];
 
-export default defaultRules;
+export default DEFAULT_RULES;

@@ -1,9 +1,9 @@
 {
   "id": "openauthority",
-  "name": "openauthority",
+  "name": "open-authority",
   "displayName": "Open Authority",
-  "version": "1.0.0",
-  "description": "Authorization policy engine for Open Authority — evaluate ABAC/RBAC policies with audit logging",
+  "version": "0.1.1",
+  "description": "Authorization policy engine for Open Authority — semantic authorization, action normalization, audit logging, and HITL approval",
   "author": "Firma-AI",
   "license": "MIT",
   "main": "dist/index.js",
@@ -12,41 +12,108 @@
     "apiVersion": "1",
     "type": "plugin",
     "capabilities": [
-      "policy-evaluation",
+      "semantic-authorization",
+      "action-normalization",
       "audit-logging",
-      "tool-restriction",
-      "prompt-protection",
-      "model-restriction"
+      "hitl-approval"
     ],
     "hooks": [
       "before_tool_call",
-      "before_prompt_build",
-      "before_model_resolve"
+      "before_prompt_build"
     ],
     "installPath": "~/.openclaw/plugins/openauthority"
   },
   "configSchema": {
     "type": "object",
     "properties": {
-      "rulesFile": {
+      "bundlePath": {
         "type": "string",
-        "description": "Path to the JSON rules file",
-        "default": "data/rules.json"
+        "description": "Path to the active bundle directory",
+        "default": "data/bundles/active"
+      },
+      "proposalPath": {
+        "type": "string",
+        "description": "Path to the bundle proposals directory",
+        "default": "data/bundles/proposals"
       },
       "auditLogFile": {
         "type": "string",
         "description": "Path to the JSONL audit log file",
         "default": "data/audit.jsonl"
       },
-      "uiPort": {
-        "type": "number",
-        "description": "Port for the policy engine UI server",
-        "default": 7331
+      "cee": {
+        "type": "object",
+        "description": "Contextual Enforcement Engine configuration",
+        "properties": {
+          "trustedDomains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Domains considered trusted for action classification",
+            "default": []
+          },
+          "protectedPaths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "File-system paths protected from agent access",
+            "default": []
+          }
+        },
+        "additionalProperties": false
       },
-      "enabled": {
-        "type": "boolean",
-        "description": "Enable or disable the policy engine",
-        "default": true
+      "hitl": {
+        "type": "object",
+        "description": "Human-in-the-Loop approval configuration",
+        "properties": {
+          "telegram": {
+            "type": "object",
+            "description": "Telegram approval channel configuration",
+            "properties": {
+              "botToken": {
+                "type": "string",
+                "description": "Telegram Bot API token",
+                "default": ""
+              },
+              "chatId": {
+                "type": "string",
+                "description": "Telegram chat or group ID",
+                "default": ""
+              }
+            },
+            "additionalProperties": false
+          },
+          "slack": {
+            "type": "object",
+            "description": "Slack approval channel configuration",
+            "properties": {
+              "botToken": {
+                "type": "string",
+                "description": "Slack Bot User OAuth Token (xoxb-...)",
+                "default": ""
+              },
+              "channelId": {
+                "type": "string",
+                "description": "Slack channel ID (not name)",
+                "default": ""
+              },
+              "signingSecret": {
+                "type": "string",
+                "description": "Slack Signing Secret for webhook verification",
+                "default": ""
+              },
+              "interactionPort": {
+                "type": "number",
+                "description": "Port for the Slack webhook interaction server",
+                "default": 3201
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
       }
     },
     "additionalProperties": false
@@ -55,8 +122,9 @@
     "openclaw",
     "policy",
     "authorization",
-    "abac",
-    "rbac",
+    "semantic-authorization",
+    "action-normalization",
+    "hitl",
     "audit"
   ],
   "repository": {

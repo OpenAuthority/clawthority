@@ -49,18 +49,41 @@ The dashboard is available at `http://localhost:7331` (served by Express) or `ht
 
 ```
 openauthority/
-├── src/                        # Policy engine source
+├── src/                        # Plugin source
 │   ├── index.ts                # Plugin entry point and openclaw hooks
-│   ├── engine.ts               # ABAC PolicyEngine class
-│   ├── rules.ts                # Rule evaluation and condition operators
-│   ├── types.ts                # TypeBox schemas and TypeScript types
-│   ├── audit.ts                # AuditLogger and handlers
-│   ├── watcher.ts              # Hot-reload file watcher
-│   └── policy/
-│       ├── engine.ts           # Cedar-style PolicyEngine
-│       ├── types.ts            # Cedar types (Effect, Resource, Rule, RuleContext)
-│       ├── rules.ts            # Default rule set
-│       └── engine.test.ts      # Cedar engine tests
+│   ├── types.ts                # Core v0.1 runtime types (Intent, Capability, ExecutionEnvelope, CeeDecision)
+│   ├── audit.ts                # JsonlAuditLogger, PolicyDecisionEntry, HitlDecisionEntry
+│   ├── envelope.ts             # Canonical re-export shim (buildEnvelope, sortedJsonStringify, uuidv7)
+│   ├── watcher.ts              # Hot-reload file watcher (JSON + TypeScript rules)
+│   ├── enforcement/
+│   │   ├── pipeline.ts         # runPipeline, EnforcementPolicyEngine, ExecutionEnvelope builder
+│   │   ├── normalize.ts        # Action normalization registry (tool name → action_class)
+│   │   ├── decision.ts         # StructuredDecision type layer (fromCeeDecision, askUser, forbidDecision)
+│   │   └── stage2-policy.ts    # Stage 2 evaluator factory (createStage2, createEnforcementEngine)
+│   ├── policy/
+│   │   ├── engine.ts           # Cedar-style PolicyEngine (forbid-wins, rate limiting)
+│   │   ├── types.ts            # Rule, RuleContext, Effect, Resource, RateLimit
+│   │   ├── rules.ts            # Re-export shim → rules/index.ts
+│   │   ├── rules/
+│   │   │   ├── default.ts      # Baseline action-class rules (priority 10/90/100)
+│   │   │   └── index.ts        # mergeRules() + combined default export
+│   │   ├── bundle.ts           # Bundle loader and validation
+│   │   ├── coverage.ts         # CoverageMap — rule coverage tracking
+│   │   ├── exporter.ts         # Rule export utilities
+│   │   └── loader.ts           # JSON rules file loader
+│   ├── hitl/
+│   │   ├── index.ts            # HITL module barrel export
+│   │   ├── types.ts            # TypeBox schemas for HITL policy config
+│   │   ├── matcher.ts          # Action pattern matching (dot-notation wildcards)
+│   │   ├── parser.ts           # YAML/JSON policy file parsing and validation
+│   │   ├── watcher.ts          # HITL policy hot-reload watcher
+│   │   ├── approval-manager.ts # Approval lifecycle and token management
+│   │   ├── telegram.ts         # Telegram approval channel adapter
+│   │   └── slack.ts            # Slack approval channel adapter
+│   └── adapter/
+│       ├── index.ts            # IAuthorityAdapter interface
+│       ├── types.ts            # Adapter types
+│       └── file-adapter.ts     # File-based adapter implementation
 │
 ├── ui/
 │   ├── server.ts               # Express server entry point
@@ -79,7 +102,11 @@ openauthority/
 │       └── package.json
 │
 ├── docs/                       # Documentation
-├── data/                       # Persisted rules and audit log (gitignored)
+├── data/                       # Persisted rules, bundles and audit log (gitignored)
+│   ├── rules.json              # JSON-format runtime rules (loaded by watcher)
+│   ├── audit.jsonl             # JSONL audit log
+│   └── bundles/                # Policy bundle directory
+│       └── active/             # Active bundle (loaded at startup)
 ├── openclaw.plugin.json        # Plugin manifest
 ├── tsconfig.json
 └── package.json
@@ -194,11 +221,13 @@ Fix sliding window cleanup leaving stale entries after engine reload
 
 To add a rule to the default rule set:
 
-1. Open `src/policy/rules.ts`
-2. Add your rule object to the exported array
-3. Save the file — the hot-reload watcher will pick it up immediately if openclaw is running
+1. Open `src/policy/rules/default.ts`
+2. Add your rule object to the `DEFAULT_RULES` array, choosing the appropriate priority tier (10/90/100)
+3. Save the file — the hot-reload watcher picks it up immediately if openclaw is running
 4. Add a test case in `src/policy/engine.test.ts` covering the new rule's behavior
 5. Update `docs/usage.md` if the rule introduces a new pattern
+
+To add agent-specific rules, create a sibling file in `src/policy/rules/` and register it in `KNOWN_RULE_FILES` inside `src/watcher.ts`. Use `mergeRules()` in `src/policy/rules/index.ts` to combine it with the baseline.
 
 ---
 

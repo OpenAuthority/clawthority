@@ -118,7 +118,7 @@ Register OpenAuthority as an OpenClaw capability provider via `api.registerProvi
 - **Email** — approval via email reply (for compliance workflows)
 
 ### Control Plane API
-The `control-plane-api/` scaffold exists. Full implementation includes:
+A future multi-tenant service for centralised policy management. Planned scope:
 - Multi-tenant policy management
 - Database-backed policy storage with migrations
 - User and tenant management

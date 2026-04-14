@@ -28,6 +28,14 @@ export interface SendApprovalOpts {
   agentId: string;
   policyName: string;
   timeoutSeconds: number;
+  /** Logical action class (e.g. "email.send"). */
+  action_class?: string;
+  /** Target resource of the action (e.g. email address, file path). */
+  target?: string;
+  /** Human-readable summary of the requested action. */
+  summary?: string;
+  /** Absolute expiry timestamp (ISO 8601 string). */
+  expires_at?: string;
 }
 
 /**
@@ -38,17 +46,21 @@ export async function sendApprovalRequest(
   config: ResolvedTelegramConfig,
   opts: SendApprovalOpts,
 ): Promise<boolean> {
-  const text = [
+  const lines = [
     `\u{1F6A8} *HITL Approval Request* \u2014 \`${opts.token}\``,
     '',
     `*Tool:* \`${opts.toolName}\``,
     `*Agent:* \`${opts.agentId}\``,
     `*Policy:* ${opts.policyName}`,
     `*Expires in:* ${opts.timeoutSeconds}s`,
-    '',
-    `Reply with:`,
-    `\`/approve ${opts.token}\` or \`/deny ${opts.token}\``,
-  ].join('\n');
+  ];
+  if (opts.action_class) lines.push(`\u{1F510} *Action Class:* \`${opts.action_class}\``);
+  if (opts.target) lines.push(`\u{1F3AF} *Target:* \`${opts.target}\``);
+  if (opts.summary) lines.push(`\u{1F4CB} *Summary:* ${opts.summary}`);
+  if (opts.expires_at) lines.push(`\u23F1 *Expires at:* ${opts.expires_at}`);
+  lines.push(`\u{1F511} *Approval ID:* \`${opts.token}\``);
+  lines.push('', `Reply with:`, `\`/approve ${opts.token}\` or \`/deny ${opts.token}\``);
+  const text = lines.join('\n');
 
   try {
     const res = await fetch(`${TELEGRAM_API}/bot${config.botToken}/sendMessage`, {

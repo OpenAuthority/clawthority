@@ -32,19 +32,22 @@ export interface HitlCheckResult {
 }
 
 /**
- * Checks whether an action requires human approval according to the policy config.
+ * Checks whether an action_class requires human approval according to the policy config.
  *
  * Policies are evaluated in declaration order; the first policy whose `actions`
- * list contains a pattern that matches `action` is returned as the match.
+ * list contains a pattern that matches `action_class` is returned as the match.
  * Returns `{ requiresApproval: false }` when no policy matches.
+ *
+ * @param action_class - Dot-notation action class (e.g. "filesystem.write", "communication.email").
+ *   Must be the normalized action class, not a raw tool name.
  */
 export function checkAction(
   config: HitlPolicyConfig,
-  action: string,
+  action_class: string,
 ): HitlCheckResult {
   for (const policy of config.policies) {
     for (const pattern of policy.actions) {
-      if (matchesActionPattern(pattern, action)) {
+      if (matchesActionPattern(pattern, action_class)) {
         return { requiresApproval: true, matchedPolicy: policy };
       }
     }

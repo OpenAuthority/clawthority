@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "effect": "permit",
+      "action_class": "filesystem.read",
+      "reason": "Filesystem read operations are permitted for all agents",
+      "tags": ["filesystem", "read-only"]
+    },
+    {
+      "effect": "permit",
+      "action_class": "browser.navigate",
+      "reason": "Browser navigation is permitted for all agents",
+      "tags": ["browser"]
+    },
+    {
+      "effect": "forbid",
+      "action_class": "payment.transfer",
+      "reason": "Payment transfers require human-in-the-loop approval",
+      "tags": ["payment", "hitl"]
+    },
+    {
+      "effect": "forbid",
+      "action_class": "payment.initiate",
+      "reason": "Payment initiation requires human-in-the-loop approval",
+      "tags": ["payment", "hitl"]
+    },
+    {
+      "effect": "forbid",
+      "action_class": "credential.access",
+      "reason": "Credential access requires human-in-the-loop approval",
+      "tags": ["credential", "hitl"]
+    },
+    {
+      "effect": "forbid",
+      "action_class": "credential.write",
+      "reason": "Credential write operations require human-in-the-loop approval",
+      "tags": ["credential", "hitl"]
+    },
+    {
+      "effect": "forbid",
+      "action_class": "system.execute",
+      "reason": "System execution is unconditionally forbidden",
+      "tags": ["system", "security"]
+    },
+    {
+      "effect": "forbid",
+      "action_class": "account.permission.change",
+      "reason": "Account permission changes are unconditionally forbidden",
+      "tags": ["account", "security"]
+    },
+    {
+      "effect": "forbid",
+      "action_class": "unknown_sensitive_action",
+      "reason": "Unknown sensitive actions are unconditionally forbidden",
+      "tags": ["security"]
+    }
+  ],
+  "checksum": "5325663c82960744f02dda54c236e43b56625ee446ed6c83401615f07b96fa13"
+}

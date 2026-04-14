@@ -1,212 +1,564 @@
-# Architecture Overview
+# Architecture
 
-This document describes the design of the OpenAuthority policy engine plugin, the decisions behind the architecture, and how the components fit together.
+This document describes the design of the OpenAuthority policy engine plugin for OpenClaw, the decisions behind the architecture, and how components fit together.
 
 ---
 
-## System Overview
+## Table of Contents
+
+1. [System Overview](#1-system-overview)
+2. [ExecutionEnvelope](#2-executionenvelope)
+3. [Two-Stage Enforcement Pipeline](#3-two-stage-enforcement-pipeline)
+4. [Action Normalization](#4-action-normalization)
+5. [IAuthorityAdapter Interface](#5-iauthorityadapter-interface)
+6. [StructuredDecision Type Layer](#6-structureddecision-type-layer)
+7. [Hot Reload Architecture](#7-hot-reload-architecture)
+8. [Rate Limiting Design](#8-rate-limiting-design)
+9. [Limitations](#9-limitations)
+10. [OpenClaw Hook Integration](#10-openclaw-hook-integration)
+11. [Design Decisions](#11-design-decisions)
+
+---
+
+## 1. System Overview
 
 ```
-┌───────────────────────────────────────────────────────────────────┐
-│                           OpenClaw Gateway                        │
-│                                                                   │
-│  ┌─────────────┐   hook events   ┌─────────────────────────────┐  │
-│  │   Agent /   │ ──────────────► │   OpenAuthority Plugin      │  │
-│  │   Gateway   │ ◄────────────── │   (index.ts)                │  │
-│  └─────────────┘  allow/block/   └──────────┬──────────────────┘  │
-│                    ask-user                 │                     │
-└─────────────────────────────────────────────┼─────────────────────┘
-                                              │
-              ┌───────────────────────────────┼────────────────┐
-              │           Plugin Core         │                │
-              │                               │                │
-              │  ┌──────────────────┐  ┌──────▼────────┐       │
-              │  │  ABAC Engine     │  │  Cedar Engine │       │
-              │  │  (engine.ts)     │  │  (policy/     │       │
-              │  │                  │  │   engine.ts)  │       │
-              │  └──────────────────┘  └──────┬────────┘       │
-              │                               │                │
-              │  ┌──────────────────┐  ┌──────▼────────┐       │
-              │  │  HITL Matcher    │  │  Rules Watcher│       │
-              │  │  (hitl/)         │  │  (watcher.ts) │       │
-              │  └───────┬──────────┘  └───────────────┘       │
-              │          │                                     │
-              │          │  ┌──────────────────┐               │
-              │          │  │  Audit Logger    │               │
-              │          │  │  (audit.ts)      │               │
-              │          │  └──────────────────┘               │
-              │          │                                     │
-              └──────────┼─────────────────────────────┬───────┘
-                         │                             │
-        ┌────────────────▼────────┐  ┌─────────────────▼───────┐
-        │   Approval Channel      │  │   UI Dashboard (ui/)    │
-        │   (Telegram / Slack /   │  │                         │
-        │    Webhook / Console)   │  │   Express ─── React SPA │
-        └─────────────────────────┘  │   REST API ─── SSE      │
-                                     └─────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                          OpenClaw Gateway                            │
+│                                                                      │
+│  ┌──────────────┐  hook events  ┌──────────────────────────────────┐ │
+│  │  Agent /     │ ────────────► │  OpenAuthority Plugin            │ │
+│  │  Gateway     │ ◄──────────── │  (index.ts)                      │ │
+│  └──────────────┘  permit /     └────────────────┬─────────────────┘ │
+│                    forbid /                      │                   │
+│                    ask-user                      │                   │
+└──────────────────────────────────────────────────┼───────────────────┘
+                                                   │
+             ┌─────────────────────────────────────┼──────────────────┐
+             │             Plugin Core             │                  │
+             │                                     ▼                  │
+             │  ┌─────────────────────────────────────────────────┐   │
+             │  │           Enforcement Pipeline                  │   │
+             │  │                                                 │   │
+             │  │  normalize_action()   →  NormalizedAction       │   │
+             │  │        │                                        │   │
+             │  │        ▼                                        │   │
+             │  │  runPipeline()  ──►  Stage 1 (capability gate)  │   │
+             │  │                         │                       │   │
+             │  │                         ▼                       │   │
+             │  │                    Stage 2 (CEE)                │   │
+             │  │                         │                       │   │
+             │  │                         ▼                       │   │
+             │  │                  CeeDecision / StructuredDecision│   │
+             │  └─────────────────────────────────────────────────┘   │
+             │                                                        │
+             │  ┌───────────────────┐   ┌───────────────────────┐    │
+             │  │  IAuthorityAdapter│   │  HITL Approval System │    │
+             │  │  (file / Firma)   │   │  (hitl/)              │    │
+             │  └───────────────────┘   └────────────┬──────────┘    │
+             │                                       │               │
+             └───────────────────────────────────────┼───────────────┘
+                                                     │
+               ┌─────────────────────────┐  ┌────────▼──────────────┐
+               │  Dashboard (Express +   │  │  Approval Channels    │
+               │  React SPA)             │  │  (Telegram / Slack /  │
+               └─────────────────────────┘  │   Webhook / Console)  │
+                                            └───────────────────────┘
 ```
 
 ---
 
-## Action Pipeline
+## 2. ExecutionEnvelope
 
-Every agent action flows through a structured pipeline before it can execute. This is the core enforcement mechanism.
+The `ExecutionEnvelope` is the primary data structure that wraps a single agent action as it travels through the enforcement pipeline. Every tool call is represented as an envelope before any authorization decision is made.
 
-```
-Agent
- └──► 1. Normalise (raw event → action request)
-       │
-       ▼
-      2. Policy evaluation (Cedar engine: permit / forbid)
-       │── forbid → block, log, return rejection to agent
-       │── permit → continue (check rate limits)
-       │
-       ▼
-      3. Execute (if permitted) or block (if denied)
-       │
-       ▼
-      4. Audit (request + decision + result → provenance log)
-```
-
-**Planned addition:** A HITL check step will be inserted between normalisation and policy evaluation. When an action matches a HITL policy, execution will pause and route to a human for approval via Telegram or other channels. See the [roadmap](roadmap.md).
-
-### Decision outcomes
-
-The policy engine currently returns one of two outcomes:
-
-| Outcome | Meaning | What happens |
-|---|---|---|
-| `permit` | Action is allowed by policy | Tool call proceeds |
-| `forbid` | Action is blocked by policy | Call never placed, agent receives rejection |
-
-A third outcome, `ask-user`, is planned for the HITL integration. When implemented, it will pause execution and route the decision to a human via Telegram or other messaging channels. See the [roadmap](roadmap.md).
-
----
-
-## Plugin Lifecycle
-
-openclaw loads the plugin by importing `dist/index.js`. The module export must conform to the openclaw plugin interface, which consists of:
-
-- A `capabilities` array declaring what the plugin provides
-- Hook handler functions for lifecycle events
-- `activate()` and `deactivate()` methods for startup and shutdown
-
-### activate()
-
-On activation the plugin:
-
-1. Constructs both the ABAC `PolicyEngine` and Cedar-style `PolicyEngine`
-2. Loads the default rules into the Cedar engine
-3. Starts the file watcher via `startRulesWatcher()`, receiving a `WatcherHandle`
-4. Wraps the Cedar engine in a mutable `engineRef: { current: Engine }` container
-
-The `engineRef` container is the key to hot reload: hook handlers dereference `.current` at call time, so the watcher can atomically swap in a new engine without touching the hooks.
-
-### deactivate()
-
-On deactivation the plugin calls `watcherHandle.stop()` to shut down the chokidar watcher. The watcher is created with `persistent: false`, so it does not keep the Node process alive independently.
-
----
-
-## Two-Engine Design
-
-### Why two engines?
-
-The plugin exposes two distinct evaluation models because they serve different use cases:
-
-| | ABAC Engine | Cedar-Style Engine |
-|---|---|---|
-| **Semantics** | Priority-ordered, allow/deny | Forbid-wins, permit/forbid |
-| **Rule format** | TypeBox-validated schema | Plain TypeScript objects |
-| **Conditions** | Structured field/operator/value | Arbitrary functions |
-| **Rate limiting** | Not supported | Built-in sliding window |
-| **Use case** | Attribute-based access control | Lifecycle hook gating |
-
-The **ABAC engine** is designed for policy-as-data: rules are structured JSON, validated by TypeBox, and can be stored, queried, and audited systematically. It supports complex attribute matching with dot-notation field paths and eight comparison operators.
-
-The **Cedar-style engine** is designed for lifecycle hooks: it needs to answer permit/forbid quickly, support runtime conditions and rate limits, and use the Cedar semantics where an explicit forbid always wins. It is named "Cedar-style" because it follows the same deny-overrides principle as AWS Cedar, though it is a custom implementation.
-
-### Cedar semantics: forbid wins
-
-In the Cedar engine, evaluation short-circuits on the first matching `forbid` rule without checking rate limits. Only after all `forbid` rules are checked without a match are `permit` rules evaluated. If a `permit` rule is matched and it has a `rateLimit`, the rate limit is applied — if exceeded, the result is converted to `forbid`.
-
-This means:
-- `forbid` rules are absolute; they cannot be overridden by any `permit` rule
-- Rate limits only reduce the scope of `permit`; they can never make a `forbid` into a `permit`
-
-### Configurable default effect
-
-If no rule matches a request, the Cedar engine returns the configured `defaultEffect`:
-
-- `'permit'` (default) --- implicit allow. No matching rule = allowed. This is the safe choice for OpenClaw plugin environments where blocking unknown tools would break the agent.
-- `'forbid'` --- implicit deny, Cedar-standard. No matching rule = denied. Use for locked-down production deployments.
-
-The default is set via the `PolicyEngine` constructor: `new PolicyEngine({ defaultEffect: 'permit' })`.
-
-The ABAC engine uses a separate configurable `defaultEffect` per policy.
-
----
-
-## Hot Reload Architecture
-
-Editing `src/policy/rules.ts` triggers a live engine swap without restarting the gateway. This works through three mechanisms working together:
-
-### 1. Mutable engine reference
+### Structure
 
 ```typescript
-const cedarEngineRef: { current: PolicyEngine } = {
+interface ExecutionEnvelope {
+  intent: Intent;           // What the agent intends to do
+  capability: Capability | null; // Approved capability token (null if not yet approved)
+  metadata: Metadata;       // Runtime metadata for tracing and auditing
+  provenance: Record<string, unknown>; // Audit trail data
+}
+```
+
+### Intent
+
+The `Intent` captures the semantic description of the action, independent of the raw tool call:
+
+```typescript
+interface Intent {
+  action_class: string;   // Canonical class, e.g. 'filesystem.delete'
+  target: string;         // Resource target, e.g. '/etc/passwd'
+  summary: string;        // Human-readable description
+  payload_hash: string;   // SHA-256 hex digest of tool call parameters
+  parameters: Record<string, unknown>; // Raw tool call parameters
+}
+```
+
+### Capability
+
+The `Capability` token is issued after HITL approval and binds an authorization to a specific action and session:
+
+```typescript
+interface Capability {
+  approval_id: string;  // UUID v7 identifying the approval
+  expires_at: string;   // ISO 8601 expiry timestamp
+  session_scope: string; // Session the capability is bound to
+  scope_meta: Record<string, unknown>; // Additional scope constraints
+}
+```
+
+### Metadata
+
+`Metadata` carries observability fields stamped at envelope construction time:
+
+```typescript
+interface Metadata {
+  session_id: string;      // Unique session identifier
+  approval_id: string;     // UUID v7 of the backing approval
+  timestamp: string;       // ISO 8601 creation time
+  bundle_version: number;  // Policy bundle version in effect
+  trace_id: string;        // Distributed trace identifier
+  source_trust_level: string; // 'user' | 'agent' | 'untrusted'
+}
+```
+
+### Building an Envelope
+
+Envelopes are constructed via `buildEnvelope()`, the canonical factory imported from `src/envelope.ts`:
+
+```typescript
+import { buildEnvelope, uuidv7, computePayloadHash } from './envelope.js';
+
+const payloadHash = computePayloadHash('delete_file', { path: '/tmp/foo' });
+
+const envelope = buildEnvelope(
+  {
+    action_class: 'filesystem.delete',
+    target: '/tmp/foo',
+    summary: 'Delete temporary file',
+    payload_hash: payloadHash,
+    parameters: { path: '/tmp/foo' },
+  },
+  null,               // no capability yet
+  'agent',            // source_trust_level
+  sessionId,
+  '',                 // no approval_id yet
+  bundleVersion,
+  traceId,
+);
+```
+
+> **Import rule:** Always import `buildEnvelope`, `uuidv7`, `computePayloadHash`, `computeContextHash`, and `sortedJsonStringify` from `envelope.js`. Never reach into `hitl/approval-manager.js` or `enforcement/pipeline.js` directly for these symbols.
+
+### Payload Hashing
+
+Two hash functions are used for binding and integrity:
+
+**`computePayloadHash(toolName, params)`** — Stable SHA-256 over a tool call. Keys are shallow-sorted alphabetically. Nested objects are NOT recursively sorted; use `sortedJsonStringify` for deep determinism.
+
+```
+hash_input = JSON.stringify({ tool: toolName, params: sortedShallowParams })
+payload_hash = SHA-256(hash_input)
+```
+
+**`computeContextHash(action_class, target, summary)`** — Binds an authorization decision to a specific execution context using the canonical pipe-separated format:
+
+```
+context_hash = SHA-256("filesystem.delete|/tmp/foo|Delete temporary file")
+```
+
+---
+
+## 3. Two-Stage Enforcement Pipeline
+
+Every agent action passes through a two-stage pipeline before execution is permitted. The pipeline is orchestrated by `runPipeline()` in `src/enforcement/pipeline.ts`.
+
+### Pipeline Flow Diagram
+
+```
+Tool Call Event (OpenClaw hook)
+        │
+        ▼
+ normalize_action(toolName, params)
+        │
+        ▼  NormalizedAction
+        │  { action_class, risk, hitl_mode, target }
+        │
+        ▼
+ HITL Pre-check
+        │── hitl_mode !== 'none' AND no approval_id
+        │       → forbid: 'pending_hitl_approval' (stage: 'hitl')
+        │
+        ▼ (approval_id present OR hitl_mode === 'none')
+        │
+ ┌──────┴───────────────────────────────────────────────┐
+ │  Stage 1: Capability Gate (stage1-capability.ts)     │
+ │                                                      │
+ │  Check 0: untrusted source + high/critical risk      │
+ │           → forbid: 'untrusted_source_high_risk'     │
+ │                                                      │
+ │  Check 1: hitl_mode === 'none'                       │
+ │           → permit: bypass (low-risk path)           │
+ │                                                      │
+ │  Check 2: approval_id missing                        │
+ │           → forbid: 'approval_id required'           │
+ │                                                      │
+ │  Check 3: capability TTL expired                     │
+ │           → forbid: 'capability expired'             │
+ │                                                      │
+ │  Check 4: payload binding mismatch (SHA-256)         │
+ │           → forbid: 'payload binding mismatch'       │
+ │                                                      │
+ │  Check 5: capability already consumed                │
+ │           → forbid: 'capability already consumed'    │
+ │                                                      │
+ │  Check 6: session scope mismatch                     │
+ │           → forbid: 'session scope mismatch'         │
+ └──────────────────────────────────────────────────────┘
+        │── forbid → return early, skip Stage 2
+        │
+        ▼ permit
+ ┌──────┴────────────────────────────────────────────┐
+ │  Stage 2: Cedar Engine Evaluation (stage2-policy) │
+ │                                                   │
+ │  EnforcementPolicyEngine.evaluateByActionClass()  │
+ │                                                   │
+ │  Map action_class prefix → Cedar Resource type:   │
+ │    communication.* → channel                      │
+ │    command.*       → command                      │
+ │    prompt.*        → prompt                       │
+ │    model.*         → model                        │
+ │    (all others)    → tool                         │
+ │                                                   │
+ │  Cedar semantics: forbid wins over permit         │
+ │  Rate limits applied to permit rules only         │
+ └───────────────────────────────────────────────────┘
+        │
+        ▼ CeeDecision { effect, reason, stage }
+        │
+ emitter.emit('executionEvent', { decision, timestamp })
+        │
+        ▼ OrchestratorResult { decision, latency_ms }
+```
+
+### Pipeline Context
+
+All stages share a `PipelineContext` threaded through the call chain:
+
+```typescript
+interface PipelineContext {
+  action_class: string;    // Normalized action class
+  target: string;          // Target resource
+  payload_hash: string;    // SHA-256 of tool call params
+  approval_id?: string;    // Present when HITL approval has been granted
+  session_id?: string;     // Session identifier
+  hitl_mode: HitlMode;     // 'none' | 'per_request' | 'session_approval'
+  rule_context: RuleContext; // Cedar rule evaluation context
+  sourceTrustLevel?: string; // 'user' | 'agent' | 'untrusted'
+  risk?: RiskLevel;        // 'low' | 'medium' | 'high' | 'critical'
+}
+```
+
+### Fail-Closed Guarantee
+
+The pipeline is fail-closed at every boundary:
+
+| Failure point | Result |
+|---|---|
+| Exception in Stage 1 | `forbid: 'stage1_error'` |
+| Exception in Stage 2 | `forbid: 'stage2_error'` |
+| Exception in orchestrator | `forbid: 'pipeline_error'` |
+
+Exceptions never produce a `permit` decision.
+
+### Stage 1 in Detail
+
+Stage 1 is a pure capability gate implemented in `src/enforcement/stage1-capability.ts`. It validates the cryptographic binding between the issued capability and the current tool call. The seven checks run in order and short-circuit on the first failure.
+
+The payload binding check (Check 4) recomputes:
+
+```
+expected_binding = SHA-256("${action_class}|${target}|${payload_hash}")
+```
+
+and compares it against the `binding` stored in the capability at issuance time. A mismatch means the tool call parameters have changed since approval was granted.
+
+### Stage 2 in Detail
+
+Stage 2 is backed by `EnforcementPolicyEngine`, which extends the Cedar-style `PolicyEngine` with action-class-aware dispatch. It is created via the factory in `src/enforcement/stage2-policy.ts`:
+
+```typescript
+import { createStage2, createEnforcementEngine } from './enforcement/stage2-policy.js';
+
+const engine = createEnforcementEngine(defaultRules);
+const stage2 = createStage2(engine);
+
+// Wire into the pipeline:
+const result = await runPipeline(ctx, stage1, stage2, emitter);
+```
+
+---
+
+## 4. Action Normalization
+
+Before the pipeline runs, every raw tool name is normalized to a canonical action class via the registry in `src/enforcement/normalize.ts`.
+
+### Normalization Flow
+
+```
+Raw tool name (e.g. "run_terminal_cmd")
+        │
+        ▼
+getRegistryEntry(toolName)
+        │── exact alias match (case-insensitive) → ActionRegistryEntry
+        │── no match → UNKNOWN_ENTRY (unknown_sensitive_action)
+        │
+        ▼ ActionRegistryEntry
+        │  { action_class, default_risk, default_hitl_mode, aliases[] }
+        │
+        ▼
+Reclassification rules:
+  Rule 1: filesystem.write + URL target → web.post
+  Rule 2: any action + shell metachar in params → risk = 'critical'
+        │
+        ▼ NormalizedAction
+        │  { action_class, risk, hitl_mode, target }
+```
+
+### normalize_action() Example
+
+```typescript
+import { normalize_action } from './enforcement/normalize.js';
+
+// Standard alias resolution:
+const result = normalize_action('run_terminal_cmd', { command: 'ls -la' });
+// result:
+// {
+//   action_class: 'shell.exec',  // resolved via alias
+//   risk: 'high',
+//   hitl_mode: 'per_request',
+//   target: '',
+// }
+
+// Reclassification — shell metacharacter detection:
+const risky = normalize_action('write_file', { path: '/tmp/x', content: 'a; rm -rf /' });
+// result:
+// {
+//   action_class: 'filesystem.write',
+//   risk: 'critical',             // ← raised from 'medium' due to metachar
+//   hitl_mode: 'per_request',
+//   target: '/tmp/x',
+// }
+
+// Reclassification — filesystem.write with URL target:
+const webPost = normalize_action('write_file', { path: 'https://api.example.com/data' });
+// result:
+// {
+//   action_class: 'web.post',     // ← reclassified from filesystem.write
+//   risk: 'medium',
+//   hitl_mode: 'per_request',
+//   target: 'https://api.example.com/data',
+// }
+
+// Unknown tool — fail-closed:
+const unknown = normalize_action('my_custom_tool', { foo: 'bar' });
+// result:
+// {
+//   action_class: 'unknown_sensitive_action',  // fail-closed catch-all
+//   risk: 'critical',
+//   hitl_mode: 'per_request',
+//   target: '',
+// }
+```
+
+### Registry Structure
+
+The registry is a static array of 17 `ActionRegistryEntry` objects, built at module load time into an O(1) alias index:
+
+```typescript
+interface ActionRegistryEntry {
+  readonly action_class: string;       // Canonical dot-separated class
+  readonly default_risk: RiskLevel;    // 'low' | 'medium' | 'high' | 'critical'
+  readonly default_hitl_mode: HitlModeNorm; // 'none' | 'per_request' | 'session_approval'
+  readonly aliases: readonly string[]; // Lowercase tool name aliases
+}
+```
+
+The 17 canonical action classes are documented in [action-registry.md](action-registry.md). `unknown_sensitive_action` is the fail-closed catch-all — it has no aliases by design; unknown tool names fall through to it automatically.
+
+### Target Extraction
+
+The `target` field in `NormalizedAction` is extracted from tool parameters using an ordered key preference list:
+
+```
+path → file → url → destination → to → recipient → email
+```
+
+The first non-empty string value found is used as the target. This is used in payload binding and rule matching.
+
+---
+
+## 5. IAuthorityAdapter Interface
+
+The `IAuthorityAdapter` interface (defined in `src/adapter/types.ts`) decouples the enforcement pipeline from the authority backend. The current implementation is a file-based adapter for development; a Firma remote adapter can be swapped in without changing any pipeline code.
+
+### Interface Definition
+
+```typescript
+interface IAuthorityAdapter {
+  /**
+   * Issues a capability with UUID v7 approval_id and SHA-256 payload binding.
+   * Capability is stored in the adapter's in-memory store.
+   */
+  issueCapability(opts: IssueCapabilityOpts): Promise<Capability>;
+
+  /**
+   * Begins watching the policy bundle file or remote source.
+   * Calls onUpdate immediately with the initial bundle and on every valid change.
+   * Returns a WatchHandle to stop the watcher.
+   */
+  watchPolicyBundle(onUpdate: (bundle: PolicyBundle) => void): Promise<WatchHandle>;
+
+  /**
+   * Returns an async iterable of revoked capability approval_ids.
+   * File-based adapters yield nothing; remote adapters stream revocations.
+   */
+  watchRevocations(): AsyncIterable<string>;
+}
+```
+
+### Capability Issuance Flow
+
+```
+caller → adapter.issueCapability({ action_class, target, payload_hash, session_id? })
+              │
+              ├─ generate approval_id = uuidv7()
+              ├─ compute binding = SHA-256("${action_class}|${target}|${payload_hash}")
+              ├─ compute expires_at = now + ttl_seconds * 1000
+              └─ store in capabilities map → return Capability
+```
+
+### Policy Bundle Watching
+
+```
+adapter.watchPolicyBundle(onUpdate)
+    │
+    ├─ read + validate bundle at bundlePath
+    ├─ check PolicyBundleSchema (TypeBox validation)
+    ├─ enforce version monotonicity (new.version > current.version)
+    ├─ call onUpdate(bundle) on success
+    └─ chokidar watch with 300 ms debounce → reload on change
+```
+
+### Swapping to Firma
+
+To replace the file adapter with the Firma remote authority:
+
+1. Implement `IAuthorityAdapter` against the Firma API.
+2. Pass the Firma adapter instance wherever `FileAuthorityAdapter` is currently instantiated.
+3. The enforcement pipeline, Stage 1 capability checks, and HITL approval flow are all adapter-agnostic — no other changes required.
+
+Key differences to expect in a Firma adapter:
+- `watchRevocations()` yields revoked capability IDs streamed from the Firma service, enabling real-time capability revocation.
+- `watchPolicyBundle()` pulls bundles from the remote API rather than a local file.
+- The in-memory capability store may be replaced with a distributed cache.
+
+### Capability Data Structure (Adapter Layer)
+
+```typescript
+interface Capability {             // src/adapter/types.ts
+  approval_id: string;             // UUID v7 token
+  binding: string;                 // SHA-256(action_class|target|payload_hash)
+  action_class: string;
+  target: string;
+  session_id?: string;             // Present when session-scoped
+  issued_at: number;               // Unix epoch ms
+  expires_at: number;              // Unix epoch ms
+}
+```
+
+Note: The adapter `Capability` type differs from the envelope `Capability` type in `src/types.ts`. The adapter type is the internal storage representation; the envelope type is the public-facing authorization token.
+
+---
+
+## 6. StructuredDecision Type Layer
+
+`StructuredDecision` (in `src/enforcement/decision.ts`) is the enriched authorization decision type that wraps the raw `CeeDecision` with audit provenance data.
+
+### Decision Types
+
+```
+CeeDecision               StructuredDecision
+─────────────             ──────────────────────────────────
+effect: 'permit'          outcome: 'permit' | 'forbid' | 'ask-user'
+       | 'forbid'         reason: string
+reason: string            ruleId?: string          ← for audit traceability
+stage?: string            stage?: string
+                          capability?: CapabilityInfo  ← only on permit
+```
+
+`CeeDecision` is the low-level type produced by stage functions. `StructuredDecision` is the high-level type exposed to callers outside the pipeline.
+
+### Factory Functions
+
+```typescript
+// Convert a CeeDecision with optional audit enrichment:
+const sd = fromCeeDecision(ceeDecision, ruleId?, capability?);
+
+// Create an ask-user decision (HITL pending):
+const sd = askUser('Awaiting human approval for filesystem.delete', ruleId?);
+
+// Create a forbid decision (fail path):
+const sd = forbidDecision('Policy violation', stage?);
+```
+
+### ask-user Outcome
+
+The `ask-user` outcome is not produced by the Cedar engine or `CeeDecision`. It is produced exclusively by the HITL layer when an approval request has been submitted and the human decision is pending. Pipeline stages return `forbid` with reason `pending_hitl_approval`; callers that understand HITL semantics convert this to `ask-user` via `askUser()`.
+
+---
+
+## 7. Hot Reload Architecture
+
+Policy rules update live without restarting the gateway.
+
+### Mutable Engine Reference
+
+```typescript
+const engineRef: { current: PolicyEngine } = {
   current: new PolicyEngine()
 };
-```
 
-Hook handlers dereference `.current` on every invocation:
-
-```typescript
+// Hook handlers dereference .current at call time:
 hooks.before_tool_call = async (event) => {
-  const result = cedarEngineRef.current.evaluate(...);
-  // ...
+  const result = engineRef.current.evaluate(...);
 };
+// Swapping engineRef.current updates all hooks atomically.
 ```
 
-Swapping `cedarEngineRef.current` atomically updates all three hooks simultaneously.
-
-### 2. ESM cache busting
-
-Node.js caches ESM modules by URL. To force a fresh import, a timestamp query parameter is appended to the file URL:
+### ESM Cache Busting
 
 ```typescript
 const url = new URL(`./policy/rules.js?t=${Date.now()}`, import.meta.url).href;
 const { default: rules } = await import(url);
 ```
 
-Each unique URL is treated as a separate cache entry, guaranteeing a fresh module evaluation.
+Each unique URL is a separate ESM cache entry.
 
-### 3. Debounced file watcher
+### Debounced File Watcher
 
-The chokidar watcher fires on every file system event. A 300 ms debounce coalesces rapid saves into a single reload:
-
-```typescript
-let debounceTimer: NodeJS.Timeout | undefined;
-
-watcher.on("change", () => {
-  clearTimeout(debounceTimer);
-  debounceTimer = setTimeout(async () => {
-    // reload
-  }, 300);
-});
-```
-
-### Error isolation
-
-If the reload throws (syntax error, invalid export, etc.), the catch block logs the error and returns early without touching `cedarEngineRef.current`. The previous engine remains active until a successful reload.
+The chokidar watcher fires on every file system event; a 300 ms debounce coalesces rapid saves into a single reload. Reload errors leave the previous engine active (error isolation).
 
 ---
 
-## Rate Limiting Design
+## 8. Rate Limiting Design
 
-Rate limits are implemented as sliding windows stored in memory.
+Rate limits are implemented as per-rule, per-caller sliding windows in memory.
 
-### Data structure
+### Data Structure
 
 ```
 Map<Rule, Map<string, number[]>>
@@ -215,117 +567,97 @@ Map<Rule, Map<string, number[]>>
       └─ rule reference (identity, not id)
 ```
 
-Each rule carries its own per-caller timestamp array. This allows different rules for the same resource to have independent rate limit counters.
-
-### Sliding window algorithm
+### Sliding Window Algorithm
 
 On each `evaluate()` call for a permit rule with `rateLimit`:
 
-1. Look up the timestamp array for `(rule, agentId:resourceName)`
-2. Filter out entries older than `Date.now() - windowSeconds * 1000`
-3. If `filteredEntries.length >= maxCalls`: return `forbid` (rate limit exceeded), do not record
-4. Otherwise: push `Date.now()`, write back, return `permit` with current count
+1. Look up timestamps for `(rule, agentId:resourceName)`.
+2. Filter out entries older than `Date.now() - windowSeconds * 1000`.
+3. If `filteredEntries.length >= maxCalls`: return `forbid` (rate limit exceeded).
+4. Otherwise: push `Date.now()` and return `permit`.
 
-### Cleanup
-
-Expired entries are only removed during evaluation of a specific rule/caller pair, or when `cleanup()` is called. This is a deliberate trade-off: per-evaluation cleanup keeps hot paths fast, while the explicit `cleanup()` sweeps the entire map.
-
-The optional `cleanupIntervalMs` constructor parameter enables a background timer that calls `cleanup()` on an interval.
+Rate limits only reduce the scope of `permit`; they can never override a `forbid` rule.
 
 ---
 
-## Human-in-the-Loop Architecture
+## 9. Limitations
 
-> **Status: framework built, integration pending.** See [roadmap](roadmap.md).
+### 9.1 What Is Enforced
 
-The HITL system will add a third decision outcome alongside `permit` and `forbid`: **`ask-user`**. When an action matches a HITL policy, execution will pause and the decision will be routed to a human via a messaging channel (Telegram, Slack, etc.).
+OpenAuthority enforces the following:
 
-### Components
+- **Action-level authorization** — every tool call is classified and evaluated against Cedar rules before the tool executes.
+- **Capability binding** — HITL approvals are cryptographically bound to the exact tool call parameters approved; a changed payload fails Stage 1.
+- **Fail-closed defaults** — unknown tools, unexpected exceptions, and missing capabilities all produce `forbid` decisions.
+- **Session scope** — capabilities issued for a specific session cannot be used in a different session.
+- **Rate limiting** — permit rules can be rate-limited per caller; exceeded limits produce `forbid`.
+- **Trust level gating** — `untrusted` sources are denied access to `high` and `critical` risk actions regardless of HITL approval.
 
-```
-src/hitl/
-  types.ts      — TypeBox schemas: HitlPolicy, HitlApprovalConfig, HitlPolicyConfig
-  matcher.ts    — Dot-notation wildcard matching + checkAction()
-  parser.ts     — YAML/JSON policy file reader with validation
-  watcher.ts    — Hot-reload watcher for HITL policy files
-  index.ts      — Barrel exports
-```
+### 9.2 What Is Not Enforced
 
-### Evaluation flow
+The following are **not** enforced by OpenAuthority and must be addressed at other layers:
 
-1. `checkAction(config, action)` iterates over policies in declaration order
-2. For each policy, each pattern in `actions` is tested via `matchesActionPattern()`
-3. First match wins — returns `{ requiresApproval: true, matchedPolicy }`
-4. No match — returns `{ requiresApproval: false }`
-
-### Approval routing
-
-When `requiresApproval` is true, the action enters the approval flow:
-
-1. An approval request is sent to the configured channel (e.g. Telegram bot)
-2. The request includes: action name, arguments, agent context, timestamp
-3. The system waits for a response up to `timeout` seconds
-4. Outcomes:
-   - **Approved** — action proceeds to the policy engine for further evaluation
-   - **Rejected** — action is blocked, agent receives a rejection reason
-   - **Timeout** — `fallback` applies: either `deny` (block) or `auto-approve` (proceed)
-
-### Relationship to the policy engine
-
-HITL approval does not bypass the policy engine. A human-approved action still passes through Cedar rules, rate limits, and forbid checks. The two layers are complementary:
-
-- HITL gates on **intent** ("should this action happen at all?")
-- Policy engine gates on **capability** ("is this action within allowed bounds?")
-
-### Hot reload
-
-The HITL policy file has its own watcher (`startHitlPolicyWatcher`), separate from the rules watcher. It follows the same pattern: debounced file watching, atomic swap on success, previous config preserved on failure.
+- **Tool output inspection** — OpenAuthority intercepts tool call *invocations*, not responses. If a permitted tool returns sensitive data, that data is not inspected.
+- **Prompt content enforcement** — The `before_prompt_build` hook performs lightweight injection detection (regex patterns) but does not enforce semantic constraints on prompt content. It is disabled by default pending false-positive tuning.
+- **Cross-session capability reuse** — Capability tokens are stored in memory for the lifetime of the adapter instance. Restarting the process clears all issued capabilities; there is no persistent revocation log in the file adapter.
+- **Multi-agent coordination** — When multiple agent instances share a session, capability consumption tracking is per-process. An approval consumed by one agent instance is not visible to another process.
+- **Nested tool calls** — Tool calls made by tools (e.g. a code execution tool that itself invokes an HTTP request) are not intercepted; only the outermost tool call at the OpenClaw hook boundary is evaluated.
+- **Cryptographic non-repudiation** — The audit log and provenance fields are append-only but not cryptographically signed. Log tampering is not detectable by OpenAuthority itself.
+- **Policy correctness** — OpenAuthority enforces the configured policies faithfully but does not validate that the policies themselves are semantically correct or complete. A misconfigured `permit`-default engine will allow actions that were intended to be blocked.
+- **Real-time revocation in the file adapter** — `FileAuthorityAdapter.watchRevocations()` yields nothing. Capabilities issued with the file adapter cannot be revoked until the process restarts.
 
 ---
 
-## Gateway Hooks Reference
+## 10. OpenClaw Hook Integration
 
-OpenAuthority implements three OpenClaw gateway hooks. Currently only `before_tool_call` is registered and active:
+OpenAuthority integrates with OpenClaw via three hook points. Only `before_tool_call` can block execution.
 
-| Hook | Can block? | Status | Purpose in OpenAuthority |
+### Hook Summary
+
+| Hook | Can block? | Status | Purpose |
 |---|---|---|---|
-| `before_tool_call` | Yes | **Active** | Primary enforcement hook. Evaluates Cedar rules, JSON rules, and ABAC policies. Returns `block: true` to deny execution. |
-| `before_prompt_build` | No (observe/mutate) | **Implemented, disabled** | Prompt injection detection (10 regex patterns). Disabled pending false-positive tuning. |
-| `before_model_resolve` | No (observe/mutate) | **Implemented, disabled** | Model routing. Disabled because OpenClaw does not yet pass the model name in the event payload. |
+| `before_tool_call` | **Yes** | Active | Primary enforcement: normalizes the tool call, runs the two-stage pipeline, returns `block: true` on `forbid`. |
+| `before_prompt_build` | No (observe/mutate) | Implemented, disabled | Regex-based prompt injection detection (8 patterns). Disabled pending false-positive tuning. |
+| `before_model_resolve` | No (observe/mutate) | Implemented, disabled | Model routing. Disabled: OpenClaw does not yet pass the model name in the event payload. |
 
-### Hook registration
-
-Hooks are registered via `ctx.on()` inside the plugin initialisation function:
+### before_tool_call Integration
 
 ```typescript
-export default function openauthorityPlugin(ctx) {
-  ctx.on('before_tool_call', async (toolCall) => {
-    const decision = await policyEngine.evaluate(toolCall);
-    if (decision.outcome === 'forbid') {
-      return { block: true, reason: decision.reason };
-    }
-    return { block: false };
-  });
+ctx.on('before_tool_call', async (toolCall) => {
+  // 1. Normalize tool name → action class
+  const normalized = normalize_action(toolCall.name, toolCall.parameters);
 
-  ctx.on('before_prompt_build', async (promptCtx) => {
-    // Prompt injection detection + context injection
-  });
+  // 2. Build pipeline context
+  const ctx: PipelineContext = {
+    action_class: normalized.action_class,
+    target: normalized.target,
+    payload_hash: computePayloadHash(toolCall.name, toolCall.parameters),
+    hitl_mode: normalized.hitl_mode,
+    risk: normalized.risk,
+    approval_id: toolCall.metadata?.approval_id,
+    session_id: toolCall.metadata?.session_id,
+    rule_context: { agentId: toolCall.agentId, ... },
+    sourceTrustLevel: toolCall.metadata?.source_trust_level ?? 'agent',
+  };
 
-  ctx.on('before_model_resolve', async (modelCtx) => {
-    // Model override logic
-  });
-}
+  // 3. Run two-stage pipeline
+  const { decision } = await runPipeline(ctx, stage1, stage2, emitter);
+
+  // 4. Return enforcement decision to OpenClaw
+  if (decision.effect === 'forbid') {
+    return { block: true, reason: decision.reason };
+  }
+  return { block: false };
+});
 ```
 
-### Critical constraint
+### Critical Constraint
 
-`before_tool_call` is the **only** plugin hook that can block execution. `before_prompt_build` and `before_model_resolve` are observation/mutation hooks only. This means all policy enforcement — Cedar rules, HITL checks, rate limits — must route through `before_tool_call`.
+`before_tool_call` is the **only** hook that can block execution. All enforcement — pipeline stages, HITL checks, rate limits, forbid rules — must route through this hook. Capabilities, audit events, and rate limit state that exist only in `before_prompt_build` or `before_model_resolve` will not affect whether a tool call executes.
 
----
+### Prompt Injection Detection
 
-## Prompt Injection Detection
-
-The `before_prompt_build` hook checks prompt text against 8 regex patterns before policy evaluation:
+The `before_prompt_build` hook checks prompt text against 8 regex patterns:
 
 ```
 /ignore\s+(previous|prior|all)\s+instructions/i
@@ -338,70 +670,41 @@ The `before_prompt_build` hook checks prompt text against 8 regex patterns befor
 /you\s+are\s+now\s+.*(different|new|another)\s+AI/i
 ```
 
-If any pattern matches, the hook blocks the prompt and returns a rejection reason without performing policy evaluation. This provides a hard-coded safety layer independent of the configurable rule set.
+A pattern match blocks the prompt before policy evaluation — this is a hard-coded safety layer independent of the configurable rule set.
 
 ---
 
-## UI Dashboard Architecture
+## 11. Design Decisions
 
-The dashboard is a thin Express server with a React SPA client.
+### Why a two-stage pipeline?
 
-### Server (`ui/server.ts`)
+Stage 1 (capability gate) and Stage 2 (policy evaluation) serve distinct purposes and have different dependency requirements:
 
-- Single Express app with CORS for the Vite dev server origin
-- Routes mounted under `/api/`
-- Static files served from `client/dist/`
-- SPA fallback: any `404` that is not an API route serves `index.html`
+- **Stage 1** validates cryptographic tokens and approval state. It requires an `ApprovalManager` and an in-memory capability store but does not need Cedar rules.
+- **Stage 2** evaluates business logic rules. It requires a `PolicyEngine` with loaded rules but does not need token state.
 
-### Rules persistence (`ui/routes/rules.ts`)
+Separating them makes each stage independently testable and lets operators swap implementations without touching the other stage.
 
-Rules are persisted to a JSON file on every create, update, and delete. Reads load the full file into memory. There is no database; the file is the source of truth. The directory is created recursively on first write.
+### Why IAuthorityAdapter?
 
-### Audit log (`ui/routes/audit.ts`)
+The adapter interface isolates the enforcement pipeline from the authority backend. The file adapter is suitable for local development; the Firma adapter (when implemented) provides remote policy distribution, real-time revocation streams, and distributed capability storage — all without changing the pipeline or Stage 1/Stage 2 implementations.
 
-Two complementary data sources:
+### Why fail-closed for unknown tools?
 
-1. **JSONL file** — Historical entries, streamed line by line on read to avoid loading the full file into memory
-2. **In-memory ring buffer** — Recent entries (max 1000), combined with file entries on `GET /api/audit`
+Any tool name that does not match a registry alias resolves to `unknown_sensitive_action` with `critical` risk and `per_request` HITL. This default prevents unknown tools from bypassing authorization by accident. Operators must explicitly alias or register new tools to move them out of the critical-risk bucket.
 
-Live streaming uses SSE. The server maintains a `Set<Response>` of connected clients. On `POST /api/audit`, the entry is pushed to the ring buffer and broadcast to all clients via `res.write()`.
+### Why SHA-256 for payload binding?
 
-A mock data generator fires every 3 seconds when at least one SSE client is connected, enabling UI development without a live engine.
+The binding check in Stage 1 ensures that a capability issued for a specific tool call cannot be reused for a different one. Without payload binding, an approval for `delete_file({ path: '/tmp/foo' })` could theoretically be reused for `delete_file({ path: '/etc/passwd' })`. The SHA-256 binding prevents this by committing the capability to the exact parameter set at approval time.
 
-### Client (`ui/client/src/`)
+### Why Cedar semantics (forbid wins)?
 
-Single-page React application built with Vite. Navigation via React Router v6. Pages:
+An explicit `forbid` rule cannot be accidentally overridden by a `permit` rule. Administrators must explicitly remove `forbid` rules to expand access. This is more predictable under adversarial rule injection scenarios than permit-wins (first-match) semantics.
 
-- **Home** — Welcome and overview
-- **Authorities** — Rule management (RulesTable + RuleEditor views)
-- **Audit Log** — Paginated log with live SSE feed
-- **Coverage Map** — Matrix visualization of rule coverage by resource and effect
-- **Settings** — Configuration options
+### Why TypeBox?
 
-Component CSS files are co-located with their view file in `ui/client/src/views/`.
-
----
-
-## Design Decisions
+TypeBox generates both runtime validators and TypeScript types from a single schema definition, eliminating type drift between the validator and the TypeScript interface. Schemas are JSON Schema–compatible, making them usable for documentation and external tooling (e.g. policy bundle validation before deployment).
 
 ### Why not a database?
 
-The plugin is designed to be installed as a standalone openclaw plugin, not as a service requiring infrastructure. A JSON file for rules and a JSONL file for audit logs eliminates operational dependencies and keeps the plugin self-contained.
-
-For production deployments with high audit log volume, the `AUDIT_LOG_FILE` path can point to a log-rotated file managed externally.
-
-### Why ESM?
-
-The plugin uses Node ESM (`"type": "module"`, `"module": "NodeNext"`) to match the openclaw plugin host environment and to take advantage of native top-level async. The ESM cache-busting approach for hot reload depends on ESM semantics.
-
-### Why chokidar?
-
-chokidar provides reliable cross-platform file watching with efficient event batching. It is widely used in the Node ecosystem and supports the `persistent: false` option needed for clean plugin shutdown.
-
-### Why TypeBox for the ABAC engine?
-
-TypeBox generates both runtime validators and TypeScript types from a single schema definition, eliminating the risk of type drift between the validator and the TypeScript interface. It produces JSON Schema–compatible schemas, making them useful for documentation and external tooling.
-
-### Forbid-wins vs. permit-wins
-
-The Cedar-style engine uses forbid-wins (deny-overrides) semantics rather than permit-wins. This is a security-conservative choice: an incorrectly written permit rule cannot accidentally override a security restriction. Administrators must explicitly remove `forbid` rules to expand access, rather than relying on rule ordering or priority to prevent conflicts.
+The plugin is designed to be installed as a standalone OpenClaw plugin without infrastructure dependencies. JSON files for rules and JSONL for audit logs make the plugin self-contained. For high-volume production deployments, the audit log path can point to a log-rotated file managed externally.

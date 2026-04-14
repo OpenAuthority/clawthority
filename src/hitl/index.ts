@@ -33,7 +33,7 @@ export { startHitlPolicyWatcher } from './watcher.js';
 export type { HitlWatcherHandle } from './watcher.js';
 
 // ─── Approval manager ────────────────────────────────────────────────────────
-export { ApprovalManager, generateToken } from './approval-manager.js';
+export { ApprovalManager, uuidv7, computeBinding, generateToken } from './approval-manager.js';
 export type { HitlDecision, CreateApprovalOpts, ApprovalRequestHandle } from './approval-manager.js';
 
 // ─── Telegram adapter ────────────────────────────────────────────────────────

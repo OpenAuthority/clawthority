@@ -1,27 +1,70 @@
 # Usage Guide
 
-This document covers common policy patterns, usage examples for both policy engines, and how to use the UI dashboard.
+This document covers common policy patterns, usage examples for both rule styles, and how to use the UI dashboard.
 
-## Two Policy Engines
+## Policy Engine
 
-Open Authority ships with two complementary engines:
+Open Authority uses a Cedar-style policy engine with **forbid-wins** semantics. Rules are evaluated against normalised action contexts — either by action class (semantic matching) or by resource type (structural matching). A single `forbid` rule overrides any number of `permit` rules.
 
-| Engine | Module | Semantics | Best for |
+Rules are loaded from two sources:
+
+| Source | Path | Format | Hot-reloads |
 |---|---|---|---|
-| **ABAC engine** | `src/engine.ts` | allow / deny, priority-based | Structured attribute-based policies via TypeBox schemas |
-| **Cedar-style engine** | `src/policy/engine.ts` | permit / forbid, forbid-wins | Lifecycle hooks, tool/command/prompt/model gating, rate limiting |
-
-The Cedar-style engine powers the three openclaw lifecycle hooks (`before_tool_call`, `before_prompt_build`, `before_model_resolve`). The ABAC engine is exposed through the `policy-evaluation` capability and available for direct programmatic use.
+| TypeScript rules | `src/policy/rules/default.ts` | `Rule[]` array (action-class style) | Yes — watcher detects file saves |
+| JSON rules | `data/rules.json` | JSON array (resource/match style) | Yes — watcher detects file saves |
 
 ---
 
-## Cedar-Style Engine: Common Patterns
+## Rule Styles
 
-Rules are defined in `src/policy/rules.ts` as a plain array exported as the default export. The hot-reload watcher picks up changes automatically.
+### Action-class rules (recommended)
 
-### Permitting a specific tool
+Action-class rules match against normalised semantic action classes produced by the enforcement pipeline. The action normalization registry maps raw tool names to canonical dot-separated classes (e.g. `read_file` → `filesystem.read`).
+
+Priority tiers:
+- **10** — permitted baseline (unconditional permit)
+- **90** — HITL-gated (forbid pending human approval)
+- **100** — unconditionally forbidden (hard forbid)
 
 ```typescript
+import type { Rule } from './policy/types.js';
+
+const rules: Rule[] = [
+  // Permit all filesystem reads
+  {
+    action_class: 'filesystem.read',
+    effect: 'permit',
+    priority: 10,
+    reason: 'Read-only filesystem access is safe for all agents',
+    tags: ['filesystem', 'read-only'],
+  },
+
+  // Require HITL approval for file writes
+  {
+    action_class: 'filesystem.write',
+    effect: 'forbid',
+    priority: 90,
+    reason: 'File writes require human-in-the-loop approval',
+    tags: ['filesystem', 'hitl'],
+  },
+
+  // Unconditionally block system execution
+  {
+    action_class: 'system.execute',
+    effect: 'forbid',
+    priority: 100,
+    reason: 'Direct shell execution is never permitted',
+    tags: ['system', 'security'],
+  },
+];
+```
+
+### Resource-match rules
+
+Resource-match rules match against the raw resource type and name pattern, before action normalization. Useful for fine-grained per-tool or per-command policies in `data/rules.json`.
+
+```typescript
+// Permit a specific tool
 {
   effect: "permit",
   resource: "tool",
@@ -30,7 +73,7 @@ Rules are defined in `src/policy/rules.ts` as a plain array exported as the defa
 }
 ```
 
-### Wildcard matching
+#### Wildcard matching
 
 Use `*` as the entire match string to match any resource name of the given type:
 
@@ -43,7 +86,7 @@ Use `*` as the entire match string to match any resource name of the given type:
 }
 ```
 
-### RegExp matching
+#### RegExp matching
 
 ```typescript
 {
@@ -54,7 +97,7 @@ Use `*` as the entire match string to match any resource name of the given type:
 }
 ```
 
-### Restricting by channel
+#### Restricting by channel
 
 Use a `condition` function to gate access by the caller's channel:
 
@@ -68,7 +111,7 @@ Use a `condition` function to gate access by the caller's channel:
 }
 ```
 
-### Restricting by agent ID
+#### Restricting by agent ID
 
 ```typescript
 {
@@ -80,7 +123,7 @@ Use a `condition` function to gate access by the caller's channel:
 }
 ```
 
-### Forbidding destructive commands
+#### Forbidding destructive commands
 
 `forbid` rules take precedence over any `permit` rule (Cedar semantics):
 
@@ -93,7 +136,7 @@ Use a `condition` function to gate access by the caller's channel:
 }
 ```
 
-### Restricting models by provider
+#### Restricting models by provider
 
 ```typescript
 {
@@ -104,7 +147,7 @@ Use a `condition` function to gate access by the caller's channel:
 }
 ```
 
-### Rate limiting
+#### Rate limiting
 
 Add a `rateLimit` object to any `permit` rule. The engine converts it to a `forbid` if the window is exceeded:
 
@@ -123,7 +166,7 @@ Add a `rateLimit` object to any `permit` rule. The engine converts it to a `forb
 
 Rate limits track per-rule and per `agentId:resourceName` pair using a sliding window.
 
-### Combined pattern: read-write split with rate limit
+#### Combined pattern: read-write split with rate limit
 
 ```typescript
 const rules: Rule[] = [
@@ -157,166 +200,35 @@ const rules: Rule[] = [
 
 ---
 
-## ABAC Engine: Common Patterns
-
-The ABAC engine evaluates structured policies with typed conditions.
-
-### Basic allow by role
-
-```typescript
-import { PolicyEngine, AuditLogger, consoleAuditHandler } from "@openauthority/policy-engine";
-
-const auditLogger = new AuditLogger();
-auditLogger.addHandler(consoleAuditHandler);
-
-const engine = new PolicyEngine({ auditLogger });
-
-engine.addPolicy({
-  id: "document-access",
-  name: "Document Access",
-  version: "1.0.0",
-  defaultEffect: "deny",
-  rules: [
-    {
-      id: "admin-all",
-      name: "Admins get full access",
-      effect: "allow",
-      priority: 10,
-      conditions: [
-        { field: "subject.role", operator: "eq", value: "admin" }
-      ]
-    },
-    {
-      id: "editor-write",
-      name: "Editors can write",
-      effect: "allow",
-      priority: 5,
-      conditions: [
-        { field: "subject.role", operator: "eq", value: "editor" },
-        { field: "action", operator: "in", value: ["read", "write"] }
-      ]
-    },
-    {
-      id: "viewer-read",
-      name: "Viewers can only read",
-      effect: "allow",
-      priority: 1,
-      conditions: [
-        { field: "subject.role", operator: "eq", value: "viewer" },
-        { field: "action", operator: "eq", value: "read" }
-      ]
-    }
-  ]
-});
-
-const result = await engine.evaluate("document-access", {
-  subject: { id: "user-1", role: "editor" },
-  resource: { id: "doc-42", type: "document" },
-  action: "write"
-});
-
-console.log(result.allowed);       // true
-console.log(result.matchedRuleId); // "editor-write"
-```
-
-### Deny by attribute
-
-```typescript
-engine.addPolicy({
-  id: "sensitive-data",
-  name: "Sensitive Data Protection",
-  version: "1.0.0",
-  defaultEffect: "allow",
-  rules: [
-    {
-      id: "block-contractors",
-      name: "Contractors cannot access sensitive resources",
-      effect: "deny",
-      priority: 20,
-      conditions: [
-        { field: "subject.type", operator: "eq", value: "contractor" },
-        { field: "resource.sensitivity", operator: "eq", value: "high" }
-      ]
-    }
-  ]
-});
-```
-
-### Using regex conditions
-
-```typescript
-{
-  id: "service-account-rule",
-  name: "Service accounts match svc- prefix",
-  effect: "allow",
-  priority: 5,
-  conditions: [
-    { field: "subject.id", operator: "regex", value: "^svc-" },
-    { field: "action", operator: "in", value: ["read", "list"] }
-  ]
-}
-```
-
-### Evaluating all policies
-
-```typescript
-const results = await engine.evaluateAll({
-  subject: { id: "user-1", role: "admin" },
-  resource: { id: "file.txt", type: "file" },
-  action: "delete"
-});
-
-// results is a Map<policyId, EvaluationResult>
-for (const [policyId, result] of results) {
-  console.log(`${policyId}: ${result.allowed}`);
-}
-```
-
----
-
 ## Audit Logging
 
-### Console logging
-
-```typescript
-import { AuditLogger, consoleAuditHandler } from "@openauthority/policy-engine";
-
-const logger = new AuditLogger();
-logger.addHandler(consoleAuditHandler);
-```
+The enforcement pipeline writes every policy decision to a JSONL audit log via `JsonlAuditLogger`.
 
 ### File logging (JSONL)
 
 ```typescript
-import { AuditLogger, JsonlAuditLogger } from "@openauthority/policy-engine";
+import { JsonlAuditLogger } from "./audit.js";
 
-const jsonlLogger = new JsonlAuditLogger("/var/log/openauthority/audit.jsonl");
-const logger = new AuditLogger();
-logger.addHandler(jsonlLogger.handler);
+const auditLogger = new JsonlAuditLogger("/var/log/openauthority/audit.jsonl");
 ```
 
-### Multiple sinks
+Configure the audit log path in `openclaw.plugin.json` or via the `AUDIT_LOG_FILE` environment variable. Each line in the file is a JSON object containing the `ExecutionEnvelope`, `CeeDecision`, timestamp, and trace ID.
 
-```typescript
-logger.addHandler(consoleAuditHandler);
-logger.addHandler(jsonlLogger.handler);
-```
+### Reading audit entries
 
-### Custom handler
+Use `GET /api/audit` to query entries with pagination and filters, or tail the JSONL file directly:
 
-```typescript
-logger.addHandler(async (entry) => {
-  await sendToSplunk(entry);
-});
+```bash
+tail -f data/audit.jsonl | jq .
 ```
 
 ---
 
 ## Hot Reload
 
-The plugin watches `src/policy/rules.ts` and reloads the Cedar engine automatically when the file changes, without restarting openclaw.
+The plugin watches `src/policy/rules/` and `data/rules.json` and reloads the Cedar engine automatically when files change, without restarting openclaw.
 
-1. Edit `src/policy/rules.ts`
+1. Edit `src/policy/rules/default.ts` (or `data/rules.json`)
 2. Save the file
 3. After a 300 ms debounce, the engine reloads
 4. The new rule set takes effect immediately for all subsequent requests
@@ -351,12 +263,50 @@ Navigate to **Coverage Map** to see a matrix of which resource types have permit
 
 ## Default Rule Set
 
-The plugin ships with 24 default rules in `src/policy/rules.ts` covering five resource types. These are production-ready defaults suitable for most deployments. Override or extend them by editing the file or using the UI dashboard.
+The plugin ships with a baseline rule set in `src/policy/rules/default.ts` covering the most common action classes. These rules are production-ready defaults suitable for most deployments. Override or extend them by editing the file directly or adding JSON rules to `data/rules.json`.
 
-### What the defaults permit
+### Default rule tiers
 
-- **Tools**: Read-only tools (read_file, list_dir, search_files, glob) for all channels; write tools only on trusted/admin/ci channels
-- **Commands**: Safe read-only shell commands (ls, cat, grep, etc.) for all; git/package managers only on trusted channels with an authenticated user
-- **Channels**: `default`, `trusted`, `ci`, `readonly` open; `untrusted` blocked; `admin` requires `admin-` agent ID prefix
-- **Prompts**: `user:*` open; `system:*` blocked; jailbreak patterns blocked; `custom:*` requires authenticated user
-- **Models**: Anthropic Claude models permitted; preview/experimental variants require admin agent; non-Anthropic providers blocked
+| Priority | Action class | Effect | Reason |
+|---|---|---|---|
+| 10 | `filesystem.read` | permit | Read-only filesystem access is safe |
+| 10 | `browser.navigate` | permit | Navigation alone does not mutate state |
+| 90 | `payment.transfer` | forbid | Requires HITL approval |
+| 90 | `payment.initiate` | forbid | Requires HITL approval |
+| 90 | `credential.access` | forbid | Requires HITL approval |
+| 90 | `credential.write` | forbid | Requires HITL approval |
+| 100 | `system.execute` | forbid | Direct shell execution is never permitted |
+| 100 | `account.permission.change` | forbid | Privilege escalation is always blocked |
+| 100 | `unknown_sensitive_action` | forbid | Fail-closed on unrecognised sensitive actions |
+
+### Extending the default rules
+
+Create a sibling file in `src/policy/rules/` and register it in `KNOWN_RULE_FILES` inside `src/watcher.ts`:
+
+```typescript
+// src/policy/rules/my-agent.ts
+import type { Rule } from '../types.js';
+
+const MY_AGENT_RULES: Rule[] = [
+  {
+    action_class: 'filesystem.write',
+    effect: 'permit',
+    priority: 10,
+    condition: (ctx) => ctx.agentId.startsWith('trusted-agent-'),
+    reason: 'trusted-agent- prefixed agents may write files',
+    tags: ['filesystem', 'trusted'],
+  },
+];
+
+export default MY_AGENT_RULES;
+```
+
+Use `mergeRules(agentSpecificRules, defaultRules)` to combine them:
+
+```typescript
+import { mergeRules } from './policy/rules/index.js';
+import defaultRules from './policy/rules/default.js';
+import myAgentRules from './policy/rules/my-agent.js';
+
+const allRules = mergeRules(myAgentRules, defaultRules);
+```

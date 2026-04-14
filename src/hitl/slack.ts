@@ -39,6 +39,14 @@ export interface SlackSendApprovalOpts {
   agentId: string;
   policyName: string;
   timeoutSeconds: number;
+  /** Logical action class (e.g. "email.send"). */
+  action_class?: string;
+  /** Target resource of the action (e.g. email address, file path). */
+  target?: string;
+  /** Human-readable summary of the requested action. */
+  summary?: string;
+  /** Absolute expiry timestamp (ISO 8601 string). */
+  expires_at?: string;
 }
 
 export interface SlackSendApprovalResult {
@@ -55,19 +63,26 @@ export async function sendSlackApprovalRequest(
   config: ResolvedSlackConfig,
   opts: SlackSendApprovalOpts,
 ): Promise<SlackSendApprovalResult> {
+  const sectionLines = [
+    `:rotating_light: *HITL Approval Request* — \`${opts.token}\``,
+    '',
+    `*Tool:* \`${opts.toolName}\``,
+    `*Agent:* \`${opts.agentId}\``,
+    `*Policy:* ${opts.policyName}`,
+    `*Expires in:* ${opts.timeoutSeconds}s`,
+  ];
+  if (opts.action_class) sectionLines.push(`:closed_lock_with_key: *Action Class:* \`${opts.action_class}\``);
+  if (opts.target) sectionLines.push(`:dart: *Target:* \`${opts.target}\``);
+  if (opts.summary) sectionLines.push(`:clipboard: *Summary:* ${opts.summary}`);
+  if (opts.expires_at) sectionLines.push(`:stopwatch: *Expires at:* ${opts.expires_at}`);
+  sectionLines.push(`:key: *Approval ID:* \`${opts.token}\``);
+
   const blocks = [
     {
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: [
-          `:rotating_light: *HITL Approval Request* — \`${opts.token}\``,
-          '',
-          `*Tool:* \`${opts.toolName}\``,
-          `*Agent:* \`${opts.agentId}\``,
-          `*Policy:* ${opts.policyName}`,
-          `*Expires in:* ${opts.timeoutSeconds}s`,
-        ].join('\n'),
+        text: sectionLines.join('\n'),
       },
     },
     {

@@ -269,6 +269,49 @@ describe('PolicyEngine', () => {
     });
   });
 
+  describe('evaluateByActionClass', () => {
+    const actionClassCases: Array<[string, string]> = [
+      ['filesystem.read',          'file'],
+      ['filesystem.write',         'file'],
+      ['communication.email',      'external'],
+      ['communication.http',       'external'],
+      ['payment.charge',           'payment'],
+      ['payment.refund',           'payment'],
+      ['system.exec',              'system'],
+      ['system.kill',              'system'],
+      ['credential.read',          'credential'],
+      ['credential.write',         'credential'],
+      ['browser.navigate',         'web'],
+      ['browser.screenshot',       'web'],
+      ['memory.read',              'memory'],
+      ['memory.write',             'memory'],
+      ['unknown_sensitive_action', 'unknown'],
+      ['unrecognised.anything',    'unknown'],
+    ];
+
+    for (const [actionClass, expectedResource] of actionClassCases) {
+      it(`maps '${actionClass}' → '${expectedResource}' resource`, () => {
+        engine.addRule({ effect: 'forbid', resource: expectedResource as never, match: '*' });
+        const result = engine.evaluateByActionClass(actionClass, 'some_name', ctx);
+        expect(result.effect).toBe('forbid');
+        expect(result.matchedRule?.resource).toBe(expectedResource);
+      });
+    }
+
+    it('delegates to evaluate and respects rules on the mapped resource', () => {
+      engine.addRule({ effect: 'permit', resource: 'file', match: 'safe_path' });
+      engine.addRule({ effect: 'forbid', resource: 'file', match: 'dangerous_path' });
+      expect(engine.evaluateByActionClass('filesystem.read', 'safe_path', ctx).effect).toBe('permit');
+      expect(engine.evaluateByActionClass('filesystem.write', 'dangerous_path', ctx).effect).toBe('forbid');
+    });
+
+    it('returns the configured default effect when no rule matches', () => {
+      const strictEngine = new PolicyEngine({ defaultEffect: 'forbid' });
+      const result = strictEngine.evaluateByActionClass('filesystem.read', 'anything', ctx);
+      expect(result.effect).toBe('forbid');
+    });
+  });
+
   describe('rate limiting', () => {
     it('allows calls within the rate limit', () => {
       engine.addRule({

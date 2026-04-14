@@ -3,8 +3,10 @@ import { readFileSync, existsSync } from 'node:fs';
 import { basename, extname, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PolicyEngine } from './policy/engine.js';
+import type { PolicyEngineOptions } from './policy/engine.js';
 import { mergeRules } from './policy/rules/index.js';
 import type { Rule, Effect, Resource } from './policy/types.js';
+import { CoverageMap } from './policy/coverage.js';
 
 /**
  * In-memory cache of last-successfully-loaded Rule arrays, keyed by file stem
@@ -19,7 +21,6 @@ const ruleCache = new Map<string, Rule[]>();
  */
 const KNOWN_RULE_FILES: Record<string, string> = {
   default: './policy/rules/default.js',
-  support: './policy/rules/support.js',
 };
 
 /** Resolve path to data/rules.json relative to the plugin root. */
@@ -155,10 +156,16 @@ function logRules(rules: Rule[], source: string): void {
  * On each detected change (debounced by `debounceMs`), rules are reloaded and
  * a fresh PolicyEngine instance is swapped into `engineRef.current`.
  */
+// Phase 2 modification point: add an optional `onCoverageReset?: () => void`
+// parameter to startRulesWatcher so the dashboard server can refresh its
+// cached coverage snapshot whenever rules are hot-reloaded and the map is reset.
 export function startRulesWatcher(
   engineRef: { current: PolicyEngine },
   debounceMs = 300,
   onReload?: (compiledRules: Rule[]) => void,
+  engineOptions?: PolicyEngineOptions,
+  initialRules?: Rule[],
+  coverageMap?: CoverageMap,
 ): WatcherHandle {
   const rulesDirUrl = new URL('./policy/rules/', import.meta.url);
   const watchPath = rulesDirUrl.pathname;
@@ -166,7 +173,7 @@ export function startRulesWatcher(
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   const rebuildEngine = (rules: Rule[]): void => {
-    const newEngine = new PolicyEngine();
+    const newEngine = new PolicyEngine(engineOptions);
     newEngine.addRules(rules);
     engineRef.current = newEngine;
   };
@@ -182,6 +189,7 @@ export function startRulesWatcher(
       const allRules = [...jsonRules, ...rules];
 
       rebuildEngine(allRules);
+      coverageMap?.reset();
       logRules(rules, 'compiled');
       logRules(jsonRules, 'UI (data/rules.json)');
       onReload?.(rules);
@@ -203,6 +211,7 @@ export function startRulesWatcher(
       ruleCache.set('json', jsonRules);
       const allRules = buildMergedFromCache();
       rebuildEngine(allRules);
+      coverageMap?.reset();
       logRules(jsonRules, 'UI (data/rules.json)');
       console.log(
         `[hot-reload] reloaded UI rules - ${allRules.length} rule${allRules.length !== 1 ? 's' : ''} total`,
@@ -242,11 +251,15 @@ export function startRulesWatcher(
     jsonDebounceTimer = setTimeout(reloadJsonRules, debounceMs);
   });
 
-  // Initial load of JSON rules
+  // Initial load of JSON rules — rebuild the engine so the ref is replaced with
+  // a new instance that includes both JSON rules and any pre-compiled TypeScript
+  // rules passed via `initialRules`.
   const jsonRules = loadJsonRules();
   if (jsonRules.length > 0) {
     ruleCache.set('json', jsonRules);
-    const allRules = buildMergedFromCache();
+    const allRules = initialRules !== undefined
+      ? [...jsonRules, ...initialRules]
+      : buildMergedFromCache();
     rebuildEngine(allRules);
     logRules(jsonRules, 'UI (data/rules.json)');
   }
