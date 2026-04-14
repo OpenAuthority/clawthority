@@ -47,6 +47,12 @@ export interface SlackSendApprovalOpts {
   summary?: string;
   /** Absolute expiry timestamp (ISO 8601 string). */
   expires_at?: string;
+  /**
+   * False when the agent identity claim could not be verified against the
+   * registry. When false, a warning banner is prepended so the operator
+   * cannot confuse a spoofed agent with a registered one.
+   */
+  verified?: boolean;
 }
 
 export interface SlackSendApprovalResult {
@@ -63,14 +69,21 @@ export async function sendSlackApprovalRequest(
   config: ResolvedSlackConfig,
   opts: SlackSendApprovalOpts,
 ): Promise<SlackSendApprovalResult> {
-  const sectionLines = [
+  const sectionLines: string[] = [];
+  if (opts.verified === false) {
+    sectionLines.push(
+      `:warning: *UNVERIFIED AGENT* — the identity claim "${opts.agentId}" could not be verified. Treat with caution.`,
+      '',
+    );
+  }
+  sectionLines.push(
     `:rotating_light: *HITL Approval Request* — \`${opts.token}\``,
     '',
     `*Tool:* \`${opts.toolName}\``,
     `*Agent:* \`${opts.agentId}\``,
     `*Policy:* ${opts.policyName}`,
     `*Expires in:* ${opts.timeoutSeconds}s`,
-  ];
+  );
   if (opts.action_class) sectionLines.push(`:closed_lock_with_key: *Action Class:* \`${opts.action_class}\``);
   if (opts.target) sectionLines.push(`:dart: *Target:* \`${opts.target}\``);
   if (opts.summary) sectionLines.push(`:clipboard: *Summary:* ${opts.summary}`);

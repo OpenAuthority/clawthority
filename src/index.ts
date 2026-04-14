@@ -6,6 +6,13 @@ export type {
   JsonlAuditLoggerOptions,
 } from "./audit.js";
 
+// ─── Identity registry re-exports (V-03 v0.1 follow-up) ─────────────────────
+export {
+  AgentIdentityRegistry,
+  defaultAgentIdentityRegistry,
+} from "./identity.js";
+export type { RegisteredAgent, IdentityVerificationResult } from "./identity.js";
+
 // ─── Cedar-style engine re-exports ───────────────────────────────────────────
 export { PolicyEngine as CedarPolicyEngine } from "./policy/engine.js";
 export type { EvaluationDecision, EvaluationEffect } from "./policy/engine.js";
@@ -93,6 +100,34 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { normalize_action, sortedJsonStringify } from "./enforcement/normalize.js";
 import { buildEnvelope } from "./envelope.js";
+import { defaultAgentIdentityRegistry } from "./identity.js";
+
+/**
+ * Resolved identity view used by audit and HITL call sites. Derived from
+ * `AgentIdentityRegistry.verify()` plus the original claims. When `verified`
+ * is false, `auditAgentId` / `auditChannel` carry an `unverified:` prefix so
+ * forged claims stand out in logs and operator prompts.
+ */
+interface ResolvedIdentity {
+  verified: boolean;
+  agentId: string;
+  channel: string;
+  auditAgentId: string;
+  auditChannel: string;
+}
+
+function resolveIdentity(agentId: string | undefined, channelId: string | undefined): ResolvedIdentity {
+  const claimedAgent = agentId ?? 'unknown';
+  const claimedChannel = channelId || 'default';
+  const { verified } = defaultAgentIdentityRegistry.verify(claimedAgent, claimedChannel);
+  return {
+    verified,
+    agentId: claimedAgent,
+    channel: claimedChannel,
+    auditAgentId: verified ? claimedAgent : `unverified:${claimedAgent}`,
+    auditChannel: verified ? claimedChannel : `unverified:${claimedChannel}`,
+  };
+}
 
 // ─── Hook types (matching OpenClaw's actual API) ─────────────────────────────
 
@@ -401,15 +436,17 @@ function formatMatchedRule(rule: { effect: string; resource?: string; action_cla
 async function dispatchHitlChannel(
   policy: import('./hitl/types.js').HitlPolicy,
   toolName: string,
-  ruleContext: RuleContext,
+  identity: ResolvedIdentity,
 ): Promise<BeforeToolCallResult | void> {
   const channel = policy.approval.channel;
+  const auditAgent = identity.auditAgentId;
+  const auditChannel = identity.auditChannel;
 
   if (channel === 'telegram') {
     const telegramConfig = resolveTelegramConfig(hitlConfigRef.current?.telegram);
     if (!telegramConfig) {
       console.log(`[openauthority] │ [hitl] telegram not configured — applying fallback: ${policy.approval.fallback}`);
-      await logHitlDecision(policy.approval.fallback === 'deny' ? 'fallback-deny' : 'fallback-auto-approve', '', toolName, ruleContext.agentId, ruleContext.channel, policy.name, policy.approval.timeout);
+      await logHitlDecision(policy.approval.fallback === 'deny' ? 'fallback-deny' : 'fallback-auto-approve', '', toolName, auditAgent, auditChannel, policy.name, policy.approval.timeout, identity.verified);
       if (policy.approval.fallback === 'deny') {
         console.log(`[openauthority] │ DECISION: ✕ BLOCKED (hitl/telegram-not-configured)`);
         console.log(`[openauthority] └──────────────────────────────────────────────────────`);
@@ -418,13 +455,13 @@ async function dispatchHitlChannel(
       return;
     }
 
-    const { token, promise } = approvalManager.createApprovalRequest({ toolName, agentId: ruleContext.agentId, channelId: ruleContext.channel, policy });
-    const sent = await sendApprovalRequest(telegramConfig, { token, toolName, agentId: ruleContext.agentId, policyName: policy.name, timeoutSeconds: policy.approval.timeout });
+    const { token, promise } = approvalManager.createApprovalRequest({ toolName, agentId: auditAgent, channelId: auditChannel, policy });
+    const sent = await sendApprovalRequest(telegramConfig, { token, toolName, agentId: auditAgent, policyName: policy.name, timeoutSeconds: policy.approval.timeout, verified: identity.verified });
 
     if (!sent) {
       approvalManager.cancel(token);
       console.log(`[openauthority] │ [hitl] telegram unreachable — applying fallback: ${policy.approval.fallback}`);
-      await logHitlDecision('telegram-unreachable', token, toolName, ruleContext.agentId, ruleContext.channel, policy.name, policy.approval.timeout);
+      await logHitlDecision('telegram-unreachable', token, toolName, auditAgent, auditChannel, policy.name, policy.approval.timeout, identity.verified);
       if (policy.approval.fallback === 'deny') {
         console.log(`[openauthority] │ DECISION: ✕ BLOCKED (hitl/telegram-unreachable)`);
         console.log(`[openauthority] └──────────────────────────────────────────────────────`);
@@ -433,7 +470,7 @@ async function dispatchHitlChannel(
       return;
     }
 
-    return await resolveHitlDecision(token, promise, policy, toolName, ruleContext, (t, decision) => {
+    return await resolveHitlDecision(token, promise, policy, toolName, identity, (t, decision) => {
       void sendConfirmation(telegramConfig, { token: t, decision, toolName });
     });
   }
@@ -442,7 +479,7 @@ async function dispatchHitlChannel(
     const slackConfig = resolveSlackConfig(hitlConfigRef.current?.slack);
     if (!slackConfig) {
       console.log(`[openauthority] │ [hitl] slack not configured — applying fallback: ${policy.approval.fallback}`);
-      await logHitlDecision(policy.approval.fallback === 'deny' ? 'fallback-deny' : 'fallback-auto-approve', '', toolName, ruleContext.agentId, ruleContext.channel, policy.name, policy.approval.timeout);
+      await logHitlDecision(policy.approval.fallback === 'deny' ? 'fallback-deny' : 'fallback-auto-approve', '', toolName, auditAgent, auditChannel, policy.name, policy.approval.timeout, identity.verified);
       if (policy.approval.fallback === 'deny') {
         console.log(`[openauthority] │ DECISION: ✕ BLOCKED (hitl/slack-not-configured)`);
         console.log(`[openauthority] └──────────────────────────────────────────────────────`);
@@ -451,13 +488,13 @@ async function dispatchHitlChannel(
       return;
     }
 
-    const { token, promise } = approvalManager.createApprovalRequest({ toolName, agentId: ruleContext.agentId, channelId: ruleContext.channel, policy });
-    const result = await sendSlackApprovalRequest(slackConfig, { token, toolName, agentId: ruleContext.agentId, policyName: policy.name, timeoutSeconds: policy.approval.timeout });
+    const { token, promise } = approvalManager.createApprovalRequest({ toolName, agentId: auditAgent, channelId: auditChannel, policy });
+    const result = await sendSlackApprovalRequest(slackConfig, { token, toolName, agentId: auditAgent, policyName: policy.name, timeoutSeconds: policy.approval.timeout, verified: identity.verified });
 
     if (!result.ok) {
       approvalManager.cancel(token);
       console.log(`[openauthority] │ [hitl] slack unreachable — applying fallback: ${policy.approval.fallback}`);
-      await logHitlDecision('slack-unreachable', token, toolName, ruleContext.agentId, ruleContext.channel, policy.name, policy.approval.timeout);
+      await logHitlDecision('slack-unreachable', token, toolName, auditAgent, auditChannel, policy.name, policy.approval.timeout, identity.verified);
       if (policy.approval.fallback === 'deny') {
         console.log(`[openauthority] │ DECISION: ✕ BLOCKED (hitl/slack-unreachable)`);
         console.log(`[openauthority] └──────────────────────────────────────────────────────`);
@@ -469,7 +506,7 @@ async function dispatchHitlChannel(
     // Store message timestamp for chat.update on decision
     if (result.messageTs) slackMessageTimestamps.set(token, result.messageTs);
 
-    return await resolveHitlDecision(token, promise, policy, toolName, ruleContext, (t, decision) => {
+    return await resolveHitlDecision(token, promise, policy, toolName, identity, (t, decision) => {
       const messageTs = slackMessageTimestamps.get(t);
       slackMessageTimestamps.delete(t);
       if (messageTs) {
@@ -491,22 +528,24 @@ async function resolveHitlDecision(
   promise: Promise<import('./hitl/approval-manager.js').HitlDecision>,
   policy: import('./hitl/types.js').HitlPolicy,
   toolName: string,
-  ruleContext: RuleContext,
+  identity: ResolvedIdentity,
   sendConfirmationFn: (token: string, decision: string) => void,
 ): Promise<BeforeToolCallResult | void> {
   console.log(`[openauthority] │ [hitl] awaiting operator response for token=${token} (timeout=${policy.approval.timeout}s)`);
   const decision = await promise;
+  const auditAgent = identity.auditAgentId;
+  const auditChannel = identity.auditChannel;
 
   if (decision === 'approved') {
     console.log(`[openauthority] │ [hitl] ✓ APPROVED (token=${token})`);
-    await logHitlDecision('approved', token, toolName, ruleContext.agentId, ruleContext.channel, policy.name, policy.approval.timeout);
+    await logHitlDecision('approved', token, toolName, auditAgent, auditChannel, policy.name, policy.approval.timeout, identity.verified);
     sendConfirmationFn(token, 'approved');
     return;
   }
 
   if (decision === 'denied') {
     console.log(`[openauthority] │ [hitl] ✕ DENIED (token=${token})`);
-    await logHitlDecision('denied', token, toolName, ruleContext.agentId, ruleContext.channel, policy.name, policy.approval.timeout);
+    await logHitlDecision('denied', token, toolName, auditAgent, auditChannel, policy.name, policy.approval.timeout, identity.verified);
     sendConfirmationFn(token, 'denied');
     console.log(`[openauthority] │ DECISION: ✕ BLOCKED (hitl/denied)`);
     console.log(`[openauthority] └──────────────────────────────────────────────────────`);
@@ -516,7 +555,7 @@ async function resolveHitlDecision(
   // expired
   console.log(`[openauthority] │ [hitl] ⏱ EXPIRED (token=${token}) — fallback: ${policy.approval.fallback}`);
   const auditDecision = policy.approval.fallback === 'deny' ? 'fallback-deny' as const : 'fallback-auto-approve' as const;
-  await logHitlDecision(auditDecision, token, toolName, ruleContext.agentId, ruleContext.channel, policy.name, policy.approval.timeout);
+  await logHitlDecision(auditDecision, token, toolName, auditAgent, auditChannel, policy.name, policy.approval.timeout, identity.verified);
   if (policy.approval.fallback === 'deny') {
     sendConfirmationFn(token, 'expired (denied)');
     console.log(`[openauthority] │ DECISION: ✕ BLOCKED (hitl/expired-deny)`);
@@ -536,6 +575,7 @@ async function logHitlDecision(
   channel: string,
   policyName: string,
   timeoutSeconds: number,
+  verified: boolean,
 ): Promise<void> {
   if (!hitlAuditLogger) return;
   await hitlAuditLogger.log({
@@ -548,6 +588,7 @@ async function logHitlDecision(
     channel,
     policyName,
     timeoutSeconds,
+    verified,
   });
 }
 
@@ -568,13 +609,23 @@ function determineSourceTrustLevel(source?: string): 'user' | 'agent' | 'untrust
 const beforeToolCallHandler: BeforeToolCallHandler = ({ toolName, params, source }, ctx) => {
   console.log(`[openauthority] ┌─ before_tool_call ──────────────────────────────────`);
   console.log(`[openauthority] │ tool=${toolName}  agent=${ctx.agentId ?? "unknown"}  channel=${ctx.channelId ?? "unknown"}`);
-  const ruleContext: RuleContext = {
-    agentId: ctx.agentId ?? "unknown",
-    // Preserve the real channel name. Only fall back to "default" when the
-    // host provides no channel at all (undefined/empty string). Do NOT remap
-    // named channels like "webchat" — rules explicitly reference them.
-    channel: ctx.channelId || "default",
-  };
+
+  // ── Identity verification (V-03 v0.1 follow-up) ──────────────────────────
+  // Verify the (agentId, channel) claim against the AgentIdentityRegistry
+  // before the identity is used for audit logging or HITL approval messages.
+  // When the registry is empty, every claim is accepted (back-compat).
+  // Preserve the real channel name in the rule context. Only fall back to
+  // "default" when the host provides no channel at all (undefined/empty
+  // string). Do NOT remap named channels like "webchat" — rules explicitly
+  // reference them.
+  const identity = resolveIdentity(ctx.agentId, ctx.channelId);
+  if (!identity.verified) {
+    console.log(`[openauthority] │ [identity] ⚠ UNVERIFIED — claim agent=${identity.agentId} channel=${identity.channel}`);
+  }
+  const ruleContext: RuleContext = defaultAgentIdentityRegistry.buildRuleContext(
+    identity.agentId,
+    identity.channel,
+  );
 
   // ── 0. Source trust level determination ───────────────────────────────────
   const normalizedParams = (params !== null && typeof params === 'object' && !Array.isArray(params))
@@ -671,7 +722,7 @@ const beforeToolCallHandler: BeforeToolCallHandler = ({ toolName, params, source
           console.log(`[openauthority] │ [hitl] matched policy "${policy.name}" — requesting approval via ${policy.approval.channel}`);
 
           // ── Dispatch to channel-specific adapter ──────────────────────────
-          const hitlChannelResult = await dispatchHitlChannel(policy, toolName, ruleContext);
+          const hitlChannelResult = await dispatchHitlChannel(policy, toolName, identity);
           if (hitlChannelResult) return hitlChannelResult;
         } else {
           console.log(`[openauthority] │ [hitl] ✓ no matching HITL policy`);
@@ -712,10 +763,10 @@ const beforePromptBuildHandler: BeforePromptBuildHandler = ({ prompt, messages, 
     // Evaluate the prompt identifier against Cedar prompt rules.
     // before_prompt_build cannot block, so a FORBID match results in a
     // prependContext warning rather than a hard block.
-    const ruleContext: RuleContext = {
-      agentId: ctx.agentId ?? "unknown",
-      channel: ctx.channelId || "default",
-    };
+    const ruleContext: RuleContext = defaultAgentIdentityRegistry.buildRuleContext(
+      ctx.agentId ?? "unknown",
+      ctx.channelId || "default",
+    );
     const decision = cedarEngineRef.current.evaluate("prompt", prompt, ruleContext);
     if (decision.effect === "forbid") {
       const reason = decision.reason ?? "This prompt type is restricted by policy";
