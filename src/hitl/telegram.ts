@@ -36,6 +36,12 @@ export interface SendApprovalOpts {
   summary?: string;
   /** Absolute expiry timestamp (ISO 8601 string). */
   expires_at?: string;
+  /**
+   * False when the agent identity claim could not be verified against the
+   * registry. When false, a warning banner is prepended so the operator
+   * cannot confuse a spoofed agent with a registered one.
+   */
+  verified?: boolean;
 }
 
 /**
@@ -46,14 +52,21 @@ export async function sendApprovalRequest(
   config: ResolvedTelegramConfig,
   opts: SendApprovalOpts,
 ): Promise<boolean> {
-  const lines = [
+  const lines: string[] = [];
+  if (opts.verified === false) {
+    lines.push(
+      `\u26A0\uFE0F *UNVERIFIED AGENT* \u2014 the identity claim "${opts.agentId}" could not be verified. Treat with caution.`,
+      '',
+    );
+  }
+  lines.push(
     `\u{1F6A8} *HITL Approval Request* \u2014 \`${opts.token}\``,
     '',
     `*Tool:* \`${opts.toolName}\``,
     `*Agent:* \`${opts.agentId}\``,
     `*Policy:* ${opts.policyName}`,
     `*Expires in:* ${opts.timeoutSeconds}s`,
-  ];
+  );
   if (opts.action_class) lines.push(`\u{1F510} *Action Class:* \`${opts.action_class}\``);
   if (opts.target) lines.push(`\u{1F3AF} *Target:* \`${opts.target}\``);
   if (opts.summary) lines.push(`\u{1F4CB} *Summary:* ${opts.summary}`);

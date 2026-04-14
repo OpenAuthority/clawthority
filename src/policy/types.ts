@@ -12,6 +12,14 @@ export interface RuleContext {
   agentId: string;
   /** The channel through which the request is made */
   channel: string;
+  /**
+   * True when the (agentId, channel) pair was verified against the
+   * AgentIdentityRegistry. When the registry is empty, every context is
+   * treated as verified for backwards compatibility. Rule conditions that
+   * trust `agentId` or `channel` (e.g. prefix checks, admin-channel gating)
+   * should require `verified === true` before honouring those claims.
+   */
+  verified?: boolean;
   /** Optional user ID associated with the request */
   userId?: string;
   /** Optional session ID for the current session */
