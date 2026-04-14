@@ -22,6 +22,9 @@
     "dev": "tsc --watch",
     "clean": "rm -rf dist",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
+    "test:e2e:coverage": "vitest run --config vitest.e2e.config.ts --coverage",
     "test:watch": "vitest"
   },
   "dependencies": {
@@ -31,6 +34,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^2.1.9",
     "typescript": "^5.7.0",
     "vitest": "^2.0.0"
   },
@@ -38,7 +42,9 @@
     "node": ">=18"
   },
   "openclaw": {
-    "extensions": ["./dist/index.js"]
+    "extensions": [
+      "./dist/index.js"
+    ]
   },
   "license": "Apache-2.0",
   "repository": {

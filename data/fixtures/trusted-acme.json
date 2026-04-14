@@ -1,0 +1,6 @@
+{
+  "name": "trusted-acme",
+  "version": 1,
+  "description": "ACME Corp email domain trust policy — only acme.com recipients are permitted",
+  "trustedDomains": ["acme.com"]
+}

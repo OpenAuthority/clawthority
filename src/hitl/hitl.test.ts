@@ -569,6 +569,44 @@ describe('startHitlPolicyWatcher', () => {
     await handle.stop();
   });
 
+  it('swaps configRef.current to the freshly parsed config on success', async () => {
+    // Write a valid policy file to a temp path, then trigger the change
+    // handler so the watcher re-parses it and updates configRef.
+    const tmpFile = join(tmpdir(), `hitl-watcher-${Date.now()}.json`);
+    const newConfig: HitlPolicyConfig = {
+      version: '1',
+      policies: [
+        {
+          name: 'reloaded',
+          actions: ['updated.*'],
+          approval: { channel: 'slack', timeout: 60, fallback: 'deny' },
+        },
+      ],
+    };
+    await writeFile(tmpFile, JSON.stringify(newConfig), 'utf-8');
+
+    try {
+      const configRef = { current: validConfig };
+      const handle = startHitlPolicyWatcher(tmpFile, configRef, 10);
+
+      const changeHandler = mockWatcherOn.mock.calls.find(
+        ([event]) => event === 'change',
+      )?.[1] as (() => void) | undefined;
+      changeHandler?.();
+
+      // Wait for debounce + async parse to settle without fake timers (we
+      // need the real fs read to resolve).
+      await vi.waitFor(
+        () => expect(configRef.current.policies[0]?.name).toBe('reloaded'),
+        { timeout: 1000 },
+      );
+      expect(configRef.current).not.toBe(validConfig);
+      await handle.stop();
+    } finally {
+      if (existsSync(tmpFile)) await rm(tmpFile);
+    }
+  });
+
   it('double stop() is safe (idempotent)', async () => {
     const configRef = { current: validConfig };
     const handle = startHitlPolicyWatcher('/path/to/policy.yaml', configRef);

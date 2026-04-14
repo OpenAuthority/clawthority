@@ -338,7 +338,9 @@ export function normalizeActionClass(toolName: string): string {
  *
  * Post-lookup reclassification rules (applied in order):
  *   1. `filesystem.write` with a URL target → reclassified to `web.post`
- *   2. Any action class where a param value contains shell metacharacters
+ *   2. `filesystem.write` with an email address target (contains `@`) →
+ *      reclassified to `communication.external.send`
+ *   3. Any action class where a param value contains shell metacharacters
  *      → risk raised to `critical`
  *
  * @param toolName  Name of the tool being invoked (case-insensitive).
@@ -366,7 +368,13 @@ export function normalize_action(
     risk = webPostEntry.default_risk;
   }
 
-  // Rule 2: Shell metacharacter detection → critical risk
+  // Rule 2: filesystem.write with an email address target → communication.external.send
+  if (action_class === 'filesystem.write' && target.includes('@')) {
+    action_class = 'communication.external.send';
+    risk = 'high';
+  }
+
+  // Rule 3: Shell metacharacter detection → critical risk
   if (hasShellMetacharsInParams(params)) {
     risk = 'critical';
   }

@@ -145,14 +145,31 @@ openauthority/
 
 ## Testing
 
+Open Authority has three layers of automated tests:
+
+| Layer | Files | Runner |
+|---|---|---|
+| Unit tests | `src/**/*.test.ts` | `npm test` |
+| E2E pipeline tests | `src/**/*.e2e.ts` | `npm run test:e2e` |
+| Harness smoke tests | `e2e/**/*.test.ts` | `npm run test:e2e` |
+
 ### Running tests
 
 ```bash
-# Plugin tests
+# Unit tests (src/**/*.test.ts) — fast, no external dependencies
 npm test
 
-# Plugin tests in watch mode
+# Unit tests with coverage report and threshold enforcement
+npm run test:coverage
+
+# Unit tests in watch mode during development
 npm run test:watch
+
+# E2E tests (src/**/*.e2e.ts + e2e/**/*.test.ts)
+npm run test:e2e
+
+# E2E tests with coverage report (informational only, no thresholds)
+npm run test:e2e:coverage
 
 # UI client tests
 cd ui/client && npm test
@@ -163,14 +180,237 @@ cd ui/client && npm run test:coverage
 
 ### Coverage thresholds
 
-The client enforces 80% coverage thresholds via `@vitest/coverage-v8`. A PR must not reduce coverage below the threshold.
+Plugin unit tests enforce per-directory coverage minimums via `@vitest/coverage-v8`:
 
-### Writing tests
+| Directory | Lines threshold |
+|---|---|
+| `src/enforcement/**` | 95% |
+| `src/hitl/**` | 90% |
+| `src/policy/**` | 90% |
+| `src/adapter/**` | 85% |
+| `src/index.ts` | 80% |
+
+E2E coverage (`npm run test:e2e:coverage`) generates reports but enforces no thresholds — it is informational only. The UI client enforces an 80% threshold across all metrics.
+
+---
+
+## End-to-End (E2E) Testing
+
+E2E tests drive the full two-stage enforcement pipeline (`runPipeline`) directly in-process, without spawning an external process. They live in `src/` alongside source files as `*.e2e.ts`.
+
+The harness smoke tests (`e2e/harness.test.ts`) exercise `OpenClawHarness` itself — they spawn the `e2e/runner.mjs` fallback process over stdio and verify the JSON-RPC protocol.
+
+### OpenClaw requirement
+
+The `OpenClawHarness` class (used in harness smoke tests) can run against either a real OpenClaw binary or the bundled `e2e/runner.mjs` simulator:
+
+- **Without OpenClaw** (local development): pass no `openclawBin`; the harness falls back to `node e2e/runner.mjs` automatically. All CI and local `npm run test:e2e` runs use this path.
+- **With OpenClaw** (integration against the real binary): set `openclawBin` in the `HarnessConfig`:
+  ```typescript
+  const harness = new OpenClawHarness({
+    openclawBin: '/usr/local/bin/openclaw',
+    pluginDir: '.',
+    workDir: '/tmp/oa-e2e',
+    bundleFixture: 'data/bundles/active/bundle.json',
+    auditLogPath: '/tmp/oa-e2e/audit.jsonl',
+  });
+  ```
+
+The `*.e2e.ts` pipeline tests do not use `OpenClawHarness` at all — they call `runPipeline` directly and are always runnable without OpenClaw.
+
+### Local development setup for E2E tests
+
+No extra setup is required for pipeline E2E tests. For the harness smoke tests:
+
+```bash
+# Build the plugin first so runner.mjs can import the compiled output
+npm run build
+
+# Then run all E2E tests (harness smoke + pipeline scenarios)
+npm run test:e2e
+```
+
+The runner simulator (`e2e/runner.mjs`) permits `read_file` and forbids all other tools. This is sufficient for harness infrastructure tests (HC-01 through HC-05).
+
+### Adding a new E2E scenario
+
+Follow these steps to add a new pipeline scenario:
+
+**Step 1 — Create a fixture (if needed)**
+
+If your scenario depends on external data (e.g., a domain allowlist, an agent config), add a JSON file under `data/fixtures/`:
+
+```json
+// data/fixtures/trusted-partner.json
+{
+  "name": "trusted-partner",
+  "version": 1,
+  "description": "Partner org domain trust policy",
+  "trustedDomains": ["partner.example.com"]
+}
+```
+
+Load it in your test with `readFileSync` + `JSON.parse`, using `__dirname` relative to `src/`:
+
+```typescript
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const fixture = JSON.parse(
+  readFileSync(join(__dirname, '../data/fixtures/trusted-partner.json'), 'utf-8'),
+);
+```
+
+**Step 2 — Create the test file**
+
+Create `src/<feature-name>.e2e.ts`. Start with the standard file-level JSDoc listing test cases, then define your Stage 2 helper and optional `HitlTestHarness`:
+
+```typescript
+/**
+ * <Feature> e2e tests — Open Authority v0.1
+ *
+ *  TC-<PREFIX>-01  <description>
+ *  TC-<PREFIX>-02  <description>
+ */
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { EventEmitter } from 'node:events';
+import { runPipeline } from './enforcement/pipeline.js';
+import type { PipelineContext, Stage1Fn, Stage2Fn, CeeDecision } from './enforcement/pipeline.js';
+import { validateCapability } from './enforcement/stage1-capability.js';
+import { ApprovalManager, computeBinding } from './hitl/approval-manager.js';
+import type { HitlPolicy } from './hitl/types.js';
+import type { Capability } from './adapter/types.js';
+
+// Stage 2 helper — define policy logic for this test suite
+function buildMyStage2(): Stage2Fn {
+  return async (ctx: PipelineContext): Promise<CeeDecision> => {
+    // Apply your policy rules here
+    return { effect: 'permit', reason: 'action_class', stage: 'stage2' };
+  };
+}
+
+// HITL test harness — only needed if your scenario involves approval tokens
+const TEST_POLICY: HitlPolicy = {
+  name: 'test-hitl-policy',
+  actions: ['*'],
+  approval: { channel: 'test', timeout: 3600, fallback: 'deny' },
+};
+
+interface ApproveNextOpts {
+  action_class: string;
+  target: string;
+  payload_hash: string;
+}
+
+class HitlTestHarness {
+  private readonly approvalManager = new ApprovalManager();
+  private readonly issued = new Map<string, Capability>();
+  readonly stage1: Stage1Fn;
+
+  constructor() {
+    this.stage1 = (ctx) => validateCapability(ctx, this.approvalManager, (id) => this.issued.get(id));
+  }
+
+  approveNext(opts: ApproveNextOpts): string {
+    const handle = this.approvalManager.createApprovalRequest({
+      toolName: opts.action_class,
+      agentId: 'test-agent',
+      channelId: 'test-channel',
+      policy: TEST_POLICY,
+      ...opts,
+    });
+    const now = Date.now();
+    const cap: Capability = {
+      approval_id: handle.token,
+      binding: computeBinding(opts.action_class, opts.target, opts.payload_hash),
+      action_class: opts.action_class,
+      target: opts.target,
+      issued_at: now,
+      expires_at: now + 3_600_000,
+    };
+    this.issued.set(handle.token, cap);
+    return handle.token;
+  }
+
+  shutdown(): void { this.approvalManager.shutdown(); }
+}
+
+describe('<feature name>', () => {
+  let emitter: EventEmitter;
+  let harness: HitlTestHarness;
+
+  beforeEach(() => {
+    emitter = new EventEmitter();
+    harness = new HitlTestHarness();
+  });
+
+  afterEach(() => { harness.shutdown(); });
+
+  it('TC-<PREFIX>-01: <description>', async () => {
+    const ACTION = '<action_class>' as const;
+    const TARGET = '<target>' as const;
+    const HASH = 'hash-<prefix>-01';
+
+    const token = harness.approveNext({ action_class: ACTION, target: TARGET, payload_hash: HASH });
+
+    const result = await runPipeline(
+      {
+        action_class: ACTION,
+        target: TARGET,
+        payload_hash: HASH,
+        hitl_mode: 'per_request',
+        approval_id: token,
+        rule_context: { agentId: 'agent-1', channel: 'default' },
+      },
+      harness.stage1,
+      buildMyStage2(),
+      emitter,
+    );
+
+    expect(result.decision.effect).toBe('permit');
+  });
+});
+```
+
+**Step 3 — Choose a test case ID prefix**
+
+Pick a short, unique prefix for test case IDs (e.g., `EMAIL`, `FS`, `HITL`, `AUDIT`). Use the format `TC-<PREFIX>-NN`. Document the prefix at the top of the file in the JSDoc.
+
+**Step 4 — Verify the test runs**
+
+```bash
+npm run test:e2e
+```
+
+The new `*.e2e.ts` file is picked up automatically by the `vitest.e2e.config.ts` include glob.
+
+### Fixture checksum regeneration
+
+Bundle fixtures (`data/bundles/active/bundle.json` and any fixture bundles passed via `bundleFixture`) carry a `checksum` field. When you modify the `rules` array in a bundle fixture, regenerate the checksum with:
+
+```bash
+node -e "
+  const { createHash } = require('crypto');
+  const bundle = require('./data/bundles/active/bundle.json');
+  const checksum = createHash('sha256').update(JSON.stringify(bundle.rules)).digest('hex');
+  console.log('New checksum:', checksum);
+"
+```
+
+Then update the `checksum` field in the JSON file to the printed value. The formula is:
+
+```
+checksum = SHA-256( JSON.stringify(bundle.rules) )
+```
+
+`JSON.stringify` is called without a replacer or space argument — the checksum is computed over the compact, key-insertion-order serialization. Changing rule order or adding whitespace will produce a different checksum.
+
+---
+
+## Writing unit tests
 
 **Co-location**: Test files live next to their source file:
 ```
-views/RulesTable.tsx
-views/RulesTable.test.tsx   ← here
+src/policy/engine.ts
+src/policy/engine.test.ts   ← here
 ```
 
 **API mocking**: Mock `../api` with `vi.mock`. Include a hand-crafted `ApiError` class matching the real constructor signature. Never import the real `ApiError` in mocks.
@@ -195,6 +435,7 @@ views/RulesTable.test.tsx   ← here
 3. Run tests and ensure they pass:
    ```bash
    npm test
+   npm run test:e2e
    cd ui/client && npm test
    ```
 4. Run the TypeScript compiler with no emit to catch type errors:
