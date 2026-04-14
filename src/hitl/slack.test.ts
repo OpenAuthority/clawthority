@@ -288,9 +288,69 @@ describe('SlackInteractionServer', () => {
     expect(res.status).toBe(404);
   });
 
+  it('returns 404 for GET on the interactions path', async () => {
+    const res = await fetch(`http://localhost:${port}/slack/interactions`, { method: 'GET' });
+    expect(res.status).toBe(404);
+  });
+
+  it('ignores valid-signature requests with a malformed JSON payload', async () => {
+    // The body has a payload= field, but the value is not valid JSON, so the
+    // try/catch around JSON.parse triggers and onAction is never called.
+    const body = `payload=${encodeURIComponent('{not-valid-json{{')}`;
+    const ts = String(Math.floor(Date.now() / 1000));
+    const sig = makeSignature(ts, body);
+
+    const res = await fetch(`http://localhost:${port}/slack/interactions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'X-Slack-Request-Timestamp': ts,
+        'X-Slack-Signature': sig,
+      },
+      body,
+    });
+
+    expect(res.status).toBe(200);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(onAction).not.toHaveBeenCalled();
+  });
+
+  it('ignores valid-signature requests missing the payload field', async () => {
+    const body = 'other=field';
+    const ts = String(Math.floor(Date.now() / 1000));
+    const sig = makeSignature(ts, body);
+
+    const res = await fetch(`http://localhost:${port}/slack/interactions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'X-Slack-Request-Timestamp': ts,
+        'X-Slack-Signature': sig,
+      },
+      body,
+    });
+
+    expect(res.status).toBe(200);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(onAction).not.toHaveBeenCalled();
+  });
+
   it('start and stop lifecycle works', async () => {
     // Already started in beforeEach, just verify stop works cleanly
     await server.stop();
+    // Re-create for afterEach to not error
+    server = new SlackInteractionServer(port, signingSecret, onAction);
+    await server.start();
+  });
+
+  it('stop() is a no-op when the server was never started', async () => {
+    const fresh = new SlackInteractionServer(port + 1, signingSecret, onAction);
+    await expect(fresh.stop()).resolves.toBeUndefined();
+  });
+
+  it('stop() is idempotent (second call resolves immediately)', async () => {
+    await server.stop();
+    await expect(server.stop()).resolves.toBeUndefined();
     // Re-create for afterEach to not error
     server = new SlackInteractionServer(port, signingSecret, onAction);
     await server.start();

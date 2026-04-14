@@ -224,6 +224,37 @@ describe('TelegramListener', () => {
     expect(onCommand).toHaveBeenCalledWith('deny', 'token002');
   });
 
+  it('logs and recovers when a poll throws a non-abort error', async () => {
+    // First poll throws a regular error → catch block logs and schedules a
+    // 5s retry delay. We just need to verify the listener does not crash
+    // and onCommand is never called for the failed poll.
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.mocked(fetch).mockImplementationOnce(() => Promise.reject(new Error('Transient network error')));
+    vi.mocked(fetch).mockImplementation(() => new Promise(() => {})); // hang subsequent polls
+
+    listener = new TelegramListener('test-token', onCommand);
+    listener.start();
+
+    await vi.waitFor(() => expect(errorSpy).toHaveBeenCalled());
+    expect(errorSpy.mock.calls[0]?.[0]).toContain('[hitl-telegram] poll error');
+    expect(onCommand).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it('skips a poll when Telegram returns ok:false', async () => {
+    // ok:false branches into the retry-delay path (RETRY_DELAY_MS) without
+    // dispatching any command. We verify onCommand is not invoked.
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ ok: false }), { status: 200 }));
+    vi.mocked(fetch).mockImplementation(() => new Promise(() => {}));
+
+    listener = new TelegramListener('test-token', onCommand);
+    listener.start();
+
+    // Give the listener a tick to consume the ok:false response
+    await new Promise((r) => setTimeout(r, 50));
+    expect(onCommand).not.toHaveBeenCalled();
+  });
+
   it('updates offset after processing', async () => {
     const updates = {
       ok: true,
