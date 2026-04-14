@@ -1,0 +1,28 @@
+{
+  "OpenAuthority": {
+    "entityTypes": {
+      "Agent": {
+        "shape": {
+          "type": "Record",
+          "attributes": {
+            "agentId":    { "type": "String" },
+            "channel":    { "type": "String" },
+            "verified":   { "type": "Boolean", "required": false },
+            "userId":     { "type": "String",  "required": false },
+            "sessionId":  { "type": "String",  "required": false }
+          }
+        }
+      },
+      "Resource": {}
+    },
+    "actions": {
+      "RequestAccess": {
+        "appliesTo": {
+          "principalTypes": ["Agent"],
+          "resourceTypes":  ["Resource"],
+          "context": { "type": "Record", "attributes": {} }
+        }
+      }
+    }
+  }
+}
