@@ -136,7 +136,7 @@ This skill operates in the **context window**. It is a **soft gate** — it reli
 
 This is by design. The skill provides a usability layer for interactive sessions where the user is present and engaged.
 
-> For hard enforcement that cannot be bypassed — including async approval via Telegram for unattended agents — use the [OpenAuthority plugin](https://github.com/Firma-AI/openauthority) with HITL policies.
+> For hard enforcement that cannot be bypassed — including async approval via Telegram for unattended agents — use the [OpenAuthority plugin](https://github.com/OpenAuthority/openauthority) with HITL policies.
 
 ## Relationship to the Plugin
 

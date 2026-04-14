@@ -119,7 +119,7 @@ This skill operates in the **context window**. The log it produces is assembled 
 
 For a code-level audit trail with exact arguments, timestamps, and policy decisions, use the OpenAuthority plugin's audit log.
 
-> For production audit logging, see the [OpenAuthority plugin](https://github.com/Firma-AI/openauthority) which logs every tool call at the code boundary with full provenance.
+> For production audit logging, see the [OpenAuthority plugin](https://github.com/OpenAuthority/openauthority) which logs every tool call at the code boundary with full provenance.
 
 ## Data Sources
 

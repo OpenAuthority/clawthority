@@ -13,7 +13,7 @@ This guide walks through installing and registering the OpenAuthority plugin for
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/Firma-AI/openauthority ~/.openclaw/plugins/openauthority
+git clone https://github.com/OpenAuthority/openauthority ~/.openclaw/plugins/openauthority
 cd ~/.openclaw/plugins/openauthority
 ```
 

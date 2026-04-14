@@ -15,7 +15,7 @@ Thank you for contributing to Open Authority. This guide covers development setu
 ### Clone and install
 
 ```bash
-git clone https://github.com/Firma-AI/openauthority
+git clone https://github.com/OpenAuthority/openauthority
 cd openauthority
 
 # Plugin dependencies

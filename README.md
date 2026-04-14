@@ -113,7 +113,7 @@ Details: [docs/human-in-the-loop.md](docs/human-in-the-loop.md).
 ### Install
 
 ```bash
-git clone https://github.com/Firma-AI/openauthority ~/.openclaw/plugins/openauthority
+git clone https://github.com/OpenAuthority/openauthority ~/.openclaw/plugins/openauthority
 cd ~/.openclaw/plugins/openauthority
 npm install && npm run build
 ```
