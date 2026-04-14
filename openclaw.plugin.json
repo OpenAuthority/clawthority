@@ -18,7 +18,8 @@
       "hitl-approval"
     ],
     "hooks": [
-      "before_tool_call"
+      "before_tool_call",
+      "before_prompt_build"
     ],
     "installPath": "~/.openclaw/plugins/openauthority"
   },
