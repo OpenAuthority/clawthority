@@ -1,6 +1,6 @@
 {
   "name": "@openauthority/openauthority",
-  "version": "1.0.0",
+  "version": "0.1.1",
   "description": "Authorization policy engine plugin for Open Authority",
   "type": "module",
   "main": "dist/index.js",

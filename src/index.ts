@@ -87,6 +87,8 @@ import { TelegramListener, sendApprovalRequest, sendConfirmation, resolveTelegra
 import { SlackInteractionServer, sendSlackApprovalRequest, sendSlackConfirmation, resolveSlackConfig } from "./hitl/slack.js";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { readFileSync, statSync } from "node:fs";
+import { execSync } from "node:child_process";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { normalize_action, sortedJsonStringify } from "./enforcement/normalize.js";
@@ -756,6 +758,50 @@ const beforeModelResolveHandler: BeforeModelResolveHandler = ({ prompt }, ctx) =
 
 // ─── Plugin definition ────────────────────────────────────────────────────────
 
+interface VersionInfo {
+  version: string;
+  commit: string;
+  commitDirty: boolean;
+  builtAt: string;
+  pluginRoot: string;
+}
+
+/**
+ * Collect best-effort version info for the activation banner so the operator
+ * can confirm at a glance which build of openauthority is running.
+ */
+function getVersionInfo(): VersionInfo {
+  const moduleDir = dirname(fileURLToPath(import.meta.url));
+  const pluginRoot = resolve(moduleDir, "..");
+
+  let version = "unknown";
+  try {
+    const pkg = JSON.parse(readFileSync(resolve(pluginRoot, "package.json"), "utf8"));
+    version = pkg.version ?? "unknown";
+  } catch {}
+
+  let commit = "unknown";
+  let commitDirty = false;
+  try {
+    commit = execSync("git rev-parse --short HEAD", {
+      cwd: pluginRoot,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).toString().trim();
+    const status = execSync("git status --porcelain", {
+      cwd: pluginRoot,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).toString();
+    commitDirty = status.trim().length > 0;
+  } catch {}
+
+  let builtAt = "unknown";
+  try {
+    builtAt = statSync(fileURLToPath(import.meta.url)).mtime.toISOString();
+  } catch {}
+
+  return { version, commit, commitDirty, builtAt, pluginRoot };
+}
+
 let rulesWatcher: WatcherHandle | null = null;
 
 const plugin: OpenclawPlugin = {
@@ -763,6 +809,18 @@ const plugin: OpenclawPlugin = {
   version: "1.0.0",
 
   async activate(ctx: OpenclawPluginContext) {
+    // ── Version banner: confirm at a glance which build is running ──────────
+    const v = getVersionInfo();
+    const dirtyTag = v.commitDirty ? " (dirty)" : "";
+    console.log("┌──────────────────────────────────────────────────────────────┐");
+    console.log("│  [plugin:openauthority] VERSION                              │");
+    console.log("├──────────────────────────────────────────────────────────────┤");
+    console.log(`│  version:    ${v.version}${dirtyTag}`.padEnd(63) + "│");
+    console.log(`│  commit:     ${v.commit}${dirtyTag}`.padEnd(63) + "│");
+    console.log(`│  built at:   ${v.builtAt}`.padEnd(63) + "│");
+    console.log(`│  root:       ${v.pluginRoot}`.padEnd(63) + "│");
+    console.log("└──────────────────────────────────────────────────────────────┘");
+
     // ── Typed hooks: register into EVERY registry ───────────────────────────
     // OpenClaw loads plugins from multiple subsystems, each with its own
     // registry. ctx.on() targets the calling registry's typedHooks array.
