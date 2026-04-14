@@ -16,7 +16,9 @@
     "openclaw.plugin.json"
   ],
   "scripts": {
+    "prebuild": "node scripts/sync-version.mjs",
     "build": "tsc",
+    "sync-version": "node scripts/sync-version.mjs",
     "dev": "tsc --watch",
     "clean": "rm -rf dist",
     "test": "vitest run",

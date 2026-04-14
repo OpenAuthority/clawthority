@@ -2,7 +2,7 @@
   "id": "openauthority",
   "name": "open-authority",
   "displayName": "Open Authority",
-  "version": "1.0.0",
+  "version": "0.1.1",
   "description": "Authorization policy engine for Open Authority — semantic authorization, action normalization, audit logging, and HITL approval",
   "author": "Firma-AI",
   "license": "MIT",

@@ -806,7 +806,8 @@ let rulesWatcher: WatcherHandle | null = null;
 
 const plugin: OpenclawPlugin = {
   name: "openauthority",
-  version: "1.0.0",
+  // Single source of truth: package.json (read by getVersionInfo at activation).
+  version: getVersionInfo().version,
 
   async activate(ctx: OpenclawPluginContext) {
     // ── Version banner: confirm at a glance which build is running ──────────
