@@ -107,6 +107,13 @@ export interface HarnessConfig {
    * Required for {@link Harness.approveNext}.
    */
   hitlServerUrl?: string;
+  /**
+   * Extra command-line arguments appended after the runner script path when
+   * spawning via `node`.  Ignored when {@link openclawBin} is set.
+   *
+   * @example `['--engine', 'cedar']`
+   */
+  runnerArgs?: string[];
 }
 
 /**
@@ -204,6 +211,15 @@ export class OpenClawHarness implements Harness {
   private readonly runnerPath: string;
   private readonly config: HarnessConfig;
 
+  /**
+   * The full payload of the `{ type: 'ready' }` frame emitted by the runner
+   * on startup.  Includes any activation metadata the runner chooses to
+   * include (e.g. `engine`, `engineVersion`, `policiesLoaded`).
+   *
+   * `undefined` until {@link spawn} resolves.
+   */
+  startupInfo: Record<string, unknown> | undefined = undefined;
+
   constructor(opts: HarnessOptions | HarnessConfig = {}) {
     this.config = opts as HarnessConfig;
     this.auditLogPath = opts.auditLogPath ?? '/tmp/oa-smoke.jsonl';
@@ -258,10 +274,11 @@ export class OpenClawHarness implements Harness {
     // ── 2. Determine command ─────────────────────────────────────────────────
     // If openclawBin is provided, invoke it directly.
     // Otherwise fall back to spawning runner.mjs via node (test mode).
+    const { runnerArgs = [] } = this.config;
     const [cmd, args] =
       openclawBin != null
         ? [openclawBin, workDir ? ['--plugin-dir', workDir] : []]
-        : ['node', [this.runnerPath]];
+        : ['node', [this.runnerPath, ...runnerArgs]];
 
     // ── 3. Spawn process ─────────────────────────────────────────────────────
     this.proc = spawn(cmd, args, {
@@ -314,6 +331,7 @@ export class OpenClawHarness implements Harness {
         if (msg['type'] === 'ready') {
           clearTimeout(timer);
           rl.off('line', onReady);
+          this.startupInfo = msg;
           res();
         }
       };

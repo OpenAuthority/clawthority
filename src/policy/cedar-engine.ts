@@ -24,7 +24,7 @@
  */
 
 import type { RuleContext, Resource, EvaluationDecision } from './types.js';
-import { buildEntities } from './cedar-entities.js';
+import { buildEntities, buildResourceEntity } from './cedar-entities.js';
 
 // ---------------------------------------------------------------------------
 // Minimal typings for the Cedar WASM Node.js module
@@ -35,22 +35,22 @@ interface CedarIsAuthorizedRequest {
   action: { type: string; id: string };
   resource: { type: string; id: string };
   context: Record<string, unknown>;
-  slice: {
-    policies: string;
-    entities: string;
-  };
+  /** Cedar policy set. `staticPolicies` accepts a Cedar text string. */
+  policies: { staticPolicies?: string };
+  /** Cedar entity store — array of entity objects (NOT a JSON string). */
+  entities: unknown[];
 }
 
 interface CedarAuthorizationAnswer {
   type: 'success' | 'failure';
   response?: {
-    decision: 'Allow' | 'Deny';
+    decision: 'allow' | 'deny';
     diagnostics: {
       reason: string[];
-      errors: string[];
+      errors: unknown[];
     };
   };
-  errors?: string[];
+  errors?: unknown[];
 }
 
 interface CedarWasmModule {
@@ -123,7 +123,7 @@ export class CedarEngine {
   /**
    * Evaluates access for a resource using the Cedar WASM runtime.
    *
-   * Cedar `Allow` → `'permit'`; Cedar `Deny` or any error → `'forbid'`.
+   * Cedar `'allow'` → `'permit'`; Cedar `'deny'` or any error → `'forbid'`.
    *
    * @param resource      Resource type (e.g. `'tool'`, `'file'`).
    * @param resourceName  Specific resource being accessed (e.g. `'read_file'`).
@@ -134,28 +134,30 @@ export class CedarEngine {
   evaluate(
     resource: Resource,
     resourceName: string,
-    context: RuleContext
+    context: RuleContext,
+    actionClass?: string,
   ): EvaluationDecision {
     if (!this.cedar) {
       return { effect: this._defaultEffect, reason: 'cedar_not_initialized' };
     }
 
     const entities = buildEntities(context);
+    if (actionClass !== undefined) {
+      entities.push(buildResourceEntity(resource, resourceName, actionClass));
+    }
 
     const request: CedarIsAuthorizedRequest = {
       principal: { type: 'OpenAuthority::Agent', id: context.agentId },
       action:    { type: 'OpenAuthority::Action', id: 'RequestAccess' },
       resource:  { type: 'OpenAuthority::Resource', id: `${resource}:${resourceName}` },
       context:   {},
-      slice: {
-        policies: this.policies,
-        entities: JSON.stringify(entities),
-      },
+      policies:  { staticPolicies: this.policies },
+      entities,
     };
 
     const answer = this.cedar.isAuthorized(request);
 
-    if (answer.type === 'success' && answer.response?.decision === 'Allow') {
+    if (answer.type === 'success' && answer.response?.decision === 'allow') {
       return { effect: 'permit' };
     }
 
@@ -189,10 +191,10 @@ export class CedarEngine {
   evaluateByActionClass(
     actionClass: string,
     resourceName: string,
-    context: RuleContext
+    context: RuleContext,
   ): EvaluationDecision {
     const resource = CedarEngine.mapActionClassToResource(actionClass);
-    return this.evaluate(resource, resourceName, context);
+    return this.evaluate(resource, resourceName, context, actionClass);
   }
 
   // ── Private helpers ───────────────────────────────────────────────────────

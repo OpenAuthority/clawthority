@@ -19,14 +19,17 @@ import type { RuleContext } from './types.js';
 // Cedar entity JSON types (Cedar WASM entity store format)
 // ---------------------------------------------------------------------------
 
-/** A Cedar scalar value as used in the entity JSON format. */
-export type CedarValue =
-  | { String: string }
-  | { Long: number }
-  | { Bool: boolean }
-  | { Set: CedarValue[] }
-  | { Record: Record<string, CedarValue> }
-  | { Entity: CedarEntityUid };
+/**
+ * A Cedar scalar value as used in the Cedar WASM entity store.
+ *
+ * Cedar WASM v4.x accepts plain JavaScript primitives for scalar attributes:
+ *   - String  → plain `string`
+ *   - Boolean → plain `boolean`
+ *   - Number  → plain `number`
+ *   - Entity  → `{ __entity: { type, id } }`
+ *   - Extension → `{ __extn: { fn, arg } }`
+ */
+export type CedarValue = string | boolean | number | null | CedarValue[] | { __entity: CedarEntityUid } | { [key: string]: CedarValue };
 
 /** Unique identifier for a Cedar entity. */
 export interface CedarEntityUid {
@@ -48,7 +51,7 @@ export interface CedarEntity {
 /**
  * Converts a `RuleContext` into a Cedar entity store array.
  *
- * Produces a single `Agent` entity whose uid is `{ type: "Agent", id: agentId }`.
+ * Produces a single `Agent` entity whose uid is `{ type: "OpenAuthority::Agent", id: agentId }`.
  * Optional fields (`verified`, `userId`, `sessionId`) are included only when
  * they are not `undefined`. Null-safe: treats `undefined` and `null` the same way.
  *
@@ -57,27 +60,53 @@ export interface CedarEntity {
  */
 export function buildEntities(context: RuleContext): CedarEntity[] {
   const attrs: Record<string, CedarValue> = {
-    agentId: { String: context.agentId },
-    channel: { String: context.channel },
+    agentId: context.agentId,
+    channel: context.channel,
   };
 
   if (context.verified !== undefined && context.verified !== null) {
-    attrs['verified'] = { Bool: context.verified };
+    attrs['verified'] = context.verified;
   }
 
   if (context.userId !== undefined && context.userId !== null) {
-    attrs['userId'] = { String: context.userId };
+    attrs['userId'] = context.userId;
   }
 
   if (context.sessionId !== undefined && context.sessionId !== null) {
-    attrs['sessionId'] = { String: context.sessionId };
+    attrs['sessionId'] = context.sessionId;
   }
 
   const principal: CedarEntity = {
-    uid: { type: 'Agent', id: context.agentId },
+    uid: { type: 'OpenAuthority::Agent', id: context.agentId },
     attrs,
     parents: [],
   };
 
   return [principal];
+}
+
+/**
+ * Builds a Cedar `Resource` entity for the entity store, carrying the
+ * `actionClass` attribute so that Cedar policies can match on it.
+ *
+ * The returned entity has uid `{ type: 'OpenAuthority::Resource', id: '<resourceType>:<resourceName>' }`
+ * and a single `actionClass` String attribute.
+ *
+ * @param resourceType  Cedar resource type token (e.g. `'file'`, `'tool'`).
+ * @param resourceName  Specific resource being accessed (e.g. `'read_file'`).
+ * @param actionClass   Semantic action class string (e.g. `'filesystem.read'`).
+ * @returns             A {@link CedarEntity} ready for the WASM entity store.
+ */
+export function buildResourceEntity(
+  resourceType: string,
+  resourceName: string,
+  actionClass: string,
+): CedarEntity {
+  return {
+    uid: { type: 'OpenAuthority::Resource', id: `${resourceType}:${resourceName}` },
+    attrs: {
+      actionClass,
+    },
+    parents: [],
+  };
 }

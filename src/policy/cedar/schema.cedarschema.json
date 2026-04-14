@@ -13,7 +13,14 @@
           }
         }
       },
-      "Resource": {}
+      "Resource": {
+        "shape": {
+          "type": "Record",
+          "attributes": {
+            "actionClass": { "type": "String", "required": false }
+          }
+        }
+      }
     },
     "actions": {
       "RequestAccess": {

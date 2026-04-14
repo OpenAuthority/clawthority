@@ -172,6 +172,6 @@ export class EnforcementPolicyEngine extends CedarEngine {
         break;
       }
     }
-    return this.evaluate(resource, target, context);
+    return this.evaluate(resource, target, context, action_class);
   }
 }
