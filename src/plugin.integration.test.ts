@@ -66,6 +66,37 @@ function createMockContext(): { ctx: OpenclawPluginContext } {
   return { ctx };
 }
 
+/**
+ * Minimal HITL channel mock for integration tests (T1).
+ *
+ * Captures the most recent approval request sent to it and exposes `approve()`
+ * to resolve it through the wrapped ApprovalManager.
+ */
+class MockHitlChannel {
+  private _request: { approval_id: string; action_class: string; target: string } | null = null;
+  private readonly manager: ApprovalManager;
+
+  constructor(manager: ApprovalManager) {
+    this.manager = manager;
+  }
+
+  /** Records an incoming approval request from the pipeline. */
+  sendRequest(req: { approval_id: string; action_class: string; target: string }): void {
+    this._request = req;
+  }
+
+  /** The last request received, or null if none has been sent. */
+  get pendingRequest(): { approval_id: string; action_class: string; target: string } | null {
+    return this._request;
+  }
+
+  /** Resolves the pending approval as 'approved'. Returns true on success. */
+  approve(): boolean {
+    if (!this._request) return false;
+    return this.manager.resolveApproval(this._request.approval_id, 'approved');
+  }
+}
+
 // ─── Suite ────────────────────────────────────────────────────────────────────
 
 describe('plugin integration suite', () => {
@@ -494,5 +525,119 @@ describe('plugin integration suite', () => {
     // Second deactivate — must not close watchers again (idempotent).
     await expect(plugin.deactivate?.()).resolves.not.toThrow();
     expect(mockWatcherClose).toHaveBeenCalledTimes(watchCallCount);
+  });
+
+  // ── TC-12: HITL round-trip approval ─────────────────────────────────────────
+
+  it('TC-12: high-risk call triggers HITL, mock channel receives request, approval allows subsequent call', async () => {
+    const actionClass = 'filesystem.write';
+    const target = '/tmp/tc12-output.txt';
+    const payloadHash = 'tc12-hash';
+
+    const adapter = new FileAuthorityAdapter({ bundlePath: '/dev/null' });
+    let issuedCapability: Awaited<ReturnType<typeof adapter.issueCapability>> | undefined;
+
+    const engine = createEnforcementEngine([
+      { effect: 'permit', resource: 'tool', match: '*' } satisfies Rule,
+    ]);
+    const stage1 = (pCtx: PipelineContext) =>
+      validateCapability(pCtx, approvalManager, (id) =>
+        issuedCapability?.approval_id === id ? issuedCapability : undefined,
+      );
+    const stage2 = createStage2(engine);
+
+    // Capture ExecutionEvents from both pipeline runs.
+    const events: unknown[] = [];
+    emitter.on('executionEvent', (e) => events.push(e));
+
+    // ── Step 1: first call without approval_id → pending_hitl_approval ────────
+
+    const result1 = await runPipeline(
+      {
+        action_class: actionClass,
+        target,
+        payload_hash: payloadHash,
+        hitl_mode: 'per_request',
+        rule_context: { agentId: 'agent-tc12', channel: 'mock' },
+      },
+      stage1,
+      stage2,
+      emitter,
+    );
+
+    expect(result1.decision.effect).toBe('forbid');
+    expect(result1.decision.reason).toBe('pending_hitl_approval');
+
+    // ── Step 2: mock channel receives the HITL request ────────────────────────
+
+    const hitlPolicy = {
+      name: 'tc12-high-risk',
+      actions: ['filesystem.*'],
+      approval: { channel: 'mock', timeout: 30, fallback: 'deny' as const },
+    };
+
+    const handle = approvalManager.createApprovalRequest({
+      toolName: 'write_file',
+      agentId: 'agent-tc12',
+      channelId: 'mock',
+      policy: hitlPolicy,
+      action_class: actionClass,
+      target,
+      payload_hash: payloadHash,
+    });
+
+    const channel = new MockHitlChannel(approvalManager);
+    channel.sendRequest({ approval_id: handle.token, action_class: actionClass, target });
+
+    expect(channel.pendingRequest?.approval_id).toBe(handle.token);
+    expect(channel.pendingRequest?.action_class).toBe(actionClass);
+    expect(channel.pendingRequest?.target).toBe(target);
+
+    // ── Step 3: channel.approve() resolves the pending approval ───────────────
+
+    const resolved = channel.approve();
+    expect(resolved).toBe(true);
+
+    const hitlDecision = await handle.promise;
+    expect(hitlDecision).toBe('approved');
+
+    // ── Step 4: issue capability and re-invoke pipeline with approval_id ──────
+
+    issuedCapability = await adapter.issueCapability({
+      action_class: actionClass,
+      target,
+      payload_hash: payloadHash,
+    });
+
+    const result2 = await runPipeline(
+      {
+        action_class: actionClass,
+        target,
+        payload_hash: payloadHash,
+        hitl_mode: 'per_request',
+        approval_id: issuedCapability.approval_id,
+        rule_context: { agentId: 'agent-tc12', channel: 'mock' },
+      },
+      stage1,
+      stage2,
+      emitter,
+    );
+
+    expect(result2.decision.effect).toBe('permit');
+
+    // ── Step 5: verify ExecutionEvents for both pipeline runs ─────────────────
+
+    expect(events).toHaveLength(2);
+
+    const firstEvent = events[0] as { decision: { effect: string; reason: string; stage?: string }; timestamp: string };
+    expect(firstEvent.decision.effect).toBe('forbid');
+    expect(firstEvent.decision.reason).toBe('pending_hitl_approval');
+    expect(firstEvent.decision.stage).toBe('hitl');
+    expect(typeof firstEvent.timestamp).toBe('string');
+    expect(() => new Date(firstEvent.timestamp)).not.toThrow();
+
+    const secondEvent = events[1] as { decision: { effect: string }; timestamp: string };
+    expect(secondEvent.decision.effect).toBe('permit');
+    expect(typeof secondEvent.timestamp).toBe('string');
   });
 });
