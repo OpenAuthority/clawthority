@@ -19,6 +19,12 @@ export interface PolicyDecisionEntry {
   agentId: string;
   /** Channel. */
   channel: string;
+  /**
+   * True when the agent identity was verified against the
+   * {@link AgentIdentityRegistry}. Absent for entries written before this
+   * field was introduced.
+   */
+  verified?: boolean;
 }
 
 /** A HITL decision entry for JSONL logging. */
@@ -41,6 +47,12 @@ export interface HitlDecisionEntry {
   policyName: string;
   /** Configured timeout in seconds. */
   timeoutSeconds: number;
+  /**
+   * True when the agent identity was verified against the
+   * {@link AgentIdentityRegistry}. Absent for entries written before this
+   * field was introduced.
+   */
+  verified?: boolean;
 }
 
 /** Options for {@link JsonlAuditLogger}. */
