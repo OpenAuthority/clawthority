@@ -8,6 +8,7 @@ const TBundleRule = Type.Object({
   effect: Type.Union([Type.Literal('permit'), Type.Literal('forbid')]),
   resource: Type.Optional(Type.String({ minLength: 1 })),
   action_class: Type.Optional(Type.String({ minLength: 1 })),
+  intent_group: Type.Optional(Type.String({ minLength: 1 })),
   match: Type.Optional(Type.String()),
   reason: Type.Optional(Type.String()),
   tags: Type.Optional(Type.Array(Type.String())),
@@ -47,7 +48,7 @@ export interface BundleValidationResult {
  * 1. JSON schema validation — `version` (number ≥ 1), `rules` (array),
  *    `checksum` (string) are all required.
  * 2. Per-rule semantic check — each rule must carry `effect` plus at least
- *    one of `action_class` or `resource`.
+ *    one of `action_class`, `resource`, or `intent_group`.
  * 3. Version monotonicity — `bundle.version` must be strictly greater than
  *    `currentVersion` to prevent rollback attacks.
  * 4. Checksum verification — `bundle.checksum` must equal the SHA-256 hex
@@ -70,10 +71,10 @@ export function validateBundle(bundle: unknown, currentVersion: number): BundleV
   // ── 2. Per-rule semantic check ────────────────────────────────────────────
   for (let i = 0; i < bundle.rules.length; i++) {
     const rule = bundle.rules[i]!;
-    if (rule.action_class === undefined && rule.resource === undefined) {
+    if (rule.action_class === undefined && rule.resource === undefined && rule.intent_group === undefined) {
       return {
         valid: false,
-        error: `Rule at index ${i} must have either action_class or resource`,
+        error: `Rule at index ${i} must have either action_class, resource, or intent_group`,
       };
     }
   }

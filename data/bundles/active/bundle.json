@@ -54,9 +54,15 @@
       "action_class": "unknown_sensitive_action",
       "reason": "Unknown sensitive actions are unconditionally forbidden",
       "tags": ["security"]
+    },
+    {
+      "effect": "forbid",
+      "intent_group": "destructive_fs",
+      "reason": "Destructive filesystem operations are unconditionally forbidden",
+      "tags": ["filesystem", "security"]
     }
   ],
-  "checksum": "5325663c82960744f02dda54c236e43b56625ee446ed6c83401615f07b96fa13",
+  "checksum": "d875b63c0260dab9f609fa085a7e22147932bd3900d4750c22a2830e2a9ed391",
   "_examples": [
     {
       "_comment": "Per-address block: forbid a specific email address using target_match regex. This rule applies to all 'channel' resources (*) but target_match narrows it to one address. Cedar forbid-wins: even a trusted-domain address is denied if it appears here.",

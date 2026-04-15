@@ -109,12 +109,18 @@ describe('validateBundle', () => {
 
   // ── Per-rule semantic check ───────────────────────────────────────────────
 
-  it('returns valid: false when a rule has neither action_class nor resource', () => {
+  it('returns valid: false when a rule has neither action_class, resource, nor intent_group', () => {
     const rules: BundleRule[] = [{ effect: 'permit' }];
     const bundle = { version: 2, rules, checksum: sha256(JSON.stringify(rules)) };
     const result = validateBundle(bundle, currentVersion);
     expect(result.valid).toBe(false);
-    expect(result.error).toMatch(/action_class or resource/i);
+    expect(result.error).toMatch(/action_class.*resource.*intent_group/i);
+  });
+
+  it('returns valid: true for a rule with only intent_group', () => {
+    const rules: BundleRule[] = [{ effect: 'forbid', intent_group: 'destructive_fs' }];
+    const result = validateBundle(makeBundle(rules, 2), currentVersion);
+    expect(result).toEqual({ valid: true });
   });
 
   it('includes the rule index in the error message for the semantic check', () => {

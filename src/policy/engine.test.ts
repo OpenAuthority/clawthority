@@ -685,6 +685,42 @@ describe('PolicyEngine', () => {
     });
   });
 
+  describe('intent_group blocks action without action_class rule', () => {
+    it('evaluateByIntentGroup external_send forbids when intent_group rule is loaded', () => {
+      engine.addRule({ effect: 'forbid', intent_group: 'external_send', reason: 'no_external_comms' });
+      const result = engine.evaluateByIntentGroup('external_send', ctx);
+      expect(result.effect).toBe('forbid');
+      expect(result.reason).toBe('no_external_comms');
+    });
+
+    it('intent_group external_send blocks communication.slack even with no action_class rule', () => {
+      // Load only an intent_group rule — no action_class rule for communication.slack
+      engine.addRule({ effect: 'forbid', intent_group: 'external_send', reason: 'comms_blocked' });
+
+      // Without an action_class rule, evaluateByActionClass permits communication.slack
+      const actionClassResult = engine.evaluateByActionClass('communication.slack', '#general', ctx);
+      expect(actionClassResult.effect).toBe('permit');
+
+      // The intent_group rule blocks via evaluateByIntentGroup
+      const intentGroupResult = engine.evaluateByIntentGroup('external_send', ctx);
+      expect(intentGroupResult.effect).toBe('forbid');
+      expect(intentGroupResult.reason).toBe('comms_blocked');
+    });
+
+    it('intent_group rule blocks all external_send actions (email and slack)', () => {
+      engine.addRule({ effect: 'forbid', intent_group: 'external_send', reason: 'no_external_send' });
+      // Both communication.email and communication.slack share intent_group external_send
+      expect(engine.evaluateByIntentGroup('external_send', ctx).effect).toBe('forbid');
+    });
+
+    it('matched rule reference is set on the intent_group forbid decision', () => {
+      const rule: Rule = { effect: 'forbid', intent_group: 'external_send', reason: 'comms_blocked' };
+      engine.addRule(rule);
+      const result = engine.evaluateByIntentGroup('external_send', ctx);
+      expect(result.matchedRule).toBe(rule);
+    });
+  });
+
   // Regression test for Issue #1: exec blocks were blocking everything.
   // Confirms that common actions are permitted by default when no explicit rules apply.
   describe('regression: default-permit for common actions (Issue #1)', () => {
