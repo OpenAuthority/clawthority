@@ -34,6 +34,14 @@ export { buildEnvelope, uuidv7, computePayloadHash, computeContextHash, sortedJs
 // ─── Utilities ───────────────────────────────────────────────────────────────
 export { generateDeltaSummary } from "./utils/delta-summary.js";
 export type { DeltaSummaryInput, ResidualRisk, ResidualRiskLevel } from "./utils/delta-summary.js";
+export { validateCommitMessage } from "./utils/commit-validator.js";
+export type {
+  CommitType,
+  CommitValidationField,
+  CommitValidationError,
+  CommitMessageParts,
+  CommitValidationResult,
+} from "./utils/commit-validator.js";
 
 // ─── Human-in-the-loop policy configuration ──────────────────────────────────
 export {
