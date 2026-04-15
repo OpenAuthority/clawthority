@@ -25,6 +25,7 @@
     "test:coverage": "vitest run --coverage",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "test:e2e:coverage": "vitest run --config vitest.e2e.config.ts --coverage",
+    "test:dod": "vitest run --config vitest.dod.config.ts",
     "test:watch": "vitest"
   },
   "dependencies": {
