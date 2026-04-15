@@ -73,11 +73,11 @@ Consider pausing or reducing activity to stay within your threshold.
 
 ## How Token Counting Works
 
-Token counts are estimated from the OpenClaw session context:
+Token counts are recorded by the OpenAuthority plugin's budget tracker on every `before_tool_call` hook event:
 
-- **Input tokens** — counted from prompt messages and tool call arguments
-- **Output tokens** — counted from model responses and tool results
-- **Cost estimation** — based on published per-token pricing for the active model
+- **Input tokens** — estimated from the serialised tool-call parameters (1 token ≈ 4 characters)
+- **Output tokens** — not available at pre-call time; recorded as 0 per event
+- **Cost estimation** — computed from published per-token pricing in `src/budget/pricing.ts`
 
 These are estimates. For exact billing, check your API provider's dashboard.
 
@@ -93,10 +93,15 @@ The skill provides **soft stops** — it warns the model and asks it to pause. I
 
 The skill reads from:
 
-- OpenClaw session metadata (token counts per turn)
-- Local state file at `~/.openclaw/openauthority/budget-state.json` (thresholds, history)
+- `data/budget.jsonl` — append-only JSONL log written by the plugin's `BudgetTracker` on every `before_tool_call` event. Each line is a JSON object with fields: `ts`, `session_id`, `model`, `tokens`, `cost`.
+- Plugin config `budget.dailyTokenLimit` and `budget.warnAt` — configurable thresholds stored in `openclaw.plugin.json` (overridable via `OPENAUTH_BUDGET_DAILY_LIMIT` / `OPENAUTH_BUDGET_WARN_AT` env vars).
 
-No data is sent externally. All tracking is local and read-only from session context.
+To aggregate session and daily totals from `data/budget.jsonl`:
+1. Filter entries by `session_id` to get session totals.
+2. Filter entries by `ts` date prefix (first 10 chars) to get daily totals.
+3. Sum `tokens` and `cost` fields for each group.
+
+No data is sent externally. All tracking is local.
 
 ## Terminology
 

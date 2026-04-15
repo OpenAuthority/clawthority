@@ -63,6 +63,16 @@ export type {
   UsageReport,
 } from "./utils/token-telemetry.js";
 
+// ─── Budget tracker ───────────────────────────────────────────────────────────
+export {
+  PRICING as BUDGET_PRICING,
+  resolvePricing as resolveBudgetPricing,
+  estimateCost,
+} from "./budget/pricing.js";
+export type { ModelPricing as BudgetModelPricing } from "./budget/pricing.js";
+export { BudgetTracker, createBudgetTracker } from "./budget/tracker.js";
+export type { BudgetEntry, BudgetTrackerOptions } from "./budget/tracker.js";
+
 // ─── Human-in-the-loop policy configuration ──────────────────────────────────
 export {
   HitlFallbackSchema,
@@ -135,6 +145,7 @@ import { fileURLToPath } from "node:url";
 import { normalize_action, sortedJsonStringify } from "./enforcement/normalize.js";
 import { buildEnvelope } from "./envelope.js";
 import { defaultAgentIdentityRegistry } from "./identity.js";
+import { BudgetTracker, createBudgetTracker } from "./budget/tracker.js";
 
 /**
  * Resolved identity view used by audit and HITL call sites. Derived from
@@ -439,6 +450,9 @@ const slackMessageTimestamps = new Map<string, string>();
 /** JSONL audit logger for HITL decisions — initialised in activate(). */
 let hitlAuditLogger: JsonlAuditLogger | null = null;
 
+/** Budget tracker — appends events to data/budget.jsonl; initialised in activate(). */
+let budgetTracker: BudgetTracker | null = null;
+
 /** Activation guard — prevents duplicate hook registration when openclaw
  *  loads the plugin from multiple subsystems (gateway, CLI, etc.). */
 let activated = false;
@@ -643,6 +657,15 @@ function determineSourceTrustLevel(source?: string): 'user' | 'agent' | 'untrust
 const beforeToolCallHandler: BeforeToolCallHandler = ({ toolName, params, source }, ctx) => {
   console.log(`[openauthority] ┌─ before_tool_call ──────────────────────────────────`);
   console.log(`[openauthority] │ tool=${toolName}  agent=${ctx.agentId ?? "unknown"}  channel=${ctx.channelId ?? "unknown"}`);
+
+  // ── Budget tracking — log every hook event to data/budget.jsonl ───────────
+  if (budgetTracker !== null) {
+    // Estimate input tokens from serialised params (rough: 1 token ≈ 4 UTF-16
+    // code units). Output tokens are not available pre-call; recorded as 0.
+    const paramJson = params !== undefined ? JSON.stringify(params) : '';
+    const estimatedInputTokens = Math.max(1, Math.round(paramJson.length / 4));
+    budgetTracker.append(estimatedInputTokens, 0);
+  }
 
   // ── Identity verification (V-03 v0.1 follow-up) ──────────────────────────
   // Verify the (agentId, channel) claim against the AgentIdentityRegistry
@@ -944,6 +967,12 @@ const plugin: OpenclawPlugin = {
       return;
     }
     activated = true;
+
+    // ── Budget tracker — initialise singleton for data/budget.jsonl ──────────
+    const moduleDir = dirname(fileURLToPath(import.meta.url));
+    const pluginRoot = resolve(moduleDir, "..");
+    budgetTracker = createBudgetTracker(pluginRoot);
+    console.log(`[plugin:openauthority] budget tracker active — session=${budgetTracker.sessionId}  dailyLimit=${budgetTracker.dailyTokenLimit}  warnAt=${budgetTracker.warnAt}`);
 
     // ── Version banner: confirm at a glance which build is running ──────────
     const v = getVersionInfo();

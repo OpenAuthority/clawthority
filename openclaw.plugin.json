@@ -64,6 +64,23 @@
         },
         "additionalProperties": false
       },
+      "budget": {
+        "type": "object",
+        "description": "Token budget tracking configuration",
+        "properties": {
+          "dailyTokenLimit": {
+            "type": "number",
+            "description": "Soft daily token limit; the token-budget skill warns when usage approaches this threshold",
+            "default": 100000
+          },
+          "warnAt": {
+            "type": "number",
+            "description": "Token count at which the token-budget skill emits a warning (must be ≤ dailyTokenLimit)",
+            "default": 80000
+          }
+        },
+        "additionalProperties": false
+      },
       "hitl": {
         "type": "object",
         "description": "Human-in-the-Loop approval configuration",
