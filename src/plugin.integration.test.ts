@@ -107,6 +107,9 @@ describe('plugin integration suite', () => {
   let approvalManager: ApprovalManager;
 
   beforeEach(() => {
+    // Bypass the install lifecycle gate so tests can activate the plugin
+    // without requiring data/.installed on disk.
+    process.env.OPENAUTH_FORCE_ACTIVE = "1";
     emitter = new EventEmitter();
     approvalManager = new ApprovalManager();
     vi.mocked(chokidar.watch).mockClear();
@@ -115,6 +118,7 @@ describe('plugin integration suite', () => {
   });
 
   afterEach(async () => {
+    delete process.env.OPENAUTH_FORCE_ACTIVE;
     approvalManager.shutdown();
     await plugin.deactivate?.();
   });

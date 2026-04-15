@@ -110,7 +110,7 @@ import { TelegramListener, sendApprovalRequest, sendConfirmation, resolveTelegra
 import { SlackInteractionServer, sendSlackApprovalRequest, sendSlackConfirmation, resolveSlackConfig } from "./hitl/slack.js";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, statSync, existsSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -874,12 +874,36 @@ function getVersionInfo(): VersionInfo {
 
 let rulesWatcher: WatcherHandle | null = null;
 
+/**
+ * Returns true when policy enforcement should be active.
+ *
+ * Activation is deferred until `data/.installed` exists — written by the
+ * install script after bootstrap completes. Set `OPENAUTH_FORCE_ACTIVE=1` to
+ * bypass this gate in development or CI environments.
+ */
+function isInstalled(): boolean {
+  if (process.env.OPENAUTH_FORCE_ACTIVE === "1") return true;
+  const moduleDir = dirname(fileURLToPath(import.meta.url));
+  const pluginRoot = resolve(moduleDir, "..");
+  return existsSync(resolve(pluginRoot, "data", ".installed"));
+}
+
 const plugin: OpenclawPlugin = {
   name: "openauthority",
   // Single source of truth: package.json (read by getVersionInfo at activation).
   version: getVersionInfo().version,
 
   async activate(ctx: OpenclawPluginContext) {
+    // ── Install lifecycle gate ────────────────────────────────────────────────
+    // Policy enforcement is deferred until install completes (indicated by
+    // data/.installed). This prevents bootstrap commands from being blocked
+    // before plugin setup finishes. Set OPENAUTH_FORCE_ACTIVE=1 to bypass
+    // this gate in development or CI environments.
+    if (!isInstalled()) {
+      console.log("[plugin:openauthority] install incomplete — policy activation deferred (data/.installed not found; set OPENAUTH_FORCE_ACTIVE=1 to override)");
+      return;
+    }
+
     // ── Typed hooks: register into EVERY registry ───────────────────────────
     // OpenClaw loads plugins from multiple subsystems, each with its own
     // registry. ctx.on() targets the calling registry's typedHooks array.
