@@ -1,6 +1,6 @@
 # Action Registry and Classification System
 
-Complete reference for the 17 canonical action classes recognized by OpenAuthority. Policy authors use this document to understand what each action class covers, its default risk posture, and when human approval is required.
+Complete reference for the 19 canonical action classes recognized by OpenAuthority. Policy authors use this document to understand what each action class covers, its default risk posture, and when human approval is required.
 
 Source of truth: [`src/enforcement/normalize.ts`](../src/enforcement/normalize.ts)
 
@@ -21,27 +21,29 @@ Unknown tool names are **not rejected at lookup time** — they resolve to `unkn
 
 ## Complete Action Registry
 
-The table below lists all 17 canonical action classes with their default risk level, default HITL mode, and the tool aliases that map to each class.
+The table below lists all 19 canonical action classes with their default risk level, default HITL mode, intent group (where applicable), and the tool aliases that map to each class.
 
-| # | Action Class | Risk | HITL Mode | Registered Aliases |
-|---|---|---|---|---|
-| 1 | `filesystem.read` | low | none | `read_file`, `readfile`, `read_files`, `cat_file`, `view_file`, `open_file`, `get_file_contents` |
-| 2 | `filesystem.write` | medium | per_request | `write_file`, `writefile`, `create_file`, `save_file`, `update_file`, `edit_file`, `patch_file` |
-| 3 | `filesystem.delete` | high | per_request | `delete_file`, `deletefile`, `remove_file`, `rm_file`, `unlink_file` |
-| 4 | `filesystem.list` | low | none | `list_files`, `listfiles`, `list_directory`, `list_dir`, `read_directory`, `ls` |
-| 5 | `web.fetch` | low | none | `fetch`, `http_get`, `web_fetch`, `get_url`, `fetch_url`, `http_request` |
-| 6 | `web.post` | medium | per_request | `http_post`, `post_url`, `web_post`, `post_request`, `submit_form` |
-| 7 | `shell.exec` | high | per_request | `bash`, `shell_exec`, `run_command`, `execute_command`, `run_terminal_cmd`, `terminal_exec`, `cmd` |
-| 8 | `communication.email` | high | per_request | `send_email`, `email_send`, `send_mail`, `compose_email`, `email` |
-| 9 | `communication.slack` | medium | per_request | `send_slack`, `slack_message`, `slack_send`, `post_slack` |
-| 10 | `communication.webhook` | medium | per_request | `call_webhook`, `webhook`, `trigger_webhook`, `post_webhook` |
-| 11 | `memory.read` | low | none | `memory_get`, `read_memory`, `get_memory`, `recall`, `retrieve_memory` |
-| 12 | `memory.write` | medium | none | `memory_set`, `write_memory`, `set_memory`, `store_memory`, `save_memory`, `remember` |
-| 13 | `credential.read` | high | per_request | `read_secret`, `get_secret`, `get_credential`, `retrieve_secret`, `read_credential` |
-| 14 | `credential.write` | critical | per_request | `write_secret`, `set_secret`, `set_credential`, `store_secret`, `create_secret` |
-| 15 | `code.execute` | high | per_request | `run_code`, `execute_code`, `eval_code`, `python`, `javascript`, `node_exec`, `code_runner` |
-| 16 | `payment.initiate` | critical | per_request | `pay`, `payment`, `initiate_payment`, `create_payment`, `charge`, `stripe_payment` |
-| 17 | `unknown_sensitive_action` | critical | per_request | *(none — fail-closed catch-all)* |
+| # | Action Class | Risk | HITL Mode | Intent Group | Registered Aliases |
+|---|---|---|---|---|---|
+| 1 | `filesystem.read` | low | none | — | `read_file`, `readfile`, `read_files`, `cat_file`, `view_file`, `open_file`, `get_file_contents` |
+| 2 | `filesystem.write` | medium | per_request | — | `write_file`, `writefile`, `create_file`, `save_file`, `update_file`, `edit_file`, `patch_file` |
+| 3 | `filesystem.delete` | high | per_request | `destructive_fs` | `delete_file`, `deletefile`, `remove_file`, `rm_file`, `unlink_file`, `rm`, `rm_rf`, `unlink`, `delete`, `remove`, `move_to_trash`, `trash`, `shred`, `rmdir`, `format`, `empty_trash`, `purge` |
+| 4 | `filesystem.list` | low | none | — | `list_files`, `listfiles`, `list_directory`, `list_dir`, `read_directory`, `ls` |
+| 5 | `web.search` | medium | per_request | — | `web_search`, `google_search`, `bing_search`, `duckduckgo_search`, `ddg_search`, `search_web`, `web_research`, `news_search` |
+| 6 | `web.fetch` | medium | per_request | `data_exfiltration` | `fetch`, `http_get`, `web_fetch`, `get_url`, `fetch_url`, `http_request`, `curl`, `wget`, `download_url`, `http_head`, `head_url`, `http_options` |
+| 7 | `browser.scrape` | medium | per_request | — | `scrape_page`, `extract_page`, `read_url` |
+| 8 | `web.post` | medium | per_request | `web_access` | `http_post`, `post_url`, `web_post`, `post_request`, `submit_form`, `http_put`, `put_url`, `web_put`, `put_request`, `http_patch`, `patch_url`, `web_patch`, `patch_request` |
+| 9 | `shell.exec` | high | per_request | — | `bash`, `shell_exec`, `run_command`, `execute_command`, `run_terminal_cmd`, `terminal_exec`, `cmd` |
+| 10 | `communication.email` | high | per_request | `external_send` | `send_email`, `email_send`, `send_mail`, `compose_email`, `email` |
+| 11 | `communication.slack` | medium | per_request | `external_send` | `send_slack`, `slack_message`, `slack_send`, `post_slack` |
+| 12 | `communication.webhook` | medium | per_request | `external_send` | `call_webhook`, `webhook`, `trigger_webhook`, `post_webhook` |
+| 13 | `memory.read` | low | none | — | `memory_get`, `read_memory`, `get_memory`, `recall`, `retrieve_memory` |
+| 14 | `memory.write` | medium | none | — | `memory_set`, `write_memory`, `set_memory`, `store_memory`, `save_memory`, `remember` |
+| 15 | `credential.read` | high | per_request | `credential_access` | `read_secret`, `get_secret`, `get_credential`, `retrieve_secret`, `read_credential` |
+| 16 | `credential.write` | critical | per_request | `credential_access` | `write_secret`, `set_secret`, `set_credential`, `store_secret`, `create_secret` |
+| 17 | `code.execute` | high | per_request | — | `run_code`, `execute_code`, `eval_code`, `python`, `javascript`, `node_exec`, `code_runner` |
+| 18 | `payment.initiate` | critical | per_request | `payment` | `pay`, `payment`, `initiate_payment`, `create_payment`, `charge`, `stripe_payment` |
+| 19 | `unknown_sensitive_action` | critical | per_request | — | *(none — fail-closed catch-all)* |
 
 ---
 
@@ -58,11 +60,11 @@ Risk levels determine how seriously the enforcement pipeline treats a given acti
 
 ### Rationale by Action Class
 
-**`filesystem.read` / `filesystem.list` / `web.fetch` / `memory.read` → low**
+**`filesystem.read` / `filesystem.list` / `memory.read` → low**
 These classes observe state without modifying it. The worst-case outcome is information disclosure to the agent, which is bounded by the data the agent already has access to. No external side effects are produced.
 
-**`filesystem.write` / `web.post` / `communication.slack` / `communication.webhook` / `memory.write` → medium**
-These classes produce side effects (modifying files, calling external endpoints, posting messages) but are generally reversible or have bounded blast radius. A misrouted Slack message or an overwritten file can be corrected. Memory writes are medium rather than high because memory is agent-internal state with no direct external footprint.
+**`filesystem.write` / `web.search` / `web.fetch` / `browser.scrape` / `web.post` / `communication.slack` / `communication.webhook` / `memory.write` → medium**
+These classes produce side effects (modifying files, calling external endpoints, posting messages) but are generally reversible or have bounded blast radius. A misrouted Slack message or an overwritten file can be corrected. Memory writes are medium rather than high because memory is agent-internal state with no direct external footprint. Web fetch and scrape operations are medium (not low) because they can retrieve sensitive data, exfiltrate information to external URLs embedded in parameters, or be weaponised for SSRF — warranting per-request HITL review.
 
 **`filesystem.delete` / `shell.exec` / `communication.email` / `credential.read` / `code.execute` → high**
 These classes carry meaningful irreversibility or external exposure:
@@ -178,15 +180,22 @@ Creates or overwrites a file on the local filesystem. Subject to [Rule 1](#rule-
 
 ### 3. `filesystem.delete`
 
-**Risk:** high | **HITL:** per_request
+**Risk:** high | **HITL:** per_request | **Intent group:** `destructive_fs`
 
-Permanently removes a file or directory. Irreversible without a backup; warrants per-request human approval.
+Permanently removes a file or directory. Irreversible without a backup; warrants per-request human approval. All aliases carry the `destructive_fs` intent group, enabling a single intent-group forbid rule to block every deletion alias regardless of the specific tool name used.
 
 | Alias | Typical tool |
 |---|---|
 | `delete_file`, `deletefile` | Explicit delete |
 | `remove_file`, `rm_file` | Unix-style remove |
-| `unlink_file` | POSIX unlink semantics |
+| `unlink_file`, `unlink` | POSIX unlink semantics |
+| `rm`, `rm_rf` | Unix shorthand (rm, rm -rf) |
+| `delete`, `remove` | Generic destructive verbs |
+| `move_to_trash`, `trash` | Trash-bin operations |
+| `shred` | Secure-erase tools |
+| `rmdir` | Directory removal |
+| `format` | Drive/partition format operations |
+| `empty_trash`, `purge` | Permanent purge operations |
 
 ---
 
@@ -204,36 +213,74 @@ Lists the contents of a directory without modifying anything. Analogous to `file
 
 ---
 
-### 5. `web.fetch`
+### 5. `web.search`
 
-**Risk:** low | **HITL:** none
+**Risk:** medium | **HITL:** per_request
 
-Performs an HTTP GET or equivalent read-only request to a URL. No side effects on the server are expected.
+Performs a web search via a search engine API (Google, Bing, DuckDuckGo, etc.). Medium risk because search queries leave the controlled environment and can disclose agent intent to the search provider. No `intent_group` is assigned — `web.search` is targeted individually in policy rules.
+
+| Alias | Typical tool |
+|---|---|
+| `web_search` | Generic web search |
+| `google_search` | Google Search API |
+| `bing_search` | Bing Search API |
+| `duckduckgo_search`, `ddg_search` | DuckDuckGo variants |
+| `search_web` | Generic alternate spelling |
+| `web_research` | Research-framing alias |
+| `news_search` | News-specific search tools |
+
+---
+
+### 6. `web.fetch`
+
+**Risk:** medium | **HITL:** per_request | **Intent group:** `data_exfiltration`
+
+Performs an HTTP GET, HEAD, or OPTIONS request to a URL. Classified as `data_exfiltration` because fetch operations can retrieve sensitive resources from internal network addresses (SSRF), exfiltrate data to attacker-controlled endpoints, or probe internal services. Per-request HITL is required so each outbound fetch is individually reviewed.
 
 | Alias | Typical tool |
 |---|---|
 | `fetch` | Generic fetch |
-| `http_get` | Explicit HTTP method |
+| `http_get` | Explicit HTTP GET method |
 | `web_fetch`, `get_url`, `fetch_url` | URL-centric variants |
 | `http_request` | Neutral HTTP client |
+| `curl`, `wget` | Unix command-line HTTP tools |
+| `download_url` | File download tools |
+| `http_head`, `head_url` | HTTP HEAD method variants |
+| `http_options` | HTTP OPTIONS method (preflight/probe) |
 
 ---
 
-### 6. `web.post`
+### 7. `browser.scrape`
 
 **Risk:** medium | **HITL:** per_request
 
-Sends data to an external URL via HTTP POST or equivalent. Also the reclassified target for `filesystem.write` calls whose destination is a URL.
+Extracts structured content from a web page by navigating to a URL and parsing the DOM. Medium risk because scraping operations retrieve external content that may be attacker-controlled (prompt injection via web page content) and the fetched data may contain sensitive material. No `intent_group` is assigned — targeted individually in policy rules.
 
 | Alias | Typical tool |
 |---|---|
-| `http_post` | Explicit HTTP method |
-| `post_url`, `web_post`, `post_request` | URL post variants |
-| `submit_form` | Form-submission semantic |
+| `scrape_page` | Generic page scraper |
+| `extract_page` | Content extraction tools |
+| `read_url` | URL-as-document readers |
 
 ---
 
-### 7. `shell.exec`
+### 8. `web.post`
+
+**Risk:** medium | **HITL:** per_request | **Intent group:** `web_access`
+
+Sends data to an external URL via HTTP POST, PUT, or PATCH. Also the reclassified target for `filesystem.write` calls whose destination is a URL. The `web_access` intent group covers all state-mutating outbound HTTP calls, enabling policy rules to govern write-style web operations as a group.
+
+| Alias | Typical tool |
+|---|---|
+| `http_post` | HTTP POST method |
+| `post_url`, `web_post`, `post_request` | URL post variants |
+| `submit_form` | Form-submission semantic |
+| `http_put`, `put_url`, `web_put`, `put_request` | HTTP PUT method variants |
+| `http_patch`, `patch_url`, `web_patch`, `patch_request` | HTTP PATCH method variants |
+
+---
+
+### 9. `shell.exec`
 
 **Risk:** high | **HITL:** per_request
 
@@ -248,7 +295,7 @@ Executes an arbitrary shell command in the agent's operating environment. One of
 
 ---
 
-### 8. `communication.email`
+### 10. `communication.email`
 
 **Risk:** high | **HITL:** per_request
 
@@ -263,7 +310,7 @@ Sends an email message to an external recipient. High risk because: the message 
 
 ---
 
-### 9. `communication.slack`
+### 11. `communication.slack`
 
 **Risk:** medium | **HITL:** per_request
 
@@ -277,7 +324,7 @@ Posts a message to a Slack channel or user. Medium risk because messages are int
 
 ---
 
-### 10. `communication.webhook`
+### 12. `communication.webhook`
 
 **Risk:** medium | **HITL:** per_request
 
@@ -291,7 +338,7 @@ Sends an HTTP payload to an external webhook endpoint. Medium risk: the payload 
 
 ---
 
-### 11. `memory.read`
+### 13. `memory.read`
 
 **Risk:** low | **HITL:** none
 
@@ -305,7 +352,7 @@ Reads from agent-internal memory storage. No external side effects; analogous to
 
 ---
 
-### 12. `memory.write`
+### 14. `memory.write`
 
 **Risk:** medium | **HITL:** none
 
@@ -319,7 +366,7 @@ Writes to agent-internal memory storage. Medium risk because persistent memory c
 
 ---
 
-### 13. `credential.read`
+### 15. `credential.read`
 
 **Risk:** high | **HITL:** per_request
 
@@ -333,7 +380,7 @@ Reads a secret, API key, or credential from a secrets store. The credential valu
 
 ---
 
-### 14. `credential.write`
+### 16. `credential.write`
 
 **Risk:** critical | **HITL:** per_request
 
@@ -347,7 +394,7 @@ Creates, updates, or replaces a credential in a secrets store. Critical risk bec
 
 ---
 
-### 15. `code.execute`
+### 17. `code.execute`
 
 **Risk:** high | **HITL:** per_request
 
@@ -362,7 +409,7 @@ Runs arbitrary code within an interpreter (Python, JavaScript, etc.). Similar to
 
 ---
 
-### 16. `payment.initiate`
+### 18. `payment.initiate`
 
 **Risk:** critical | **HITL:** per_request
 
@@ -377,7 +424,7 @@ Initiates a financial transaction via a payment processor. Critical risk because
 
 ---
 
-### 17. `unknown_sensitive_action`
+### 19. `unknown_sensitive_action`
 
 **Risk:** critical | **HITL:** per_request
 
@@ -421,6 +468,22 @@ Use `action_class` in policy rules to match the normalized class string:
   action_class: "shell.exec"
   condition: { sourceTrustLevel: untrusted }
   reason: "Untrusted agents may not execute shell commands"
+
+# Permit web search for all agents (web.search has no intent_group, so target individually)
+- effect: permit
+  action_class: "web.search"
+  reason: "Web search is permitted for research agents"
+```
+
+### Blocking outbound HTTP fetches via intent group
+
+`web.fetch` belongs to the `data_exfiltration` intent group. A single intent-group rule blocks all fetch aliases (`fetch_url`, `curl`, `wget`, `download_url`, etc.) without listing each one:
+
+```yaml
+# Block all data exfiltration attempts (web.fetch and future data_exfiltration members)
+- effect: forbid
+  intent_group: "data_exfiltration"
+  reason: "Outbound URL fetching is not permitted in this environment"
 ```
 
 ### Matching the fail-closed bucket
@@ -471,23 +534,36 @@ policies:
 |---|---|
 | `filesystem.read` | low |
 | `filesystem.list` | low |
-| `web.fetch` | low |
 | `memory.read` | low |
 | `memory.write` | medium |
 
 ### Actions always requiring per-request HITL by default
 
-| Action Class | Risk |
-|---|---|
-| `filesystem.write` | medium |
-| `filesystem.delete` | high |
-| `web.post` | medium |
-| `shell.exec` | high |
-| `communication.email` | high |
-| `communication.slack` | medium |
-| `communication.webhook` | medium |
-| `credential.read` | high |
-| `credential.write` | critical |
-| `code.execute` | high |
-| `payment.initiate` | critical |
-| `unknown_sensitive_action` | critical |
+| Action Class | Risk | Intent Group |
+|---|---|---|
+| `filesystem.write` | medium | — |
+| `filesystem.delete` | high | `destructive_fs` |
+| `web.search` | medium | — |
+| `web.fetch` | medium | `data_exfiltration` |
+| `browser.scrape` | medium | — |
+| `web.post` | medium | `web_access` |
+| `shell.exec` | high | — |
+| `communication.email` | high | `external_send` |
+| `communication.slack` | medium | `external_send` |
+| `communication.webhook` | medium | `external_send` |
+| `credential.read` | high | `credential_access` |
+| `credential.write` | critical | `credential_access` |
+| `code.execute` | high | — |
+| `payment.initiate` | critical | `payment` |
+| `unknown_sensitive_action` | critical | — |
+
+### Intent group summary
+
+| Intent Group | Member Action Classes | Policy use |
+|---|---|---|
+| `destructive_fs` | `filesystem.delete` | Block all deletion tools with a single forbid rule |
+| `data_exfiltration` | `web.fetch` | Forbid all outbound HTTP fetch operations |
+| `web_access` | `web.post` | Gate all state-mutating outbound HTTP calls |
+| `external_send` | `communication.email`, `communication.slack`, `communication.webhook` | Block all external messaging channels together |
+| `credential_access` | `credential.read`, `credential.write` | Prevent all secret store access |
+| `payment` | `payment.initiate` | Block financial transactions |

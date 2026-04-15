@@ -60,9 +60,21 @@
       "intent_group": "destructive_fs",
       "reason": "Destructive filesystem operations are unconditionally forbidden",
       "tags": ["filesystem", "security"]
+    },
+    {
+      "effect": "permit",
+      "action_class": "web.search",
+      "reason": "Web search operations are permitted for all agents",
+      "tags": ["web", "search"]
+    },
+    {
+      "effect": "forbid",
+      "intent_group": "data_exfiltration",
+      "reason": "Data exfiltration operations (outbound HTTP fetch) are unconditionally forbidden",
+      "tags": ["web", "security", "data-exfiltration"]
     }
   ],
-  "checksum": "d875b63c0260dab9f609fa085a7e22147932bd3900d4750c22a2830e2a9ed391",
+  "checksum": "23ac061d6a51127a66937f64bf358c249e0d95b4b5e1a520487d3221825e856c",
   "_examples": [
     {
       "_comment": "Per-address block: forbid a specific email address using target_match regex. This rule applies to all 'channel' resources (*) but target_match narrows it to one address. Cedar forbid-wins: even a trusted-domain address is denied if it appears here.",
