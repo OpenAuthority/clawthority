@@ -1,10 +1,17 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { SlackConfig } from './types.js';
+import { CircuitBreaker, withRetry } from './retry.js';
 
 const SLACK_API = 'https://slack.com/api';
 const DEFAULT_INTERACTION_PORT = 3201;
 const TIMESTAMP_MAX_AGE_SECONDS = 300; // 5 minutes
+
+/**
+ * Shared circuit breaker for outbound Slack API calls (chat.postMessage / chat.update).
+ * Exported so tests can inject a fresh instance.
+ */
+export const slackCircuitBreaker = new CircuitBreaker();
 
 export interface ResolvedSlackConfig {
   botToken: string;
@@ -64,10 +71,17 @@ export interface SlackSendApprovalResult {
 /**
  * Sends an approval request message to the configured Slack channel using Block Kit
  * with interactive Approve/Deny buttons.
+ *
+ * 429 responses from Slack trigger exponential backoff. After max retries are
+ * exhausted the circuit breaker opens and `{ ok: false }` is returned
+ * immediately for subsequent calls until the cooldown elapses.
+ *
+ * @param breaker  Injected for testing; defaults to the module-level singleton.
  */
 export async function sendSlackApprovalRequest(
   config: ResolvedSlackConfig,
   opts: SlackSendApprovalOpts,
+  breaker: CircuitBreaker = slackCircuitBreaker,
 ): Promise<SlackSendApprovalResult> {
   const sectionLines: string[] = [];
   if (opts.verified === false) {
@@ -121,31 +135,35 @@ export async function sendSlackApprovalRequest(
   ];
 
   try {
-    const res = await fetch(`${SLACK_API}/chat.postMessage`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-        Authorization: `Bearer ${config.botToken}`,
+    return await withRetry(
+      () =>
+        fetch(`${SLACK_API}/chat.postMessage`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json; charset=utf-8',
+            Authorization: `Bearer ${config.botToken}`,
+          },
+          body: JSON.stringify({
+            channel: config.channelId,
+            text: `HITL Approval Request — ${opts.token}`, // fallback for notifications
+            blocks,
+          }),
+        }),
+      async (res) => {
+        if (!res.ok) {
+          console.error(`[hitl-slack] chat.postMessage HTTP error: ${res.status} ${res.statusText}`);
+          return { ok: false };
+        }
+        const body = (await res.json()) as { ok: boolean; ts?: string; error?: string };
+        if (!body.ok) {
+          console.error(`[hitl-slack] chat.postMessage API error: ${body.error}`);
+          return { ok: false };
+        }
+        return { ok: true, messageTs: body.ts };
       },
-      body: JSON.stringify({
-        channel: config.channelId,
-        text: `HITL Approval Request — ${opts.token}`, // fallback for notifications
-        blocks,
-      }),
-    });
-
-    if (!res.ok) {
-      console.error(`[hitl-slack] chat.postMessage HTTP error: ${res.status} ${res.statusText}`);
-      return { ok: false };
-    }
-
-    const body = (await res.json()) as { ok: boolean; ts?: string; error?: string };
-    if (!body.ok) {
-      console.error(`[hitl-slack] chat.postMessage API error: ${body.error}`);
-      return { ok: false };
-    }
-
-    return { ok: true, messageTs: body.ts };
+      () => ({ ok: false } satisfies SlackSendApprovalResult),
+      breaker,
+    );
   } catch (err) {
     console.error('[hitl-slack] chat.postMessage error:', err);
     return { ok: false };

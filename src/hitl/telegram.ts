@@ -1,8 +1,16 @@
 import type { TelegramConfig } from './types.js';
+import { CircuitBreaker, withRetry } from './retry.js';
 
 const TELEGRAM_API = 'https://api.telegram.org';
 const POLL_TIMEOUT_SECONDS = 30;
 const RETRY_DELAY_MS = 5_000;
+const POLL_RATE_LIMIT_DELAY_MS = 30_000;
+
+/**
+ * Shared circuit breaker for outbound Telegram API calls (sendMessage).
+ * Exported so tests can inject a fresh instance.
+ */
+export const telegramCircuitBreaker = new CircuitBreaker();
 
 export interface ResolvedTelegramConfig {
   botToken: string;
@@ -46,11 +54,15 @@ export interface SendApprovalOpts {
 
 /**
  * Sends an approval request message to the configured Telegram chat.
- * Returns `true` on success, `false` on failure.
+ * Returns `true` on success, `false` on failure (including when the circuit
+ * breaker is open after a rate-limit storm).
+ *
+ * @param breaker  Injected for testing; defaults to the module-level singleton.
  */
 export async function sendApprovalRequest(
   config: ResolvedTelegramConfig,
   opts: SendApprovalOpts,
+  breaker: CircuitBreaker = telegramCircuitBreaker,
 ): Promise<boolean> {
   const lines: string[] = [];
   if (opts.verified === false) {
@@ -76,20 +88,23 @@ export async function sendApprovalRequest(
   const text = lines.join('\n');
 
   try {
-    const res = await fetch(`${TELEGRAM_API}/bot${config.botToken}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: config.chatId,
-        text,
-        parse_mode: 'Markdown',
-      }),
-    });
-    if (!res.ok) {
-      console.error(`[hitl-telegram] sendMessage failed: ${res.status} ${res.statusText}`);
-      return false;
-    }
-    return true;
+    return await withRetry(
+      () =>
+        fetch(`${TELEGRAM_API}/bot${config.botToken}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: config.chatId, text, parse_mode: 'Markdown' }),
+        }),
+      async (res) => {
+        if (!res.ok) {
+          console.error(`[hitl-telegram] sendMessage failed: ${res.status} ${res.statusText}`);
+          return false;
+        }
+        return true;
+      },
+      () => false,
+      breaker,
+    );
   } catch (err) {
     console.error('[hitl-telegram] sendMessage error:', err);
     return false;
@@ -170,6 +185,12 @@ export class TelegramListener {
         const url = `${TELEGRAM_API}/bot${this.botToken}/getUpdates?offset=${this.offset}&timeout=${POLL_TIMEOUT_SECONDS}`;
 
         const res = await fetch(url, { signal: this.abortController.signal });
+
+        if (res.status === 429) {
+          console.warn('[hitl-telegram] getUpdates rate-limited (429) — backing off');
+          await this.delay(POLL_RATE_LIMIT_DELAY_MS);
+          continue;
+        }
 
         if (!res.ok) {
           console.error(`[hitl-telegram] getUpdates failed: ${res.status}`);

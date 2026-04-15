@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { resolveTelegramConfig, sendApprovalRequest, TelegramListener } from './telegram.js';
+import { CircuitBreaker } from './retry.js';
 import type { TelegramConfig } from './types.js';
 
 // ─── resolveTelegramConfig ──────────────────────────────────────────────────
@@ -107,6 +108,26 @@ describe('sendApprovalRequest', () => {
     vi.mocked(fetch).mockRejectedValue(new Error('Network error'));
     const result = await sendApprovalRequest(config, opts);
     expect(result).toBe(false);
+  });
+
+  it('retries on 429 and returns true when the retry succeeds', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(new Response('', { status: 429 }))
+      .mockResolvedValueOnce(new Response('{"ok":true}', { status: 200 }));
+
+    const breaker = new CircuitBreaker();
+    const result = await sendApprovalRequest(config, opts, breaker);
+    expect(result).toBe(true);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns false immediately when circuit is open (no fetch)', async () => {
+    const breaker = new CircuitBreaker();
+    breaker.trip();
+
+    const result = await sendApprovalRequest(config, opts, breaker);
+    expect(result).toBe(false);
+    expect(fetch).not.toHaveBeenCalled();
   });
 });
 
@@ -239,6 +260,25 @@ describe('TelegramListener', () => {
     expect(errorSpy.mock.calls[0]?.[0]).toContain('[hitl-telegram] poll error');
     expect(onCommand).not.toHaveBeenCalled();
     errorSpy.mockRestore();
+  });
+
+  it('backs off when getUpdates returns 429', async () => {
+    // 429 on the first poll → listener backs off (30s) before retrying.
+    // We verify: (a) onCommand is never called, (b) a second fetch is eventually
+    // attempted after the rate-limit delay. We mock the second call to hang.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(new Response('', { status: 429 }))
+      .mockImplementation(() => new Promise(() => {})); // hang subsequent polls
+
+    listener = new TelegramListener('test-token', onCommand);
+    listener.start();
+
+    await vi.waitFor(() => expect(warnSpy).toHaveBeenCalled());
+    expect(warnSpy.mock.calls[0]?.[0]).toContain('[hitl-telegram] getUpdates rate-limited');
+    expect(onCommand).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
   });
 
   it('skips a poll when Telegram returns ok:false', async () => {

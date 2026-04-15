@@ -6,6 +6,7 @@ import {
   verifySlackSignature,
   SlackInteractionServer,
 } from './slack.js';
+import { CircuitBreaker } from './retry.js';
 import type { SlackConfig } from './types.js';
 
 // ─── resolveSlackConfig ─────────────────────────────────────────────────────
@@ -149,6 +150,29 @@ describe('sendSlackApprovalRequest', () => {
     vi.mocked(fetch).mockRejectedValue(new Error('Network error'));
     const result = await sendSlackApprovalRequest(config, opts);
     expect(result.ok).toBe(false);
+  });
+
+  it('retries on 429 and returns ok:true when the retry succeeds', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(new Response('', { status: 429 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ok: true, ts: '111.222' }), { status: 200 }),
+      );
+
+    const breaker = new CircuitBreaker();
+    const result = await sendSlackApprovalRequest(config, opts, breaker);
+    expect(result.ok).toBe(true);
+    expect(result.messageTs).toBe('111.222');
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns ok:false immediately when circuit is open (no fetch)', async () => {
+    const breaker = new CircuitBreaker();
+    breaker.trip();
+
+    const result = await sendSlackApprovalRequest(config, opts, breaker);
+    expect(result.ok).toBe(false);
+    expect(fetch).not.toHaveBeenCalled();
   });
 });
 
