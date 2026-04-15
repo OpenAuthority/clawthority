@@ -185,6 +185,7 @@ const REGISTRY: readonly ActionRegistryEntry[] = [
       'trigger_webhook',
       'post_webhook',
     ],
+    intent_group: 'external_send',
   },
   {
     action_class: 'memory.read',

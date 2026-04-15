@@ -16,6 +16,7 @@ import { createStage2, createEnforcementEngine } from './stage2-policy.js';
 import { EnforcementPolicyEngine } from './pipeline.js';
 import type { PipelineContext } from './pipeline.js';
 import type { Rule } from '../policy/types.js';
+import defaultRules from '../policy/rules/default.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -346,6 +347,104 @@ describe('createStage2', () => {
     expect(emailResult.reason).toBe('comms_blocked');
     expect(slackResult.effect).toBe('forbid');
     expect(slackResult.reason).toBe('comms_blocked');
+  });
+});
+
+// ─── PII blocking — card data (integration) ───────────────────────────────────
+
+describe('PII blocking — card data (integration)', () => {
+  const CARD_NUMBER = '4111111111111111';
+  const CLEAN_PAYLOAD = 'Order #12345 for customer Alice — total $99.00';
+
+  function makeCardCtx(
+    action_class: string,
+    target: string,
+    payload?: string,
+  ): PipelineContext {
+    return {
+      action_class,
+      target,
+      payload_hash: 'abc',
+      hitl_mode: 'none',
+      intent_group: 'external_send',
+      rule_context: {
+        agentId: 'agent-1',
+        channel: 'test',
+        metadata: payload !== undefined ? { payload } : undefined,
+      },
+    };
+  }
+
+  // ── Forbid each channel with sensitive payload ────────────────────────────
+
+  it('forbids communication.email when payload contains a card number', async () => {
+    const engine = createEnforcementEngine(defaultRules);
+    const stage2 = createStage2(engine);
+    const result = await stage2(
+      makeCardCtx('communication.email', 'user@example.com', `Please charge card ${CARD_NUMBER}`),
+    );
+    expect(result.effect).toBe('forbid');
+    expect(result.stage).toBe('stage2');
+  });
+
+  it('forbids communication.slack when payload contains a card number', async () => {
+    const engine = createEnforcementEngine(defaultRules);
+    const stage2 = createStage2(engine);
+    const result = await stage2(
+      makeCardCtx('communication.slack', '#payments', `Card: ${CARD_NUMBER}`),
+    );
+    expect(result.effect).toBe('forbid');
+    expect(result.stage).toBe('stage2');
+  });
+
+  it('forbids communication.webhook when payload contains a card number', async () => {
+    const engine = createEnforcementEngine(defaultRules);
+    const stage2 = createStage2(engine);
+    const result = await stage2(
+      makeCardCtx('communication.webhook', 'https://hook.example.com', `card_number=${CARD_NUMBER}`),
+    );
+    expect(result.effect).toBe('forbid');
+    expect(result.stage).toBe('stage2');
+  });
+
+  // ── Permit with clean payload ────────────────────────────────────────────
+
+  it('permits communication.email when payload contains no card data', async () => {
+    const engine = createEnforcementEngine(defaultRules);
+    const stage2 = createStage2(engine);
+    const result = await stage2(
+      makeCardCtx('communication.email', 'user@example.com', CLEAN_PAYLOAD),
+    );
+    expect(result.effect).toBe('permit');
+  });
+
+  // ── Permit when no payload field is present ──────────────────────────────
+
+  it('permits communication.email when no payload metadata is present', async () => {
+    const engine = createEnforcementEngine(defaultRules);
+    const stage2 = createStage2(engine);
+    const result = await stage2(
+      makeCardCtx('communication.email', 'user@example.com', undefined),
+    );
+    expect(result.effect).toBe('permit');
+  });
+
+  // ── Combined: all three external_send channels forbid the same card string ─
+
+  it('all three external_send channels forbid the same card payload', async () => {
+    const engine = createEnforcementEngine(defaultRules);
+    const stage2 = createStage2(engine);
+    const payload = `Sending card ${CARD_NUMBER} to processor`;
+
+    const [emailResult, slackResult, webhookResult] = await Promise.all([
+      stage2(makeCardCtx('communication.email', 'user@example.com', payload)),
+      stage2(makeCardCtx('communication.slack', '#alerts', payload)),
+      stage2(makeCardCtx('communication.webhook', 'https://hook.example.com', payload)),
+    ]);
+
+    expect(emailResult.effect).toBe('forbid');
+    expect(slackResult.effect).toBe('forbid');
+    expect(webhookResult.effect).toBe('forbid');
   });
 });
 

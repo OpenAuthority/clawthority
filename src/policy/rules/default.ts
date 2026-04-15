@@ -1,4 +1,5 @@
 import type { Rule } from '../types.js';
+import { detectSensitiveData } from '../../enforcement/pii-classifier.js';
 
 /**
  * Baseline action-class policy rules for the Open Authority openclaw plugin.
@@ -88,6 +89,25 @@ const DEFAULT_RULES: Rule[] = [
     priority: 90,
     reason: 'Credential write operations require human-in-the-loop approval',
     tags: ['credential', 'hitl'],
+  },
+
+  /**
+   * Forbid any outbound action whose payload contains card data, pending HITL approval.
+   * Applies to all channels in the `external_send` intent group (email, Slack, webhook).
+   * Blocks execution until a human operator explicitly approves the action.
+   */
+  {
+    intent_group: 'external_send',
+    effect: 'forbid',
+    priority: 90,
+    reason: 'Action payload contains card data; human-in-the-loop approval required',
+    tags: ['pii', 'card-data', 'hitl'],
+    condition: (ctx) => {
+      const payload = ctx.metadata?.payload;
+      if (typeof payload !== 'string' || payload.length === 0) return false;
+      const result = detectSensitiveData(payload);
+      return result.categories.includes('credit_card');
+    },
   },
 
   // ─── Priority 100: Unconditionally forbidden actions ────────────────────────
