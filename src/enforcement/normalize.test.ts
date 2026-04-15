@@ -439,6 +439,63 @@ describe('intent_group — normalize_action propagation', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// filesystem.delete — expanded alias coverage (T14)
+// ---------------------------------------------------------------------------
+
+describe('filesystem.delete — new aliases resolve to filesystem.delete with destructive_fs', () => {
+  const NEW_ALIASES = [
+    'rm',
+    'rm_rf',
+    'unlink',
+    'delete',
+    'remove',
+    'move_to_trash',
+    'trash',
+    'shred',
+    'rmdir',
+    'format',
+    'empty_trash',
+    'purge',
+  ] as const;
+
+  for (const alias of NEW_ALIASES) {
+    it(`"${alias}" resolves to filesystem.delete`, () => {
+      expect(normalizeActionClass(alias)).toBe('filesystem.delete');
+    });
+
+    it(`"${alias}" has intent_group destructive_fs`, () => {
+      expect(getRegistryEntry(alias).intent_group).toBe('destructive_fs');
+    });
+
+    it(`normalize_action("${alias}") propagates intent_group destructive_fs`, () => {
+      const result = normalize_action(alias, { path: '/tmp/target' });
+      expect(result.action_class).toBe('filesystem.delete');
+      expect(result.intent_group).toBe('destructive_fs');
+    });
+  }
+
+  it('all new aliases are case-insensitive', () => {
+    expect(normalizeActionClass('RM')).toBe('filesystem.delete');
+    expect(normalizeActionClass('Trash')).toBe('filesystem.delete');
+    expect(normalizeActionClass('SHRED')).toBe('filesystem.delete');
+    expect(normalizeActionClass('PURGE')).toBe('filesystem.delete');
+    expect(normalizeActionClass('FORMAT')).toBe('filesystem.delete');
+  });
+
+  it('all new aliases have high default_risk', () => {
+    for (const alias of NEW_ALIASES) {
+      expect(getRegistryEntry(alias).default_risk).toBe('high');
+    }
+  });
+
+  it('all new aliases have per_request default_hitl_mode', () => {
+    for (const alias of NEW_ALIASES) {
+      expect(getRegistryEntry(alias).default_hitl_mode).toBe('per_request');
+    }
+  });
+});
+
 // Satisfy TypeScript — type-only imports used in stub file
 void ({} as ActionRegistryEntry);
 void ({} as NormalizedAction);

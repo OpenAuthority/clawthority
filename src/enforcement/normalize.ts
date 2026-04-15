@@ -51,7 +51,7 @@ export interface NormalizedAction {
 }
 
 // ---------------------------------------------------------------------------
-// Registry — exactly 17 entries, aliases stored lowercase
+// Registry — 17 entries, aliases stored lowercase
 // ---------------------------------------------------------------------------
 
 const REGISTRY: readonly ActionRegistryEntry[] = [
@@ -93,6 +93,18 @@ const REGISTRY: readonly ActionRegistryEntry[] = [
       'remove_file',
       'rm_file',
       'unlink_file',
+      'rm',
+      'rm_rf',
+      'unlink',
+      'delete',
+      'remove',
+      'move_to_trash',
+      'trash',
+      'shred',
+      'rmdir',
+      'format',
+      'empty_trash',
+      'purge',
     ],
     intent_group: 'destructive_fs',
   },
