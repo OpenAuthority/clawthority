@@ -10,9 +10,9 @@
  *   6. latency_ms populated on every path
  *   7. executionEvent emitted on every path
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { runPipeline } from './pipeline.js';
+import { runPipeline, isInstallPhase } from './pipeline.js';
 import type { PipelineContext, CeeDecision, Stage1Fn, Stage2Fn } from './pipeline.js';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
@@ -245,5 +245,97 @@ describe('runPipeline', () => {
     await runPipeline(makeCtx(), stage1, stage2, emitter);
     expect(typeof emittedEvent?.timestamp).toBe('string');
     expect(() => new Date(emittedEvent!.timestamp as string)).not.toThrow();
+  });
+
+  // ── 8. Install phase bypass ───────────────────────────────────────────────
+
+  describe('isInstallPhase()', () => {
+    afterEach(() => {
+      delete process.env.npm_lifecycle_event;
+      delete process.env.OPENAUTH_FORCE_ACTIVE;
+    });
+
+    it('returns false when npm_lifecycle_event is unset', () => {
+      delete process.env.npm_lifecycle_event;
+      expect(isInstallPhase()).toBe(false);
+    });
+
+    it('returns true for npm_lifecycle_event=install', () => {
+      process.env.npm_lifecycle_event = 'install';
+      expect(isInstallPhase()).toBe(true);
+    });
+
+    it('returns true for npm_lifecycle_event=preinstall', () => {
+      process.env.npm_lifecycle_event = 'preinstall';
+      expect(isInstallPhase()).toBe(true);
+    });
+
+    it('returns true for npm_lifecycle_event=postinstall', () => {
+      process.env.npm_lifecycle_event = 'postinstall';
+      expect(isInstallPhase()).toBe(true);
+    });
+
+    it('returns true for npm_lifecycle_event=prepare', () => {
+      process.env.npm_lifecycle_event = 'prepare';
+      expect(isInstallPhase()).toBe(true);
+    });
+
+    it('returns false for other lifecycle events (e.g. test)', () => {
+      process.env.npm_lifecycle_event = 'test';
+      expect(isInstallPhase()).toBe(false);
+    });
+
+    it('returns false when OPENAUTH_FORCE_ACTIVE=1 even during install lifecycle', () => {
+      process.env.npm_lifecycle_event = 'install';
+      process.env.OPENAUTH_FORCE_ACTIVE = '1';
+      expect(isInstallPhase()).toBe(false);
+    });
+  });
+
+  describe('runPipeline — install phase bypass', () => {
+    afterEach(() => {
+      delete process.env.npm_lifecycle_event;
+      delete process.env.OPENAUTH_FORCE_ACTIVE;
+    });
+
+    it('returns permit with reason install_phase_bypass during npm install lifecycle', async () => {
+      process.env.npm_lifecycle_event = 'install';
+      const result = await runPipeline(makeCtx(), stage1, stage2, emitter);
+      expect(result.decision.effect).toBe('permit');
+      expect(result.decision.reason).toBe('install_phase_bypass');
+      expect(result.decision.stage).toBe('pipeline');
+    });
+
+    it('does not call stage1 or stage2 during install phase', async () => {
+      process.env.npm_lifecycle_event = 'postinstall';
+      await runPipeline(makeCtx(), stage1, stage2, emitter);
+      expect(stage1).not.toHaveBeenCalled();
+      expect(stage2).not.toHaveBeenCalled();
+    });
+
+    it('emits executionEvent even during install phase bypass', async () => {
+      process.env.npm_lifecycle_event = 'install';
+      const events: unknown[] = [];
+      emitter.on('executionEvent', e => events.push(e));
+      await runPipeline(makeCtx(), stage1, stage2, emitter);
+      expect(events).toHaveLength(1);
+    });
+
+    it('bypasses even high-risk actions during install phase', async () => {
+      process.env.npm_lifecycle_event = 'install';
+      const result = await runPipeline(makeCtx({ hitl_mode: 'per_request' }), stage1, stage2, emitter);
+      expect(result.decision.effect).toBe('permit');
+      expect(result.decision.reason).toBe('install_phase_bypass');
+    });
+
+    it('enforces normally when OPENAUTH_FORCE_ACTIVE=1 overrides install phase', async () => {
+      process.env.npm_lifecycle_event = 'install';
+      process.env.OPENAUTH_FORCE_ACTIVE = '1';
+      const result = await runPipeline(makeCtx(), stage1, stage2, emitter);
+      expect(result.decision.effect).toBe('permit');
+      expect(result.decision.reason).not.toBe('install_phase_bypass');
+      expect(stage1).toHaveBeenCalledOnce();
+      expect(stage2).toHaveBeenCalledOnce();
+    });
   });
 });

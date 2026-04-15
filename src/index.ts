@@ -896,11 +896,17 @@ let rulesWatcher: WatcherHandle | null = null;
  * Returns true when policy enforcement should be active.
  *
  * Activation is deferred until `data/.installed` exists — written by the
- * install script after bootstrap completes. Set `OPENAUTH_FORCE_ACTIVE=1` to
- * bypass this gate in development or CI environments.
+ * install script after bootstrap completes. Activation is also deferred when
+ * `npm_lifecycle_event` indicates an active npm install lifecycle (install,
+ * preinstall, postinstall, prepare) to prevent policy from blocking bootstrap
+ * commands. Set `OPENAUTH_FORCE_ACTIVE=1` to bypass both gates in development
+ * or CI environments.
  */
 function isInstalled(): boolean {
   if (process.env.OPENAUTH_FORCE_ACTIVE === "1") return true;
+  // Defer during npm install lifecycle phases (preinstall, install, postinstall, prepare).
+  const lifecycleEvent = process.env.npm_lifecycle_event ?? "";
+  if (["install", "preinstall", "postinstall", "prepare"].includes(lifecycleEvent)) return false;
   const moduleDir = dirname(fileURLToPath(import.meta.url));
   const pluginRoot = resolve(moduleDir, "..");
   return existsSync(resolve(pluginRoot, "data", ".installed"));
