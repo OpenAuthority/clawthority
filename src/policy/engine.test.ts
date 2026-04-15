@@ -684,4 +684,30 @@ describe('PolicyEngine', () => {
       expect(result.rateLimit).toBeUndefined();
     });
   });
+
+  // Regression test for Issue #1: exec blocks were blocking everything.
+  // Confirms that common actions are permitted by default when no explicit rules apply.
+  describe('regression: default-permit for common actions (Issue #1)', () => {
+    it('permits filesystem.read when no rules exist', () => {
+      const result = engine.evaluateByActionClass('filesystem.read', '/home/user/file.txt', ctx);
+      expect(result.effect).toBe('permit');
+    });
+
+    it('permits network.request when no rules exist', () => {
+      const result = engine.evaluateByActionClass('network.request', 'https://example.com', ctx);
+      expect(result.effect).toBe('permit');
+    });
+
+    it('permits shell.exec when no rules exist', () => {
+      const result = engine.evaluateByActionClass('shell.exec', 'ls -la', ctx);
+      expect(result.effect).toBe('permit');
+    });
+
+    it('permits all three actions when unrelated forbid rules are loaded', () => {
+      engine.addRule({ effect: 'forbid', resource: 'payment', match: '*', reason: 'payments_blocked' });
+      expect(engine.evaluateByActionClass('filesystem.read', '/tmp/data', ctx).effect).toBe('permit');
+      expect(engine.evaluateByActionClass('network.request', 'https://api.example.com', ctx).effect).toBe('permit');
+      expect(engine.evaluateByActionClass('shell.exec', 'echo hello', ctx).effect).toBe('permit');
+    });
+  });
 });
