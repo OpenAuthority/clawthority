@@ -51,7 +51,7 @@ export interface NormalizedAction {
 }
 
 // ---------------------------------------------------------------------------
-// Registry — 17 entries, aliases stored lowercase
+// Registry — 20 entries, aliases stored lowercase
 // ---------------------------------------------------------------------------
 
 const REGISTRY: readonly ActionRegistryEntry[] = [
@@ -122,9 +122,22 @@ const REGISTRY: readonly ActionRegistryEntry[] = [
     ],
   },
   {
+    action_class: 'web.search',
+    default_risk: 'medium',
+    default_hitl_mode: 'per_request',
+    aliases: [
+      'web_search',
+      'google_search',
+      'bing_search',
+      'search_web',
+      'web_research',
+      'news_search',
+    ],
+  },
+  {
     action_class: 'web.fetch',
-    default_risk: 'low',
-    default_hitl_mode: 'none',
+    default_risk: 'medium',
+    default_hitl_mode: 'per_request',
     aliases: [
       'fetch',
       'http_get',
@@ -132,8 +145,21 @@ const REGISTRY: readonly ActionRegistryEntry[] = [
       'get_url',
       'fetch_url',
       'http_request',
+      'curl',
+      'wget',
+      'download_url',
     ],
-    intent_group: 'web_access',
+    intent_group: 'data_exfiltration',
+  },
+  {
+    action_class: 'browser.scrape',
+    default_risk: 'medium',
+    default_hitl_mode: 'per_request',
+    aliases: [
+      'scrape_page',
+      'extract_page',
+      'read_url',
+    ],
   },
   {
     action_class: 'web.post',

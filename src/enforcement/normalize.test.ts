@@ -55,7 +55,7 @@ describe('normalizeActionClass', () => {
 });
 
 // ---------------------------------------------------------------------------
-// All 17 action classes resolve from at least one alias
+// All 20 action classes resolve from at least one alias
 // ---------------------------------------------------------------------------
 
 describe('registry coverage — each action class resolves from at least one alias', () => {
@@ -64,8 +64,10 @@ describe('registry coverage — each action class resolves from at least one ali
     ['write_file',       'filesystem.write'],
     ['delete_file',      'filesystem.delete'],
     ['list_files',       'filesystem.list'],
+    ['web_search',       'web.search'],
     ['fetch',            'web.fetch'],
     ['http_post',        'web.post'],
+    ['scrape_page',      'browser.scrape'],
     ['bash',             'shell.exec'],
     ['send_email',       'communication.email'],
     ['send_slack',       'communication.slack'],
@@ -367,12 +369,20 @@ describe('intent_group — registry entry tags', () => {
     expect(getRegistryEntry('bash').intent_group).toBeUndefined();
   });
 
-  it('web.fetch has intent_group web_access', () => {
-    expect(getRegistryEntry('fetch').intent_group).toBe('web_access');
+  it('web.fetch has intent_group data_exfiltration', () => {
+    expect(getRegistryEntry('fetch').intent_group).toBe('data_exfiltration');
   });
 
   it('web.post has intent_group web_access', () => {
     expect(getRegistryEntry('http_post').intent_group).toBe('web_access');
+  });
+
+  it('web.search has no intent_group', () => {
+    expect(getRegistryEntry('web_search').intent_group).toBeUndefined();
+  });
+
+  it('browser.scrape has no intent_group', () => {
+    expect(getRegistryEntry('scrape_page').intent_group).toBeUndefined();
   });
 });
 
@@ -417,9 +427,9 @@ describe('intent_group — normalize_action propagation', () => {
     expect(result.intent_group).toBeUndefined();
   });
 
-  it('normalize_action includes intent_group web_access for web.fetch', () => {
+  it('normalize_action includes intent_group data_exfiltration for web.fetch', () => {
     const result = normalize_action('fetch', { url: 'https://example.com' });
-    expect(result.intent_group).toBe('web_access');
+    expect(result.intent_group).toBe('data_exfiltration');
   });
 
   it('normalize_action includes intent_group web_access for web.post', () => {
@@ -427,10 +437,10 @@ describe('intent_group — normalize_action propagation', () => {
     expect(result.intent_group).toBe('web_access');
   });
 
-  it('all web_access aliases propagate the web_access intent_group', () => {
-    const webFetchAliases = ['fetch', 'http_get', 'web_fetch', 'get_url', 'fetch_url', 'http_request'];
+  it('all web.fetch aliases propagate the data_exfiltration intent_group', () => {
+    const webFetchAliases = ['fetch', 'http_get', 'web_fetch', 'get_url', 'fetch_url', 'http_request', 'curl', 'wget', 'download_url'];
     for (const alias of webFetchAliases) {
-      expect(normalize_action(alias).intent_group).toBe('web_access');
+      expect(normalize_action(alias).intent_group).toBe('data_exfiltration');
     }
     const webPostAliases = ['http_post', 'post_url', 'web_post', 'post_request', 'submit_form'];
     for (const alias of webPostAliases) {
@@ -494,6 +504,105 @@ describe('filesystem.delete — new aliases resolve to filesystem.delete with de
       expect(getRegistryEntry(alias).default_hitl_mode).toBe('per_request');
     }
   });
+});
+
+// ---------------------------------------------------------------------------
+// web.search — alias coverage (TC-WS)
+// ---------------------------------------------------------------------------
+
+describe('web.search — aliases resolve to web.search with medium risk and per_request HITL', () => {
+  const WEB_SEARCH_ALIASES = [
+    'web_search',
+    'google_search',
+    'bing_search',
+    'search_web',
+    'web_research',
+    'news_search',
+  ] as const;
+
+  for (const alias of WEB_SEARCH_ALIASES) {
+    it(`TC-WS: "${alias}" resolves to web.search`, () => {
+      expect(normalizeActionClass(alias)).toBe('web.search');
+    });
+
+    it(`TC-WS: "${alias}" has default_risk medium`, () => {
+      expect(getRegistryEntry(alias).default_risk).toBe('medium');
+    });
+
+    it(`TC-WS: "${alias}" has default_hitl_mode per_request`, () => {
+      expect(getRegistryEntry(alias).default_hitl_mode).toBe('per_request');
+    });
+
+    it(`TC-WS: normalize_action("${alias}") returns correct action_class and risk`, () => {
+      const result = normalize_action(alias);
+      expect(result.action_class).toBe('web.search');
+      expect(result.risk).toBe('medium');
+      expect(result.hitl_mode).toBe('per_request');
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// web.fetch — new alias coverage + updated properties (TC-WF)
+// ---------------------------------------------------------------------------
+
+describe('web.fetch — new aliases and updated risk/hitl/intent_group', () => {
+  const NEW_WEB_FETCH_ALIASES = ['curl', 'wget', 'download_url'] as const;
+
+  for (const alias of NEW_WEB_FETCH_ALIASES) {
+    it(`TC-WF: "${alias}" resolves to web.fetch`, () => {
+      expect(normalizeActionClass(alias)).toBe('web.fetch');
+    });
+
+    it(`TC-WF: "${alias}" has intent_group data_exfiltration`, () => {
+      expect(getRegistryEntry(alias).intent_group).toBe('data_exfiltration');
+    });
+
+    it(`TC-WF: normalize_action("${alias}") has action_class, risk, hitl_mode, intent_group`, () => {
+      const result = normalize_action(alias);
+      expect(result.action_class).toBe('web.fetch');
+      expect(result.risk).toBe('medium');
+      expect(result.hitl_mode).toBe('per_request');
+      expect(result.intent_group).toBe('data_exfiltration');
+    });
+  }
+
+  it('web.fetch default_risk is medium', () => {
+    expect(getRegistryEntry('fetch').default_risk).toBe('medium');
+  });
+
+  it('web.fetch default_hitl_mode is per_request', () => {
+    expect(getRegistryEntry('fetch').default_hitl_mode).toBe('per_request');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// browser.scrape — alias coverage (TC-BS)
+// ---------------------------------------------------------------------------
+
+describe('browser.scrape — aliases resolve to browser.scrape with medium risk and per_request HITL', () => {
+  const BROWSER_SCRAPE_ALIASES = ['scrape_page', 'extract_page', 'read_url'] as const;
+
+  for (const alias of BROWSER_SCRAPE_ALIASES) {
+    it(`TC-BS: "${alias}" resolves to browser.scrape`, () => {
+      expect(normalizeActionClass(alias)).toBe('browser.scrape');
+    });
+
+    it(`TC-BS: "${alias}" has default_risk medium`, () => {
+      expect(getRegistryEntry(alias).default_risk).toBe('medium');
+    });
+
+    it(`TC-BS: "${alias}" has default_hitl_mode per_request`, () => {
+      expect(getRegistryEntry(alias).default_hitl_mode).toBe('per_request');
+    });
+
+    it(`TC-BS: normalize_action("${alias}") returns correct action_class and risk`, () => {
+      const result = normalize_action(alias);
+      expect(result.action_class).toBe('browser.scrape');
+      expect(result.risk).toBe('medium');
+      expect(result.hitl_mode).toBe('per_request');
+    });
+  }
 });
 
 // Satisfy TypeScript — type-only imports used in stub file
