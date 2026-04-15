@@ -219,6 +219,7 @@ npm test        # vitest
 | [Configuration](docs/configuration.md) | Full config schema with examples |
 | [Action Registry](docs/action-registry.md) | All canonical action classes, aliases, risk, HITL modes |
 | [Human-in-the-Loop](docs/human-in-the-loop.md) | Payload binding, session vs approve_once, message format |
+| [Rule Deletion](docs/rule-deletion.md) | Step-by-step guide for removing rules from the active policy bundle |
 
 ## License
 
