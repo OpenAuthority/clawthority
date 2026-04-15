@@ -45,6 +45,24 @@ export type {
 export { validateRoadmapUpdate } from "./utils/roadmap-validator.js";
 export type { RoadmapValidationResult } from "./utils/roadmap-validator.js";
 
+// ─── Token telemetry ──────────────────────────────────────────────────────────
+export {
+  MODEL_PRICING,
+  DEFAULT_STATE_PATH,
+  resolvePricing,
+  calculateCost,
+  todayUtc,
+  TokenTelemetry,
+} from "./utils/token-telemetry.js";
+export type {
+  TokenRecord,
+  DailyEntry,
+  BudgetState,
+  ModelPricing,
+  DailyUsageSummary,
+  UsageReport,
+} from "./utils/token-telemetry.js";
+
 // ─── Human-in-the-loop policy configuration ──────────────────────────────────
 export {
   HitlFallbackSchema,
