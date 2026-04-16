@@ -6,6 +6,7 @@
 
 [![OpenClaw Plugin](https://img.shields.io/badge/OpenClaw-plugin-8A2BE2)](https://github.com/openclaw/openclaw)
 [![CI](https://github.com/OpenAuthority/clawthority/actions/workflows/e2e.yml/badge.svg)](https://github.com/OpenAuthority/clawthority/actions/workflows/e2e.yml)
+[![Version](https://img.shields.io/github/package-json/v/OpenAuthority/clawthority?label=version&color=informational)](package.json)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Node.js >= 18](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6.svg?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
@@ -20,7 +21,7 @@ Agent tool call  ─►  Clawthority  ─►  Allow  │  Deny  │  Ask human  
 ```
 
 > [!NOTE]
-> **Status: public preview.** APIs and the policy bundle schema may still change before v1. Pin to an exact commit for production use.
+> **v1.0 — stable API.** The plugin API and policy bundle schema follow [semantic versioning](https://semver.org); breaking changes ship in a future major release. The version badge above reflects the current release.
 
 ---
 

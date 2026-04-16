@@ -4,6 +4,10 @@ node_modules/
 # Build output
 dist/
 
+# Generated plugin manifest (produced by scripts/sync-version.mjs from
+# openclaw.plugin.template.json + package.json version)
+openclaw.plugin.json
+
 # Test coverage
 coverage/
 

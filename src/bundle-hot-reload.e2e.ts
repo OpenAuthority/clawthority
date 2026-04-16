@@ -1,5 +1,5 @@
 /**
- * Bundle hot-reload e2e tests — Clawthority v0.1
+ * Bundle hot-reload e2e tests
  *
  * Exercises policy bundle swapping, validation, and version control at runtime.
  * Tests use FileAuthorityAdapter's watchPolicyBundle() for live file-watching

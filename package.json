@@ -1,6 +1,6 @@
 {
   "name": "@clawthority/clawthority",
-  "version": "0.1.1",
+  "version": "1.0.1",
   "description": "Authorization policy engine plugin for Clawthority",
   "type": "module",
   "main": "dist/index.js",
@@ -17,6 +17,7 @@
   ],
   "scripts": {
     "plugin:install": "node scripts/post-install.mjs",
+    "prepare": "node scripts/sync-version.mjs",
     "prebuild": "node scripts/sync-version.mjs",
     "build": "tsc",
     "sync-version": "node scripts/sync-version.mjs",

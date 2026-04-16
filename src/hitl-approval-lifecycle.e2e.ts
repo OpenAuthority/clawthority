@@ -1,5 +1,5 @@
 /**
- * HITL approval lifecycle e2e tests — Clawthority v0.1
+ * HITL approval lifecycle e2e tests
  *
  * Exercises the complete Human-in-the-Loop approval workflow as seen by the
  * enforcement pipeline.  Each test drives the two-stage pipeline directly,

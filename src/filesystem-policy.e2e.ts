@@ -1,5 +1,5 @@
 /**
- * Filesystem policy enforcement e2e tests — Clawthority v0.1
+ * Filesystem policy enforcement e2e tests
  *
  * Exercises filesystem read/write/execute operations through the two-stage
  * enforcement pipeline with a filesystem-aware Stage 2 policy.

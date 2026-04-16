@@ -1,5 +1,5 @@
 /**
- * Plugin lifecycle e2e tests — Clawthority v0.1
+ * Plugin lifecycle e2e tests
  *
  * Exercises the OpenClaw plugin's lifecycle properties: resource hygiene,
  * audit integrity, and crash-recovery behaviour.

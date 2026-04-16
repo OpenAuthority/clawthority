@@ -1,5 +1,5 @@
 /**
- * Default-permit regression e2e tests — Clawthority v0.1
+ * Default-permit regression e2e tests
  *
  * Guards against regression to blanket-blocking behaviour by verifying that
  * five representative innocuous tool calls all receive a permit decision when

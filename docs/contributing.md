@@ -53,7 +53,7 @@ The dashboard is available at `http://localhost:7331` (served by Express) or `ht
 clawthority/
 ├── src/                        # Plugin source
 │   ├── index.ts                # Plugin entry point and openclaw hooks
-│   ├── types.ts                # Core v0.1 runtime types (Intent, Capability, ExecutionEnvelope, CeeDecision)
+│   ├── types.ts                # Core runtime types (Intent, Capability, ExecutionEnvelope, CeeDecision)
 │   ├── audit.ts                # JsonlAuditLogger, PolicyDecisionEntry, HitlDecisionEntry
 │   ├── envelope.ts             # Canonical re-export shim (buildEnvelope, sortedJsonStringify, uuidv7)
 │   ├── watcher.ts              # Hot-reload file watcher (JSON + TypeScript rules)
@@ -267,7 +267,7 @@ Create `src/<feature-name>.e2e.ts`. Start with the standard file-level JSDoc lis
 
 ```typescript
 /**
- * <Feature> e2e tests — Clawthority v0.1
+ * <Feature> e2e tests
  *
  *  TC-<PREFIX>-01  <description>
  *  TC-<PREFIX>-02  <description>

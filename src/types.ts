@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Clawthority v0.1 — semantic authorization runtime core types
+// Clawthority — semantic authorization runtime core types
 // ---------------------------------------------------------------------------
 
 /** Rate limit bounds attached to a CeeDecision. */

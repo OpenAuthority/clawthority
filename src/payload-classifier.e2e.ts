@@ -1,5 +1,5 @@
 /**
- * Payload classifier e2e tests — Clawthority v0.1
+ * Payload classifier e2e tests
  *
  * Proves that send_email with a credit card number in the body triggers HITL
  * enforcement through the two-stage pipeline. Extends the filesystem-policy

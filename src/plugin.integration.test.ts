@@ -1,5 +1,5 @@
 /**
- * Plugin integration test suite — Clawthority v0.1 enforcement pipeline
+ * Plugin integration test suite — Clawthority enforcement pipeline
  *
  * Verifies end-to-end behaviour of the enforcement pipeline and plugin lifecycle:
  *  TC-01  lifecycle: activate → pipeline → audit event → deactivate
