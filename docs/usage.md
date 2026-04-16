@@ -48,9 +48,9 @@ const rules: Rule[] = [
     tags: ['filesystem', 'hitl'],
   },
 
-  // Unconditionally block system execution
+  // Unconditionally block shell execution
   {
-    action_class: 'system.execute',
+    action_class: 'shell.exec',
     effect: 'forbid',
     priority: 100,
     reason: 'Direct shell execution is never permitted',
@@ -270,14 +270,15 @@ The plugin ships with a baseline rule set in `src/policy/rules/default.ts` cover
 | Priority | Action class | Effect | Reason |
 |---|---|---|---|
 | 10 | `filesystem.read` | permit | Read-only filesystem access is safe |
-| 10 | `browser.navigate` | permit | Navigation alone does not mutate state |
-| 90 | `payment.transfer` | forbid | Requires HITL approval |
 | 90 | `payment.initiate` | forbid | Requires HITL approval |
-| 90 | `credential.access` | forbid | Requires HITL approval |
+| 90 | `credential.read` | forbid | Requires HITL approval |
 | 90 | `credential.write` | forbid | Requires HITL approval |
-| 100 | `system.execute` | forbid | Direct shell execution is never permitted |
-| 100 | `account.permission.change` | forbid | Privilege escalation is always blocked |
+| 90 | *(intent group: `external_send`)* | forbid | Card data in payload requires HITL approval |
+| 100 | `shell.exec` | forbid | Direct shell execution is never permitted |
+| 100 | `code.execute` | forbid | Arbitrary code execution is never permitted |
 | 100 | `unknown_sensitive_action` | forbid | Fail-closed on unrecognised sensitive actions |
+
+All `action_class` values map to entries in the normalization registry at [`src/enforcement/normalize.ts`](../src/enforcement/normalize.ts); see [action-registry.md](action-registry.md) for the full list.
 
 ### Extending the default rules
 

@@ -118,19 +118,19 @@ Locate the rule in the `rules` array. Each rule is a JSON object. Remove the ent
 ```json
 {
   "rules": [
-    { "effect": "permit", "action_class": "filesystem.read", "reason": "Reads permitted" },
-    { "effect": "forbid", "action_class": "payment.transfer", "reason": "Transfers blocked" },
-    { "effect": "permit", "action_class": "browser.navigate", "reason": "Navigation permitted" }
+    { "effect": "permit", "action_class": "filesystem.read",   "reason": "Reads permitted" },
+    { "effect": "forbid", "action_class": "payment.initiate",  "reason": "Transfers blocked" },
+    { "effect": "permit", "action_class": "web.search",        "reason": "Search permitted" }
   ]
 }
 ```
 
-**After** (removing the `payment.transfer` rule):
+**After** (removing the `payment.initiate` rule):
 ```json
 {
   "rules": [
     { "effect": "permit", "action_class": "filesystem.read", "reason": "Reads permitted" },
-    { "effect": "permit", "action_class": "browser.navigate", "reason": "Navigation permitted" }
+    { "effect": "permit", "action_class": "web.search",      "reason": "Search permitted" }
   ]
 }
 ```
@@ -184,7 +184,7 @@ The previously loaded bundle stays active until a valid bundle is accepted.
 
 ### Remove a single `forbid` rule by action class
 
-**Scenario:** Lift the `payment.transfer` block to allow payment transfers through without HITL.
+**Scenario:** Lift the `payment.initiate` block to allow payment initiation through without HITL.
 
 Starting bundle (version 3, 12 rules):
 
@@ -193,21 +193,21 @@ Starting bundle (version 3, 12 rules):
   "version": 3,
   "rules": [
     { "effect": "permit",  "action_class": "filesystem.read",   "reason": "Reads permitted" },
-    { "effect": "forbid",  "action_class": "payment.transfer",  "reason": "Transfers require HITL", "tags": ["payment", "hitl"] },
-    { "effect": "forbid",  "action_class": "payment.initiate",  "reason": "Initiation requires HITL", "tags": ["payment", "hitl"] }
+    { "effect": "forbid",  "action_class": "payment.initiate",  "reason": "Initiation requires HITL", "tags": ["payment", "hitl"] },
+    { "effect": "forbid",  "action_class": "credential.write",  "reason": "Credential writes require HITL", "tags": ["credential", "hitl"] }
   ],
   "checksum": "..."
 }
 ```
 
-After removing `payment.transfer` (version bumped to 4):
+After removing `payment.initiate` (version bumped to 4):
 
 ```json
 {
   "version": 4,
   "rules": [
     { "effect": "permit",  "action_class": "filesystem.read",  "reason": "Reads permitted" },
-    { "effect": "forbid",  "action_class": "payment.initiate", "reason": "Initiation requires HITL", "tags": ["payment", "hitl"] }
+    { "effect": "forbid",  "action_class": "credential.write", "reason": "Credential writes require HITL", "tags": ["credential", "hitl"] }
   ],
   "checksum": "<recomputed>"
 }
@@ -220,7 +220,7 @@ node -e "
   const crypto = require('crypto');
   const rules = [
     { effect: 'permit', action_class: 'filesystem.read', reason: 'Reads permitted' },
-    { effect: 'forbid', action_class: 'payment.initiate', reason: 'Initiation requires HITL', tags: ['payment', 'hitl'] }
+    { effect: 'forbid', action_class: 'credential.write', reason: 'Credential writes require HITL', tags: ['credential', 'hitl'] }
   ];
   console.log(crypto.createHash('sha256').update(JSON.stringify(rules)).digest('hex'));
 "

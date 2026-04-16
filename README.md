@@ -62,7 +62,7 @@ Skill-based safety (instruct the model to "please check first") fails the moment
 **Clawthority is:**
 
 - A **policy decision + enforcement** layer for tool calls, installed as an OpenClaw plugin.
-- A **semantic** authorizer — rules are written against canonical action classes (`filesystem.delete`, `payment.transfer`), not brittle tool-name regexes.
+- A **semantic** authorizer — rules are written against canonical action classes (`filesystem.delete`, `payment.initiate`), not brittle tool-name regexes.
 - A **cryptographic capability system** — HITL approvals are SHA-256-bound to `(action_class, target, payload_hash)` at approval time. Param tampering after approval = auto-deny.
 - **Fail-closed by default** — unknown tools, dropped channels, or unexpected errors all produce `deny`.
 

@@ -12,6 +12,11 @@ import { detectSensitiveData } from '../../enforcement/pii-classifier.js';
  *   90  — sensitive actions requiring HITL approval (forbid pending approval)
  *   100 — unconditionally forbidden actions (hard forbid, no override)
  *
+ * All `action_class` values must correspond to entries in the normalization
+ * registry at `src/enforcement/normalize.ts`; a rule targeting a class the
+ * normalizer never produces is dead code that silently never matches real
+ * traffic.
+ *
  * Per-agent overrides and extensions live in sibling rule files (e.g.
  * support.ts) and are merged over these defaults via mergeRules() in index.ts.
  */
@@ -31,34 +36,11 @@ const DEFAULT_RULES: Rule[] = [
     tags: ['filesystem', 'read-only'],
   },
 
-  /**
-   * Permit browser navigation for all agents.
-   * Navigation alone does not mutate state or exfiltrate credentials.
-   */
-  {
-    action_class: 'browser.navigate',
-    effect: 'permit',
-    priority: 10,
-    reason: 'Browser navigation is permitted for all agents',
-    tags: ['browser'],
-  },
-
   // ─── Priority 90: Sensitive actions requiring HITL approval ─────────────────
 
   /**
-   * Forbid payment transfer actions pending HITL approval.
-   * Financial transfers must be explicitly approved by a human operator.
-   */
-  {
-    action_class: 'payment.transfer',
-    effect: 'forbid',
-    priority: 90,
-    reason: 'Payment transfers require human-in-the-loop approval',
-    tags: ['payment', 'hitl'],
-  },
-
-  /**
    * Forbid payment initiation pending HITL approval.
+   * Financial transactions must be explicitly approved by a human operator.
    */
   {
     action_class: 'payment.initiate',
@@ -69,14 +51,14 @@ const DEFAULT_RULES: Rule[] = [
   },
 
   /**
-   * Forbid credential access pending HITL approval.
+   * Forbid credential reads pending HITL approval.
    * Reading credentials can expose secrets; require explicit human approval.
    */
   {
-    action_class: 'credential.access',
+    action_class: 'credential.read',
     effect: 'forbid',
     priority: 90,
-    reason: 'Credential access requires human-in-the-loop approval',
+    reason: 'Credential reads require human-in-the-loop approval',
     tags: ['credential', 'hitl'],
   },
 
@@ -113,27 +95,27 @@ const DEFAULT_RULES: Rule[] = [
   // ─── Priority 100: Unconditionally forbidden actions ────────────────────────
 
   /**
-   * Unconditionally forbid system execution.
-   * Direct shell/process execution bypasses all command-level policy.
+   * Unconditionally forbid shell execution.
+   * Direct shell invocation bypasses all command-level policy.
    */
   {
-    action_class: 'system.execute',
+    action_class: 'shell.exec',
     effect: 'forbid',
     priority: 100,
-    reason: 'System execution is unconditionally forbidden',
+    reason: 'Shell execution is unconditionally forbidden',
     tags: ['system', 'security'],
   },
 
   /**
-   * Unconditionally forbid account permission changes.
-   * Privilege escalation must never be performed autonomously.
+   * Unconditionally forbid arbitrary code execution.
+   * Running agent-generated code bypasses all parameter-level policy.
    */
   {
-    action_class: 'account.permission.change',
+    action_class: 'code.execute',
     effect: 'forbid',
     priority: 100,
-    reason: 'Account permission changes are unconditionally forbidden',
-    tags: ['account', 'security'],
+    reason: 'Arbitrary code execution is unconditionally forbidden',
+    tags: ['system', 'security'],
   },
 
   /**

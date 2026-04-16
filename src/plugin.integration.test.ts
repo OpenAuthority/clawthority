@@ -4,7 +4,7 @@
  * Verifies end-to-end behaviour of the enforcement pipeline and plugin lifecycle:
  *  TC-01  lifecycle: activate → pipeline → audit event → deactivate
  *  TC-02  filesystem.read allowed without approval (hitl_mode none)
- *  TC-03  system.execute (shell.exec) forbidden unconditionally by Stage 2
+ *  TC-03  shell.exec forbidden unconditionally by Stage 2
  *  TC-04  communication to untrusted domain forbidden
  *  TC-05  high-risk action without approval → pending_hitl_approval
  *  TC-06  high-risk action with valid approval → permitted
@@ -198,11 +198,11 @@ describe('plugin integration suite', () => {
     expect(result.decision.reason).not.toBe('pending_hitl_approval');
   });
 
-  // ── TC-03: system.execute forbidden unconditionally ─────────────────────────
+  // ── TC-03: shell.exec forbidden unconditionally ─────────────────────────────
 
   it('TC-03: shell.exec is forbidden unconditionally by Stage 2 even with a valid approval', async () => {
     // Stage 2 engine carries an unconditional forbid for all tool calls —
-    // simulates a "system.execute forbidden" policy rule that overrides permits.
+    // simulates a "shell.exec forbidden" policy rule that overrides permits.
     const engine = new EnforcementPolicyEngine();
     engine.addRule({
       effect: 'forbid',

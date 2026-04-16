@@ -1,80 +1,98 @@
 {
-  "version": 1,
+  "version": 2,
   "rules": [
     {
       "effect": "permit",
       "action_class": "filesystem.read",
       "reason": "Filesystem read operations are permitted for all agents",
-      "tags": ["filesystem", "read-only"]
-    },
-    {
-      "effect": "permit",
-      "action_class": "browser.navigate",
-      "reason": "Browser navigation is permitted for all agents",
-      "tags": ["browser"]
-    },
-    {
-      "effect": "forbid",
-      "action_class": "payment.transfer",
-      "reason": "Payment transfers require human-in-the-loop approval",
-      "tags": ["payment", "hitl"]
-    },
-    {
-      "effect": "forbid",
-      "action_class": "payment.initiate",
-      "reason": "Payment initiation requires human-in-the-loop approval",
-      "tags": ["payment", "hitl"]
-    },
-    {
-      "effect": "forbid",
-      "action_class": "credential.access",
-      "reason": "Credential access requires human-in-the-loop approval",
-      "tags": ["credential", "hitl"]
-    },
-    {
-      "effect": "forbid",
-      "action_class": "credential.write",
-      "reason": "Credential write operations require human-in-the-loop approval",
-      "tags": ["credential", "hitl"]
-    },
-    {
-      "effect": "forbid",
-      "action_class": "system.execute",
-      "reason": "System execution is unconditionally forbidden",
-      "tags": ["system", "security"]
-    },
-    {
-      "effect": "forbid",
-      "action_class": "account.permission.change",
-      "reason": "Account permission changes are unconditionally forbidden",
-      "tags": ["account", "security"]
-    },
-    {
-      "effect": "forbid",
-      "action_class": "unknown_sensitive_action",
-      "reason": "Unknown sensitive actions are unconditionally forbidden",
-      "tags": ["security"]
-    },
-    {
-      "effect": "forbid",
-      "intent_group": "destructive_fs",
-      "reason": "Destructive filesystem operations are unconditionally forbidden",
-      "tags": ["filesystem", "security"]
+      "tags": [
+        "filesystem",
+        "read-only"
+      ]
     },
     {
       "effect": "permit",
       "action_class": "web.search",
       "reason": "Web search operations are permitted for all agents",
-      "tags": ["web", "search"]
+      "tags": [
+        "web",
+        "search"
+      ]
+    },
+    {
+      "effect": "forbid",
+      "action_class": "payment.initiate",
+      "reason": "Payment initiation requires human-in-the-loop approval",
+      "tags": [
+        "payment",
+        "hitl"
+      ]
+    },
+    {
+      "effect": "forbid",
+      "action_class": "credential.read",
+      "reason": "Credential reads require human-in-the-loop approval",
+      "tags": [
+        "credential",
+        "hitl"
+      ]
+    },
+    {
+      "effect": "forbid",
+      "action_class": "credential.write",
+      "reason": "Credential write operations require human-in-the-loop approval",
+      "tags": [
+        "credential",
+        "hitl"
+      ]
+    },
+    {
+      "effect": "forbid",
+      "action_class": "shell.exec",
+      "reason": "Shell execution is unconditionally forbidden",
+      "tags": [
+        "system",
+        "security"
+      ]
+    },
+    {
+      "effect": "forbid",
+      "action_class": "code.execute",
+      "reason": "Arbitrary code execution is unconditionally forbidden",
+      "tags": [
+        "system",
+        "security"
+      ]
+    },
+    {
+      "effect": "forbid",
+      "action_class": "unknown_sensitive_action",
+      "reason": "Unknown sensitive actions are unconditionally forbidden",
+      "tags": [
+        "security"
+      ]
+    },
+    {
+      "effect": "forbid",
+      "intent_group": "destructive_fs",
+      "reason": "Destructive filesystem operations are unconditionally forbidden",
+      "tags": [
+        "filesystem",
+        "security"
+      ]
     },
     {
       "effect": "forbid",
       "intent_group": "data_exfiltration",
       "reason": "Data exfiltration operations (outbound HTTP fetch) are unconditionally forbidden",
-      "tags": ["web", "security", "data-exfiltration"]
+      "tags": [
+        "web",
+        "security",
+        "data-exfiltration"
+      ]
     }
   ],
-  "checksum": "23ac061d6a51127a66937f64bf358c249e0d95b4b5e1a520487d3221825e856c",
+  "checksum": "a3e352f600db6788cf233913ffd73827119738bedf0102d4d2884aeb96663825",
   "_examples": [
     {
       "_comment": "Per-address block: forbid a specific email address using target_match regex. This rule applies to all 'channel' resources (*) but target_match narrows it to one address. Cedar forbid-wins: even a trusted-domain address is denied if it appears here.",
@@ -83,16 +101,25 @@
       "match": "*",
       "target_match": "^blocked@example\\.com$",
       "reason": "Address blocked by per-address policy",
-      "tags": ["communication", "per-address-block"]
+      "tags": [
+        "communication",
+        "per-address-block"
+      ]
     },
     {
       "_comment": "Per-address block list: forbid an explicit set of email targets using target_in. Checked for case-insensitive equality against the action target.",
       "effect": "forbid",
       "resource": "channel",
       "match": "*",
-      "target_in": ["noreply@spam.example.com", "abuse@badactor.net"],
+      "target_in": [
+        "noreply@spam.example.com",
+        "abuse@badactor.net"
+      ],
       "reason": "Address in blocklist",
-      "tags": ["communication", "per-address-block"]
+      "tags": [
+        "communication",
+        "per-address-block"
+      ]
     }
   ]
 }
