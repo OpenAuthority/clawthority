@@ -95,7 +95,7 @@ Review the blocked prompt text. If it is legitimate content that accidentally ma
 
 **Symptom:** A tool call is denied with `reason: "unknown_sensitive_action"` or `risk: "critical"`.
 
-**Cause:** The action normalization registry does not recognize the tool name. Unknown tools fail closed to action class `unknown_sensitive_action` with `risk: critical`, which triggers a HITL request or deny depending on your HITL policy.
+**Cause:** The action normalization registry does not recognize the tool name. Unknown tools fail closed to action class `unknown_sensitive_action` with `risk: critical`, which triggers a HITL request or deny depending on your HITL policy. This happens in **both** `open` and `closed` install modes — `unknown_sensitive_action` is in the critical-forbid set that ships in both. See [configuration.md — Install mode](configuration.md#install-mode).
 
 **Resolution:**
 

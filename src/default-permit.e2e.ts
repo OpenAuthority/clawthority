@@ -13,13 +13,15 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { runPipeline } from './enforcement/pipeline.js';
+import { EnforcementPolicyEngine, runPipeline } from './enforcement/pipeline.js';
 import type { PipelineContext, Stage1Fn, Stage2Fn, CeeDecision } from './enforcement/pipeline.js';
+import { createStage2 } from './enforcement/stage2-policy.js';
 import { validateCapability } from './enforcement/stage1-capability.js';
 import { normalize_action } from './enforcement/normalize.js';
 import { ApprovalManager, computeBinding } from './hitl/approval-manager.js';
 import type { HitlPolicy } from './hitl/types.js';
 import type { Capability } from './adapter/types.js';
+import defaultRules, { OPEN_MODE_RULES } from './policy/rules.js';
 
 // ─── Stage 2 helper ──────────────────────────────────────────────────────────
 
@@ -266,4 +268,141 @@ describe('default-permit regression', () => {
       expect(result.decision.effect).toBe('permit');
     },
   );
+});
+
+// ─── Install-mode coverage ───────────────────────────────────────────────────
+
+/**
+ * Exercises the pipeline with a real EnforcementPolicyEngine configured per
+ * install mode. The pipeline's Stage 2 routes unmatched action classes
+ * through the engine's Cedar `evaluate()` fallback, so the observable
+ * difference between the two modes is the `defaultEffect`:
+ *
+ *   open   → implicit permit (for anything not explicitly forbidden)
+ *   closed → implicit deny    (for anything not explicitly permitted)
+ *
+ * Rule-set composition (which action_classes are loaded per mode) is pinned
+ * in `src/policy/rules/default.test.ts`; env-var parsing in
+ * `src/policy/mode.test.ts`. These tests bridge both by building the engine
+ * directly with the expected mode config and asserting end-to-end decisions.
+ */
+
+function buildEngineForMode(mode: 'open' | 'closed'): EnforcementPolicyEngine {
+  const engine = new EnforcementPolicyEngine({
+    defaultEffect: mode === 'open' ? 'permit' : 'forbid',
+  });
+  engine.addRules(mode === 'open' ? OPEN_MODE_RULES : defaultRules);
+  return engine;
+}
+
+describe('install mode — open', () => {
+  let emitter: EventEmitter;
+  let harness: HitlTestHarness;
+
+  beforeEach(() => {
+    emitter = new EventEmitter();
+    harness = new HitlTestHarness();
+  });
+
+  afterEach(() => {
+    harness.shutdown();
+  });
+
+  it('permits a hitl-free tool call (implicit permit via defaultEffect)', async () => {
+    const normalized = normalize_action('read_file', { path: '/home/user/notes.txt' });
+    expect(normalized.hitl_mode).toBe('none');
+
+    const stage2 = createStage2(buildEngineForMode('open'));
+
+    const result = await runPipeline(
+      {
+        action_class: normalized.action_class,
+        target: normalized.target,
+        payload_hash: 'hash-open-01',
+        hitl_mode: normalized.hitl_mode,
+        rule_context: { agentId: 'agent-1', channel: 'default' },
+      },
+      harness.stage1,
+      stage2,
+      emitter,
+    );
+
+    expect(result.decision.effect).toBe('permit');
+  });
+
+  it('permits a synthetic unregistered action class (implicit permit)', async () => {
+    const stage2 = createStage2(buildEngineForMode('open'));
+
+    const result = await runPipeline(
+      {
+        action_class: 'some.unrelated.action',
+        target: 'whatever',
+        payload_hash: 'hash-open-02',
+        hitl_mode: 'none',
+        rule_context: { agentId: 'agent-1', channel: 'default' },
+      },
+      harness.stage1,
+      stage2,
+      emitter,
+    );
+
+    expect(result.decision.effect).toBe('permit');
+  });
+});
+
+describe('install mode — closed', () => {
+  let emitter: EventEmitter;
+  let harness: HitlTestHarness;
+
+  beforeEach(() => {
+    emitter = new EventEmitter();
+    harness = new HitlTestHarness();
+  });
+
+  afterEach(() => {
+    harness.shutdown();
+  });
+
+  it('forbids a hitl-free tool call with no matching rule (implicit deny)', async () => {
+    // No resource+match rule covers this tool in the default set; closed mode
+    // must then deny via `defaultEffect: forbid`. This is the regression
+    // guard: if someone flips the default back to permit, this test flips.
+    const normalized = normalize_action('read_file', { path: '/home/user/notes.txt' });
+
+    const stage2 = createStage2(buildEngineForMode('closed'));
+
+    const result = await runPipeline(
+      {
+        action_class: normalized.action_class,
+        target: normalized.target,
+        payload_hash: 'hash-closed-01',
+        hitl_mode: normalized.hitl_mode,
+        rule_context: { agentId: 'agent-1', channel: 'default' },
+      },
+      harness.stage1,
+      stage2,
+      emitter,
+    );
+
+    expect(result.decision.effect).toBe('forbid');
+  });
+
+  it('forbids a synthetic unregistered action class (implicit deny)', async () => {
+    const stage2 = createStage2(buildEngineForMode('closed'));
+
+    const result = await runPipeline(
+      {
+        action_class: 'some.unrelated.action',
+        target: 'whatever',
+        payload_hash: 'hash-closed-02',
+        hitl_mode: 'none',
+        rule_context: { agentId: 'agent-1', channel: 'default' },
+      },
+      harness.stage1,
+      stage2,
+      emitter,
+    );
+
+    expect(result.decision.effect).toBe('forbid');
+  });
 });

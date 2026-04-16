@@ -15,7 +15,7 @@ Every tool call an agent makes is normalized to a canonical **action class** bef
 3. Applies post-lookup reclassification rules that can change the action class or raise the risk level.
 4. Returns a `NormalizedAction` with a stable `action_class`, effective `risk`, `hitl_mode`, and `target`.
 
-Unknown tool names are **not rejected at lookup time** — they resolve to `unknown_sensitive_action` with critical risk and mandatory per-request HITL. This fail-closed design ensures novel tools cannot bypass enforcement by having an unregistered name.
+Unknown tool names are **not rejected at lookup time** — they resolve to `unknown_sensitive_action` with critical risk and mandatory per-request HITL. This fail-closed design ensures novel tools cannot bypass enforcement by having an unregistered name. The `unknown_sensitive_action` forbid ships in both install modes (`open` and `closed`); see [configuration.md — Install mode](configuration.md#install-mode).
 
 ---
 

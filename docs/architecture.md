@@ -265,7 +265,7 @@ interface PipelineContext {
 
 ### Fail-Closed Guarantee
 
-The pipeline is fail-closed at every boundary:
+The pipeline is fail-closed at every boundary — independent of the install mode:
 
 | Failure point | Result |
 |---|---|
@@ -274,6 +274,8 @@ The pipeline is fail-closed at every boundary:
 | Exception in orchestrator | `forbid: 'pipeline_error'` |
 
 Exceptions never produce a `permit` decision.
+
+The install mode (`open` / `closed`) only flips the **implicit** decision for requests with no matching rule and no pipeline error. Critical action classes (`shell.exec`, `code.execute`, `payment.initiate`, `credential.read`, `credential.write`, `unknown_sensitive_action`) are enforced in both modes via their own forbid rules — see [configuration.md — Install mode](configuration.md#install-mode).
 
 ### Stage 1 in Detail
 
@@ -689,7 +691,7 @@ The adapter interface isolates the enforcement pipeline from the authority backe
 
 ### Why fail-closed for unknown tools?
 
-Any tool name that does not match a registry alias resolves to `unknown_sensitive_action` with `critical` risk and `per_request` HITL. This default prevents unknown tools from bypassing authorization by accident. Operators must explicitly alias or register new tools to move them out of the critical-risk bucket.
+Any tool name that does not match a registry alias resolves to `unknown_sensitive_action` with `critical` risk and `per_request` HITL. This default prevents unknown tools from bypassing authorization by accident, and it applies in **both** `open` and `closed` install modes — the critical-forbid rule for `unknown_sensitive_action` ships in both rule sets. Operators must explicitly alias or register new tools to move them out of the critical-risk bucket.
 
 ### Why SHA-256 for payload binding?
 
@@ -731,7 +733,10 @@ Stage 2 of the enforcement pipeline. Evaluates Cedar-style authorization rules a
 The primary data structure that wraps a single agent action as it travels through the enforcement pipeline. Contains `Intent`, `Capability`, `Metadata`, and `provenance`. Constructed via `buildEnvelope()` in `src/envelope.ts`. See §2.
 
 **fail-closed**
-The design principle that any unknown or error state resolves to `forbid`. Unknown tool names produce `unknown_sensitive_action` (critical risk, per-request HITL). Exceptions in any pipeline stage return a `forbid` decision; they never produce `permit`. See §3 and §11.
+The design principle that any error or critical-unknown state resolves to `forbid`. Exceptions in any pipeline stage return `forbid` in both install modes. Unknown tool names produce `unknown_sensitive_action`, which ships as a critical forbid in both the `open` and `closed` rule sets. See §3 and §11.
+
+**install mode**
+The plugin's top-level policy posture, read from the `CLAWTHORITY_MODE` env var at activation. `open` (default) = implicit permit with six critical forbids; `closed` = implicit deny, explicit permits required. Restart to change. See [configuration.md — Install mode](configuration.md#install-mode).
 
 **FileAuthorityAdapter**
 The file-based implementation of `IAuthorityAdapter` used during development. Reads policy bundles from a local JSON file and provides no real-time revocation streaming (`watchRevocations()` yields nothing). See §5.

@@ -579,6 +579,33 @@ Environment variables always take precedence over values in `hitl-policy.yaml`. 
 environment variable > hitl-policy.yaml field > built-in default
 ```
 
+### Install mode
+
+Controls the plugin's policy posture at activation.
+
+| Variable | Default | Description |
+|---|---|---|
+| `CLAWTHORITY_MODE` | `open` | `open` — implicit permit with a critical-forbid safety net (six action classes: `shell.exec`, `code.execute`, `payment.initiate`, `credential.read`, `credential.write`, `unknown_sensitive_action`). `closed` — implicit deny, user adds explicit `permit` rules. Any other value logs a warning and falls back to `open`. Case- and whitespace-insensitive. Read once at module load — **restart the plugin to change modes.** |
+
+Mode only affects Stage 2 policy evaluation and which default rule set is loaded. Stage 1 (capability gate, protected paths, HITL binding) fails closed in both modes regardless.
+
+#### Mode-to-rule-set mapping
+
+| Mode | `defaultEffect` | Rules loaded |
+|---|---|---|
+| `open` | `permit` | Six critical forbids (see above). Everything else permits unless explicitly forbidden. |
+| `closed` | `forbid` | Full `defaultRules` — seven action-class rules + one intent-group rule covering filesystem, payment, credential, shell, code, HITL card-data, and unknown-sensitive-action classes. |
+
+#### Example
+
+```bash
+# Fresh install, open mode (default) — no configuration needed
+node dist/index.js
+
+# Locked-down production
+CLAWTHORITY_MODE=closed node dist/index.js
+```
+
 ### HITL — Telegram
 
 | Variable | Default | Description |

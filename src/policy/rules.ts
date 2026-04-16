@@ -6,4 +6,4 @@
  * default + agent-specific policy rules.  For direct access to individual
  * rule sets or the merge function, import from './rules/index.js'.
  */
-export { default, mergeRules } from './rules/index.js';
+export { default, mergeRules, OPEN_MODE_RULES } from './rules/index.js';

@@ -43,11 +43,30 @@ Add the plugin to your OpenClaw configuration file at `~/.openclaw/config.json`:
 
 OpenClaw will load `dist/index.js` as the plugin entry point on next start.
 
-### 5. Verify installation
+### 5. Choose your install mode (optional)
+
+Clawthority ships with two postures:
+
+- **`open` (default)** — implicit permit with a critical-forbid safety net. Every tool call is allowed unless it hits `shell.exec`, `code.execute`, `payment.initiate`, `credential.read`, `credential.write`, or `unknown_sensitive_action`. Pick this for a zero-friction install when you plan to add forbids as you discover what needs locking down.
+
+- **`closed`** — implicit deny. No tool call is allowed unless an explicit `permit` rule covers it. Pick this for locked-down production deployments where the allow-list is authoritative.
+
+Select mode via the `CLAWTHORITY_MODE` environment variable before launching the agent:
+
+```bash
+# open (default) — nothing to set
+# closed
+export CLAWTHORITY_MODE=closed
+```
+
+Mode is read once at activation; restart the agent to change it. See [configuration.md — Install mode](configuration.md#install-mode) for the full rule-set breakdown per mode.
+
+### 6. Verify installation
 
 Restart OpenClaw and check the logs for a line like:
 
 ```
+[clawthority] mode: OPEN (implicit permit; critical forbids enforced)
 [clawthority] Plugin activated. Watching rules for changes.
 ```
 

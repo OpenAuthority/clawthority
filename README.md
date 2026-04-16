@@ -64,13 +64,13 @@ Skill-based safety (instruct the model to "please check first") fails the moment
 - A **policy decision + enforcement** layer for tool calls, installed as an OpenClaw plugin.
 - A **semantic** authorizer — rules are written against canonical action classes (`filesystem.delete`, `payment.initiate`), not brittle tool-name regexes.
 - A **cryptographic capability system** — HITL approvals are SHA-256-bound to `(action_class, target, payload_hash)` at approval time. Param tampering after approval = auto-deny.
-- **Fail-closed by default** — unknown tools, dropped channels, or unexpected errors all produce `deny`.
+- **Two install modes** — `open` (default, implicit permit + critical forbids) for zero-friction installs, and `closed` (implicit deny, explicit permits required) for locked-down production. Stage 1 capability/HITL gates and pipeline-level error handling fail closed in both modes.
 
 **Clawthority isn't:**
 
 - A model-safety or alignment layer. It does not enforce semantic constraints on prompt content, and it does not inspect tool *outputs* for sensitive data.
 - A runtime for agents. OpenClaw still decides *which* tools the agent sees; Clawthority decides *whether those calls run*.
-- A substitute for good action-class registration. Misregistered tools fall through to `unknown_sensitive_action` — still fail-closed, but a signal you need to register the alias.
+- A substitute for good action-class registration. Misregistered tools fall through to `unknown_sensitive_action`, which is a critical forbid in **both** modes — a signal you need to register the alias.
 
 ---
 
@@ -89,6 +89,14 @@ Register in `~/.openclaw/config.json`:
 ```json
 { "plugins": ["clawthority"] }
 ```
+
+By default Clawthority runs in **`open` mode** — implicit permit, with a critical-forbid safety net (`shell.exec`, `code.execute`, `payment.initiate`, `credential.read`, `credential.write`, `unknown_sensitive_action`). To run in **`closed` mode** (implicit deny, explicit permits required) set the env var before launching your agent:
+
+```bash
+export CLAWTHORITY_MODE=closed
+```
+
+Mode is read once at activation — restart the agent to change it.
 
 Drop a policy bundle at `data/bundles/active/bundle.json`:
 

@@ -265,18 +265,20 @@ Navigate to **Coverage Map** to see a matrix of which resource types have permit
 
 The plugin ships with a baseline rule set in `src/policy/rules/default.ts` covering the most common action classes. These rules are production-ready defaults suitable for most deployments. Override or extend them by editing the file directly or adding JSON rules to `data/rules.json`.
 
+> **Which rules load depends on the install mode.** In the default `open` mode, only the six priority-90/100 critical forbids marked below with 🔒 are loaded; the priority-10 `filesystem.read` permit and the `external_send` intent-group rule are redundant under implicit-permit semantics and are skipped. In `closed` mode the full table below loads. See [configuration.md — Install mode](configuration.md#install-mode).
+
 ### Default rule tiers
 
-| Priority | Action class | Effect | Reason |
-|---|---|---|---|
-| 10 | `filesystem.read` | permit | Read-only filesystem access is safe |
-| 90 | `payment.initiate` | forbid | Requires HITL approval |
-| 90 | `credential.read` | forbid | Requires HITL approval |
-| 90 | `credential.write` | forbid | Requires HITL approval |
-| 90 | *(intent group: `external_send`)* | forbid | Card data in payload requires HITL approval |
-| 100 | `shell.exec` | forbid | Direct shell execution is never permitted |
-| 100 | `code.execute` | forbid | Arbitrary code execution is never permitted |
-| 100 | `unknown_sensitive_action` | forbid | Fail-closed on unrecognised sensitive actions |
+| Priority | Action class | Effect | Loaded in `open` | Reason |
+|---|---|---|---|---|
+| 10 | `filesystem.read` | permit |  | Read-only filesystem access is safe |
+| 90 | `payment.initiate` | forbid | 🔒 | Requires HITL approval |
+| 90 | `credential.read` | forbid | 🔒 | Requires HITL approval |
+| 90 | `credential.write` | forbid | 🔒 | Requires HITL approval |
+| 90 | *(intent group: `external_send`)* | forbid |  | Card data in payload requires HITL approval |
+| 100 | `shell.exec` | forbid | 🔒 | Direct shell execution is never permitted |
+| 100 | `code.execute` | forbid | 🔒 | Arbitrary code execution is never permitted |
+| 100 | `unknown_sensitive_action` | forbid | 🔒 | Fail-closed on unrecognised sensitive actions |
 
 All `action_class` values map to entries in the normalization registry at [`src/enforcement/normalize.ts`](../src/enforcement/normalize.ts); see [action-registry.md](action-registry.md) for the full list.
 

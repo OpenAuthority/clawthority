@@ -322,10 +322,18 @@ export class PolicyEngine {
     const resource = PolicyEngine.mapActionClassToResource(actionClass);
     const resourceResult = this.evaluate(resource, resourceName, context);
 
-    // Resource-based forbid wins over any action_class permit
-    if (resourceResult.effect === 'forbid') return resourceResult;
+    // Cedar semantics: an EXPLICIT resource-based forbid wins over any
+    // action_class permit. Implicit defaultEffect='forbid' (no matchedRule)
+    // does NOT — otherwise an action_class permit rule would be silently
+    // swallowed in closed-mode deployments whenever no resource/match rule
+    // covered the target, which is nearly always the case for pure
+    // action_class rule sets.
+    if (resourceResult.effect === 'forbid' && resourceResult.matchedRule !== undefined) {
+      return resourceResult;
+    }
 
-    // First matching action_class permit takes precedence over implicit resource result
+    // First matching action_class permit takes precedence over the implicit
+    // resource result.
     for (const rule of actionClassRules) {
       if (rule.effect === 'permit') {
         return {

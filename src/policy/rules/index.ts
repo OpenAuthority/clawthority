@@ -1,5 +1,7 @@
 import type { Rule } from '../types.js';
-import defaultRules from './default.js';
+import defaultRules, { OPEN_MODE_RULES } from './default.js';
+
+export { OPEN_MODE_RULES };
 
 /**
  * Merges agent-specific rules with the baseline default rules.
