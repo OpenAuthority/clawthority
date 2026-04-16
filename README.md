@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/clawthority-logo.png" alt="Clawthority" width="320">
+  <img src="docs/assets/clawthority-logo.png" alt="Clawthority" width="200">
 </p>
 
 # Clawthority
