@@ -1,6 +1,15 @@
 # API Reference
 
-The UI dashboard exposes a REST API for managing rules and querying the audit log, plus a Server-Sent Events (SSE) endpoint for live audit streaming.
+> **Status: Reference spec — not yet implemented.**
+>
+> This document describes the target REST + Server-Sent Events surface for a
+> Clawthority management API. **No HTTP server currently ships with the plugin.**
+> The endpoints below are the agreed contract for upcoming dashboard and
+> control-plane work (see [roadmap.md](roadmap.md) — *Firma Remote Adapter* and
+> the *Control Plane API* under Future). Until that work lands, treat this page
+> as a design document, not operational documentation.
+
+The UI dashboard will expose a REST API for managing rules and querying the audit log, plus a Server-Sent Events (SSE) endpoint for live audit streaming.
 
 Base URL: `http://localhost:7331` (configurable via `PORT` env var)
 

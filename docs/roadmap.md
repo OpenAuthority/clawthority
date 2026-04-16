@@ -107,13 +107,11 @@ These features are built, tested, and working in the current codebase.
 - `TokenTelemetry` utility (`src/utils/token-telemetry.ts`) tracks LLM API token usage
 - Feeds the `/token-budget` skill for threshold alerts and spend estimation
 
-### UI Dashboard
-- Express server with REST API + React 18 + Vite SPA
-- Rules management (CRUD with persistence to JSON file)
-- Rule deletion modal with impact panel and typed confirmation input
-- Audit log viewer with pagination
-- Live audit streaming via SSE
-- Policy coverage map visualization (`CoverageMap`) integrated with the watcher
+### UI Components
+- React 18 + Vite component workspace in `ui/`
+- `RuleDeleteModal` with impact panel (rule structure display, audit hit preview, tag list) and typed-confirmation input
+- Component demo harness (`ui/src/App.tsx`) exercising action-class, intent-group, resource, and `target_match`/`target_in` rule shapes
+- `CoverageMap` utility (`src/policy/coverage.ts`) integrated with the hot-reload watcher for future dashboard consumers
 
 ### ClawHub Skills
 - `/token-budget` — token usage tracking, spend estimation, threshold alerts
