@@ -28,7 +28,7 @@ This document describes the design of the Clawthority policy engine plugin for O
 │                          OpenClaw Gateway                            │
 │                                                                      │
 │  ┌──────────────┐  hook events  ┌──────────────────────────────────┐ │
-│  │  Agent /     │ ────────────► │  Clawthority Plugin            │ │
+│  │  Agent /     │ ────────────► │  Clawthority Plugin              │ │
 │  │  Gateway     │ ◄──────────── │  (index.ts)                      │ │
 │  └──────────────┘  permit /     └────────────────┬─────────────────┘ │
 │                    forbid /                      │                   │
@@ -50,15 +50,15 @@ This document describes the design of the Clawthority policy engine plugin for O
              │  │                    Stage 2 (CEE)                │   │
              │  │                         │                       │   │
              │  │                         ▼                       │   │
-             │  │                  CeeDecision / StructuredDecision│   │
+             │  │                CeeDecision / StructuredDecision │   │
              │  └─────────────────────────────────────────────────┘   │
              │                                                        │
-             │  ┌───────────────────┐   ┌───────────────────────┐    │
-             │  │  IAuthorityAdapter│   │  HITL Approval System │    │
-             │  │  (file / Firma)   │   │  (hitl/)              │    │
-             │  └───────────────────┘   └────────────┬──────────┘    │
-             │                                       │               │
-             └───────────────────────────────────────┼───────────────┘
+             │  ┌───────────────────┐   ┌───────────────────────┐     │
+             │  │  IAuthorityAdapter│   │  HITL Approval System │     │
+             │  │  (file / Firma)   │   │  (hitl/)              │     │
+             │  └───────────────────┘   └────────────┬──────────┘     │
+             │                                       │                │
+             └───────────────────────────────────────┼────────────────┘
                                                      │
                ┌─────────────────────────┐  ┌────────▼──────────────┐
                │  Dashboard (Express +   │  │  Approval Channels    │
