@@ -1,5 +1,12 @@
 # Clawthority
 
+[![OpenClaw Plugin](https://img.shields.io/badge/OpenClaw-plugin-8A2BE2)](https://github.com/openclaw/openclaw)
+[![CI](https://github.com/Clawthority/clawthority/actions/workflows/e2e.yml/badge.svg)](https://github.com/Clawthority/clawthority/actions/workflows/e2e.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Node.js >= 18](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](https://nodejs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6.svg?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](docs/contributing.md)
+
 **A semantic authorization runtime for AI agents. Define what your agent can do, enforce it at the boundary, and keep a human in the loop for what matters.**
 
 Clawthority is a policy engine plugin for [OpenClaw](https://github.com/openclaw/openclaw) that sits between your AI agent and every tool it calls. It evaluates rules before execution happens — not by asking the model to comply, but by intercepting the call at the code boundary. If policy says no, the call is never placed.
