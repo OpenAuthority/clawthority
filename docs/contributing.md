@@ -1,6 +1,8 @@
 # Contributing Guide
 
-Thank you for contributing to Clawthority. This guide covers development setup, code conventions, testing requirements, and the pull request process.
+> **What this page is for.** Dev setup, code conventions, testing requirements, and the pull-request process. Read this before opening your first PR.
+
+Thank you for contributing to Clawthority.
 
 ---
 

@@ -1,6 +1,6 @@
 # Troubleshooting Guide
 
-This guide covers common issues and how to resolve them.
+> **What this page is for.** Common errors you may hit when running Clawthority, their likely causes, and how to resolve them.
 
 ---
 
@@ -83,7 +83,7 @@ This guide covers common issues and how to resolve them.
 
 **Symptom:** Prompts are rejected with a message about injection detection.
 
-**Cause:** The `before_prompt_build` hook checks for 8 regex patterns. If your prompt contains phrases like "ignore previous instructions" or "jailbreak", it is blocked.
+**Cause:** The `before_prompt_build` hook checks non-user message text against 5 injection regex patterns. If a message contains phrases like "ignore previous instructions", "new instructions:", or "act without restrictions", it is blocked. See [architecture.md — Prompt Injection Detection](architecture.md#prompt-injection-detection) for the full pattern list.
 
 **Resolution:**
 
@@ -99,7 +99,7 @@ Review the blocked prompt text. If it is legitimate content that accidentally ma
 
 **Resolution:**
 
-1. Check the tool name against the [Action Registry](action-registry.md). All 17 canonical action classes and their aliases are listed there.
+1. Check the tool name against the [Action Registry](action-registry.md). All canonical action classes and their aliases are listed there.
 2. If the tool is a legitimate custom tool, add it to the normalization registry in `src/enforcement/normalize.ts` by adding an alias to an existing action class or creating a new entry.
 3. To temporarily permit it without a registry entry, add a Cedar `permit` rule matching the tool name:
    ```typescript

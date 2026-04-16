@@ -13,29 +13,108 @@
 
 **A semantic authorization runtime for AI agents. Define what your agent can do, enforce it at the boundary, and keep a human in the loop for what matters.**
 
-Clawthority is a policy engine plugin for [OpenClaw](https://github.com/openclaw/openclaw) that sits between your AI agent and every tool it calls. It evaluates rules before execution happens — not by asking the model to comply, but by intercepting the call at the code boundary. If policy says no, the call is never placed.
+Clawthority is a policy engine plugin for [OpenClaw](https://github.com/openclaw/openclaw). It sits between your AI agent and every tool it calls, evaluates rules *before* execution, and — if policy says no — the call is never placed.
 
-## What's new in v0.1
+```
+Agent tool call  ─►  Clawthority  ─►  Allow  │  Deny  │  Ask human  ─►  Audit log
+```
 
-v0.1 is a ground-up restructure around a **two-stage enforcement pipeline** and a **canonical action registry**. It replaces the previous ABAC/JSON-rules engine and the UI/control-plane surface.
+> [!NOTE]
+> **Status: public preview.** APIs and the policy bundle schema may still change before v1. Pin to an exact commit for production use.
 
-**Highlights**
+---
 
-- **Two-stage pipeline** — Stage 1 capability gate (approval binding, TTL, one-time consumption, session scope) + Stage 2 CEE (protected paths, trusted domains, policy engine).
-- **Action normalization** — raw tool names are mapped to a canonical action registry (`filesystem.read`, `communication.external.send`, `payment.transfer`, …) with risk + default HITL mode. Unknown tools fail closed as `unknown_sensitive_action`.
-- **SHA-256 payload-bound approvals** — an approval is cryptographically bound to `(action_class, target, payload_hash)`. Tampering with parameters after approval invalidates it.
-- **IAuthorityAdapter** — policy bundles and capability issuance sit behind a swappable adapter (`FileAuthorityAdapter` ships by default).
-- **Versioned policy bundles** — `data/bundles/active/bundle.json` with monotonic version + SHA-256 checksum, hot-reloaded within ~500ms.
-- **Prompt-injection defense** — `before_prompt_build` hook blocks common injection patterns in non-user content.
-- **Source trust propagation** — tool calls originating from `untrusted` content (web fetch, email, file read) are denied for high/critical-risk action classes, even with a valid approval.
-- **HITL fully wired** — Telegram and Slack approval adapters, approval messages include action / target / summary / expiry / token.
-- **Fail closed** — any error in the pipeline returns `deny`.
+## Contents
 
-**Removed**
+- [Why Clawthority](#why-clawthority)
+- [What it is — and isn't](#what-it-is--and-isnt)
+- [Quickstart](#quickstart)
+- [How it works](#how-it-works)
+- [Action registry](#action-registry)
+- [Human-in-the-loop](#human-in-the-loop)
+- [Configuration](#configuration)
+- [Documentation](#documentation)
+- [Development](#development)
+- [License](#license)
 
-- Legacy ABAC/JSON rules engine (`src/engine.ts`, `src/rules.ts`, `data/rules.json`, `data/builtin-rules.json`)
-- UI dashboard (`ui/`) and control-plane API (`control-plane-api/`)
-- Raw tool-name matching in HITL (matching now happens on `action_class`)
+---
+
+## Why Clawthority
+
+AI agents call tools. When a tool can delete files, send money, or talk to strangers, **who decides whether that call goes through — the model, or you?**
+
+Skill-based safety (instruct the model to "please check first") fails the moment the model is wrong, distracted, or prompt-injected. Clawthority moves the decision **outside the model's loop** — into the code path between the agent and the tool.
+
+| | **The Skill (model-enforced)** | **The Plugin (code-enforced)** |
+|---|---|---|
+| **Lives in** | Context window — model sees it | Execution path — between agent and tools |
+| **Enforces via** | Model reasoning; asks it to comply | Code boundary; intercepts the call |
+| **Can be bypassed?** | Yes — prompt injection, loop misfire | No — runs outside the model's loop |
+| **Gives you** | Observability + soft stop | Hard enforcement + append-only audit log |
+
+> A skill *asks* the model to enforce. A plugin enforces regardless of what the model decides.
+
+---
+
+## What it is — and isn't
+
+**Clawthority is:**
+
+- A **policy decision + enforcement** layer for tool calls, installed as an OpenClaw plugin.
+- A **semantic** authorizer — rules are written against canonical action classes (`filesystem.delete`, `payment.transfer`), not brittle tool-name regexes.
+- A **cryptographic capability system** — HITL approvals are SHA-256-bound to `(action_class, target, payload_hash)` at approval time. Param tampering after approval = auto-deny.
+- **Fail-closed by default** — unknown tools, dropped channels, or unexpected errors all produce `deny`.
+
+**Clawthority isn't:**
+
+- A model-safety or alignment layer. It does not enforce semantic constraints on prompt content, and it does not inspect tool *outputs* for sensitive data.
+- A runtime for agents. OpenClaw still decides *which* tools the agent sees; Clawthority decides *whether those calls run*.
+- A substitute for good action-class registration. Misregistered tools fall through to `unknown_sensitive_action` — still fail-closed, but a signal you need to register the alias.
+
+---
+
+## Quickstart
+
+Install as an OpenClaw plugin:
+
+```bash
+git clone https://github.com/OpenAuthority/clawthority ~/.openclaw/plugins/clawthority
+cd ~/.openclaw/plugins/clawthority
+npm install && npm run build
+```
+
+Register in `~/.openclaw/config.json`:
+
+```json
+{ "plugins": ["clawthority"] }
+```
+
+Drop a policy bundle at `data/bundles/active/bundle.json`:
+
+```json
+{
+  "version": 1,
+  "rules": [
+    { "effect": "permit", "action_class": "filesystem.read",  "priority": 10 },
+    { "effect": "forbid", "action_class": "shell.exec",       "priority": 100 },
+    { "effect": "forbid", "action_class": "payment.initiate", "priority": 90 }
+  ],
+  "checksum": "<SHA-256 of JSON.stringify(rules)>"
+}
+```
+
+Run your agent. A `shell.exec` call now terminates at the boundary:
+
+```
+[clawthority] │ DECISION: ✕ BLOCKED (cedar/forbid) — shell.exec
+```
+
+Every decision — allow or deny — is streamed to `data/audit.jsonl`.
+
+> [!TIP]
+> Bundles are hot-reloaded with monotonic version + checksum enforcement, so you can iterate on rules without restarting your agent.
+
+---
 
 ## How it works
 
@@ -68,33 +147,40 @@ Agent picks a tool → Clawthority intercepts
 
 Every decision emits an `ExecutionEvent` to the append-only JSONL audit log with `action_class`, `target`, `decision`, `deny_reason`, `latency_ms`, and `context_hash`.
 
+Full walk-through: [docs/architecture.md](docs/architecture.md).
+
+---
+
 ## Action registry
 
-Tool calls are normalized to a canonical action class before policy evaluation. Examples:
+Tool calls are normalized to a canonical action class **before** policy evaluation. You write rules against the class, not the tool name — so aliases, renames, and misspelled parameters all route to the same decision.
 
 | action_class | risk | default HITL | sample aliases |
 |---|---|---|---|
-| `filesystem.read` | low | none | `read_file`, `ls`, `glob`, `cat` |
-| `filesystem.write` | medium | session | `write_file`, `edit_file`, `str_replace` |
-| `filesystem.delete` | high | approve_once | `rm`, `delete_file`, `unlink` |
-| `communication.external.send` | high | approve_once | `send_email`, `gmail`, `mail` |
-| `payment.transfer` | critical | approve_once | `wire_transfer`, `transfer_funds` |
-| `system.execute` | high | approve_once | `exec`, `bash`, `run_command` |
-| `credential.write` | critical | approve_once | `set_secret`, `keychain_set` |
-| `unknown_sensitive_action` | critical | approve_once | *(fallback for unknown tools)* |
+| `filesystem.read` | low | none | `read_file`, `cat_file`, `view_file` |
+| `filesystem.write` | medium | per_request | `write_file`, `edit_file`, `patch_file` |
+| `filesystem.delete` | high | per_request | `rm`, `delete_file`, `unlink`, `shred` |
+| `shell.exec` | high | per_request | `exec`, `bash`, `run_command` |
+| `communication.email` | high | per_request | `send_email`, `gmail`, `mail` |
+| `web.post` | medium | per_request | `http_post`, `axios.post`, `fetch` |
+| `payment.initiate` | critical | per_request | `wire_transfer`, `stripe_charge` |
+| `credential.write` | critical | per_request | `set_secret`, `keychain_set` |
+| `unknown_sensitive_action` | critical | per_request | *fallback for unknown tools* |
 
-**Parameter reclassification** — a `filesystem.write` with a URL or email-shaped target is reclassified to `communication.external.send`; shell metacharacters in `system.execute` / `filesystem.write` params escalate risk to `critical`.
+**Parameter reclassification** — a `filesystem.write` with a URL target is reclassified to `web.post`; shell metacharacters in `shell.exec` / `filesystem.write` parameters escalate risk to `critical`.
 
-Full table in [docs/action-registry.md](docs/action-registry.md).
+Full table: [docs/action-registry.md](docs/action-registry.md).
 
-## Human-in-the-Loop
+---
 
-High-risk actions route to a human for approval via Telegram or Slack. Approvals are:
+## Human-in-the-loop
+
+High-risk action classes route to a human for approval via Telegram or Slack. Approvals are:
 
 - **Payload-bound** — SHA-256 of `(action_class | target | payload_hash)` is stored with the approval and re-verified at consumption. Any parameter change invalidates the token.
-- **One-time** (`approve_once`) or **session-scoped** (`session`) — session approvals are keyed on `${session_id}:${action_class}`.
+- **One-time** (`approve_once`) or **session-scoped** (`session`) — session approvals keyed on `${session_id}:${action_class}`.
 - **TTL-limited** — default 120 seconds, configurable.
-- **UUID v7** — time-sortable approval IDs.
+- **UUID v7 IDs** — time-sortable, safe to log.
 
 Example approval message:
 
@@ -106,38 +192,13 @@ Expires: 2026-04-14T12:34:56Z
 Token:   01f2e4b8-...
 ```
 
-Details: [docs/human-in-the-loop.md](docs/human-in-the-loop.md).
+Channel setup, retry/backoff, and fallback behaviour: [docs/human-in-the-loop.md](docs/human-in-the-loop.md).
 
-## The Skill vs The Plugin
+---
 
-| | **The Skill** | **The Plugin** |
-|---|---|---|
-| **Lives in** | Context window (model sees it) | Execution path (between agent + tools) |
-| **Enforces via** | Model reasoning — asks it to comply | Code boundary — before call is placed |
-| **Can be bypassed?** | Yes — prompt injection, loop misfire | No — operates outside the model's loop |
-| **Gives you** | Observability + soft stop | Hard enforcement + immutable audit log |
+## Configuration
 
-> *A skill asks the model to enforce. A plugin enforces regardless of what the model decides.*
-
-## Quick start
-
-### Install
-
-```bash
-git clone https://github.com/OpenAuthority/clawthority ~/.openclaw/plugins/clawthority
-cd ~/.openclaw/plugins/clawthority
-npm install && npm run build
-```
-
-Register in `~/.openclaw/config.json`:
-
-```json
-{ "plugins": ["clawthority"] }
-```
-
-### Configure
-
-`openclaw.plugin.json` fields (all optional):
+All config lives in `openclaw.plugin.json` — every field is optional:
 
 ```json
 {
@@ -155,83 +216,48 @@ Register in `~/.openclaw/config.json`:
 }
 ```
 
-### Policy bundles
+Full schema and environment-variable overrides: [docs/configuration.md](docs/configuration.md).
 
-Rules live in `data/bundles/active/bundle.json`:
+> [!IMPORTANT]
+> In production, set `data/bundles/active/` read-only for the Clawthority process user. Only your deployment pipeline should have write access.
 
-```json
-{
-  "version": 1,
-  "rules": [
-    { "effect": "permit", "action_class": "filesystem.read",  "priority": 10 },
-    { "effect": "forbid", "action_class": "system.execute",   "priority": 100 },
-    { "effect": "forbid", "action_class": "payment.transfer", "priority": 90 }
-  ],
-  "checksum": "<SHA-256 of JSON.stringify(rules)>"
-}
-```
+---
 
-The adapter watches the bundle directory, validates version monotonicity and checksum, and hot-reloads on change. In production, set the `active/` directory read-only for the Clawthority process user; only your deployment pipeline should have write access.
+## Documentation
 
-## Hooks
+**Getting started**
+- [Installation](docs/installation.md) — prerequisites, plugin registration, first run
+- [Configuration](docs/configuration.md) — full schema, env-var overrides, secrets handling
+- [Usage](docs/usage.md) — common rule patterns and day-to-day operation
 
-| Hook | Purpose |
-|---|---|
-| `before_tool_call` | Primary enforcement — normalize, run two-stage pipeline, emit audit event |
-| `before_prompt_build` | Prompt-injection defense — blocks known injection patterns in non-user content |
+**Architecture & reference**
+- [Architecture](docs/architecture.md) — `ExecutionEnvelope`, two-stage pipeline, adapter layer
+- [Action Registry](docs/action-registry.md) — all canonical action classes, risk tiers, HITL modes
+- [Human-in-the-Loop](docs/human-in-the-loop.md) — payload binding, session vs approve-once, channel adapters
+- [API Reference](docs/api.md) — target spec for the dashboard / control-plane REST + SSE surface
 
-## Project structure
+**Operations**
+- [Rule Deletion](docs/rule-deletion.md) — safe rule removal via the impact-preview modal
+- [Troubleshooting](docs/troubleshooting.md) — common errors, log prefixes, fail-closed diagnostics
+- [Roadmap](docs/roadmap.md) — what's shipped, what's next
 
-```
-src/
-  index.ts                   — plugin entry, hook registration, wiring
-  types.ts                   — ExecutionEnvelope, Intent, Capability, CeeDecision, …
-  envelope.ts                — buildEnvelope, uuidv7, computePayloadHash, computeContextHash
-  audit.ts                   — JsonlAuditLogger
-  enforcement/
-    pipeline.ts              — executePipeline orchestrator
-    normalize.ts             — canonical action registry + normalizer
-    stage1-capability.ts     — Stage 1 capability gate
-    stage2-policy.ts         — Stage 2 CEE factory
-  policy/
-    engine.ts                — PolicyEngine + evaluateByActionClass
-    bundle.ts                — validateBundle (schema, monotonicity, checksum)
-    types.ts                 — Rule, Effect, RateLimit
-    rules/default.ts         — default action-class rules
-  adapter/
-    types.ts                 — IAuthorityAdapter, ApprovalRequest, PolicyBundle
-    file-adapter.ts          — FileAuthorityAdapter (watches bundles/active)
-  hitl/
-    approval-manager.ts      — payload-bound approvals, session + approve_once
-    matcher.ts               — action_class dot-notation matching
-    telegram.ts, slack.ts    — approval channel adapters
-data/
-  bundles/
-    active/bundle.json       — active policy bundle
-    proposals/               — staged bundle proposals
-  audit.jsonl                — append-only execution-event log
-docs/                        — architecture, action registry, HITL, configuration
-```
+**Contributing**
+- [Contributing guide](docs/contributing.md) — dev setup, test layout, commit conventions
+
+---
 
 ## Development
 
 ```bash
 npm install
-npm run dev     # watch mode
-npm run build   # production build
-npm test        # vitest
+npm run dev          # watch mode
+npm run build        # production build
+npm test             # unit tests
+npm run test:e2e     # end-to-end tests
 ```
 
-## Documentation
-
-| Guide | Description |
-|---|---|
-| [Architecture](docs/architecture.md) | ExecutionEnvelope, two-stage pipeline, adapter swap path |
-| [Configuration](docs/configuration.md) | Full config schema with examples |
-| [Action Registry](docs/action-registry.md) | All canonical action classes, aliases, risk, HITL modes |
-| [Human-in-the-Loop](docs/human-in-the-loop.md) | Payload binding, session vs approve_once, message format |
-| [Rule Deletion](docs/rule-deletion.md) | Step-by-step guide for removing rules from the active policy bundle |
+---
 
 ## License
 
-Apache-2.0
+[Apache-2.0](LICENSE).

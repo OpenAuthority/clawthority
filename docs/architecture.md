@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the design of the Clawthority policy engine plugin for OpenClaw, the decisions behind the architecture, and how components fit together.
+> **What this page is for.** The design of the Clawthority policy engine plugin — data structures, enforcement pipeline stages, and how the adapter layer decouples the plugin from its authority backend.
 
 ---
 
@@ -388,7 +388,7 @@ interface ActionRegistryEntry {
 }
 ```
 
-The 17 canonical action classes are documented in [action-registry.md](action-registry.md). `unknown_sensitive_action` is the fail-closed catch-all — it has no aliases by design; unknown tool names fall through to it automatically.
+The canonical action classes (19 entries including the fail-closed catch-all) are documented in [action-registry.md](action-registry.md). `unknown_sensitive_action` has no aliases by design; unknown tool names fall through to it automatically.
 
 ### Target Extraction
 
@@ -599,7 +599,7 @@ Clawthority enforces the following:
 The following are **not** enforced by Clawthority and must be addressed at other layers:
 
 - **Tool output inspection** — Clawthority intercepts tool call *invocations*, not responses. If a permitted tool returns sensitive data, that data is not inspected.
-- **Prompt content enforcement** — The `before_prompt_build` hook performs lightweight injection detection (regex patterns) but does not enforce semantic constraints on prompt content. It is disabled by default pending false-positive tuning.
+- **Prompt content enforcement** — The `before_prompt_build` hook performs lightweight injection detection (regex patterns) but does not enforce semantic constraints on prompt content.
 - **Cross-session capability reuse** — Capability tokens are stored in memory for the lifetime of the adapter instance. Restarting the process clears all issued capabilities; there is no persistent revocation log in the file adapter.
 - **Multi-agent coordination** — When multiple agent instances share a session, capability consumption tracking is per-process. An approval consumed by one agent instance is not visible to another process.
 - **Nested tool calls** — Tool calls made by tools (e.g. a code execution tool that itself invokes an HTTP request) are not intercepted; only the outermost tool call at the OpenClaw hook boundary is evaluated.
@@ -618,8 +618,8 @@ Clawthority integrates with OpenClaw via three hook points. Only `before_tool_ca
 | Hook | Can block? | Status | Purpose |
 |---|---|---|---|
 | `before_tool_call` | **Yes** | Active | Primary enforcement: normalizes the tool call, runs the two-stage pipeline, returns `block: true` on `forbid`. |
-| `before_prompt_build` | No (observe/mutate) | Implemented, disabled | Regex-based prompt injection detection (8 patterns). Disabled pending false-positive tuning. |
-| `before_model_resolve` | No (observe/mutate) | Implemented, disabled | Model routing. Disabled: OpenClaw does not yet pass the model name in the event payload. |
+| `before_prompt_build` | No (observe/mutate) | Active | Regex-based prompt injection detection (5 patterns) on non-user message sources. |
+| `before_model_resolve` | No (observe/mutate) | Active | Model routing hook registered for future use; OpenClaw does not yet pass the model name in the event payload, so this handler currently observes without routing. |
 
 ### before_tool_call Integration
 
@@ -658,20 +658,17 @@ ctx.on('before_tool_call', async (toolCall) => {
 
 ### Prompt Injection Detection
 
-The `before_prompt_build` hook checks prompt text against 8 regex patterns:
+The `before_prompt_build` hook checks non-user message text against 5 regex patterns grouped by injection category:
 
-```
-/ignore\s+(previous|prior|all)\s+instructions/i
-/disregard\s+(previous|prior|all|the)/i
-/forget\s+(previous|prior|all|the|your)/i
-/DAN\s+mode/i
-/jailbreak/i
-/bypass\s+(safety|restrictions|guidelines|policies)/i
-/override\s+(system\s+)?prompt/i
-/you\s+are\s+now\s+.*(different|new|another)\s+AI/i
-```
+| # | Category | Pattern |
+|---|---|---|
+| 1 | Ignore instructions | `/ignore\s+(all\s+)?(previous\|prior\|above)\s+instructions?/i` |
+| 2 | New instructions marker | `/\bnew\s+instructions?\s*:/i` |
+| 3 | Forget commands | `/\bforget\s+(everything\|all\|your\s+(previous\s+)?(instructions?\|training\|context\|rules?\|guidelines?))/i` |
+| 4 | Imperative override | `/\byou\s+(must\s+now\|are\s+now\s+required\s+to\|will\s+immediately)\s+/i` |
+| 5 | Unrestricted acting | `/\b(act\|pretend\|respond\|behave)\s+(without\s+any?\s+restrictions?\|as\s+if\s+you\s+have\s+no\s+restrictions?)/i` |
 
-A pattern match blocks the prompt before policy evaluation — this is a hard-coded safety layer independent of the configurable rule set.
+Only non-user sources are scanned; prompts from `user` source pass through unchanged. A match blocks the prompt before any downstream policy evaluation — this is a hard-coded safety layer independent of the configurable rule set. Source of truth: [`src/index.ts`](../src/index.ts) (`INJECTION_PATTERNS`).
 
 ---
 

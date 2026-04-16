@@ -1,6 +1,6 @@
 # Human-in-the-Loop (HITL)
 
-This guide covers how Clawthority routes high-stakes agent actions to a human operator for approval before execution, using Telegram or Slack.
+> **What this page is for.** How Clawthority routes high-stakes agent actions to a human operator for approval before execution — channel setup (Telegram, Slack), payload binding, retry/backoff, and fallback behaviour.
 
 ---
 
@@ -20,7 +20,7 @@ This is not a prompt asking the model to check with you. It is a code-level gate
 Agent attempts email.delete
         |
         v
-  Cedar / JSON / ABAC policy engines evaluate
+  Cedar / JSON-Cedar policy engines evaluate
         |
         +-- forbid? --> action blocked (no HITL check)
         |
@@ -644,17 +644,12 @@ Agent action
   |-- pass? --> continue
   |
   v
-2. JSON Cedar engine (data/rules.json)
+2. JSON-Cedar engine (data/rules.json)
   |-- forbid? --> BLOCK
   |-- pass? --> continue
   |
   v
-3. ABAC engine (TypeBox policies)
-  |-- deny? --> BLOCK
-  |-- pass? --> continue
-  |
-  v
-4. HITL check (does this action need human approval?)
+3. HITL check (does this action need human approval?)
   |-- no match --> ALLOW
   |-- match --> send approval request, await response
       |-- approved --> ALLOW
@@ -663,7 +658,7 @@ Agent action
       |-- expired + fallback=auto-approve --> ALLOW
   |
   v
-5. Audit log (all decisions recorded)
+4. Audit log (all decisions recorded)
 ```
 
 A HITL-approved action has already passed through all policy engines. Approval from a human does not bypass budget caps, capability gates, or forbid rules. The two systems are complementary:

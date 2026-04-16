@@ -1,6 +1,6 @@
 # Usage Guide
 
-This document covers common policy patterns, usage examples for both rule styles, and how to use the UI dashboard.
+> **What this page is for.** Common policy patterns, rule examples, and day-to-day operation of the plugin.
 
 ## Policy Engine
 

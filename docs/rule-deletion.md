@@ -1,6 +1,6 @@
 # Rule Deletion Guide
 
-How to remove rules from the active policy bundle in Clawthority.
+> **What this page is for.** How to safely remove rules from the active policy bundle — bundle structure, impact preview, and step-by-step procedure.
 
 ---
 
