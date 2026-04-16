@@ -1,6 +1,6 @@
 # Roadmap
 
-This document tracks what Clawthority has shipped, what is in progress, and what comes next. It is updated as work is completed.
+> **What this page is for.** What Clawthority has shipped, what is in progress, and what comes next. Updated as work completes.
 
 Last updated: April 2026
 
@@ -63,7 +63,7 @@ These features are built, tested, and working in the current codebase.
 
 ### Gateway Hook Integration
 - `before_tool_call` — primary enforcement hook (active)
-- `before_prompt_build` — prompt injection detection with 10 regex patterns (active)
+- `before_prompt_build` — prompt injection detection with 5 regex patterns on non-user sources (active)
 - `before_model_resolve` — model routing (active)
 - Typed and legacy hook registration (`ctx.on` + `registerHook`)
 - Plugin interface with `activate()` / `deactivate()` lifecycle

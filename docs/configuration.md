@@ -1,6 +1,6 @@
 # Configuration Reference
 
-Complete configuration reference for deploying and operating the Clawthority plugin.
+> **What this page is for.** Complete reference for every config field the plugin accepts — plugin manifest schema, bundle layout, environment-variable overrides, and secrets handling.
 
 ---
 

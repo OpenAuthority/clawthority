@@ -1,6 +1,6 @@
 # Installation Guide
 
-This guide walks through installing and registering the Clawthority plugin for OpenClaw, configuring the HITL approval flow, and setting up the UI dashboard.
+> **What this page is for.** Installing and registering the Clawthority plugin for OpenClaw, and configuring the HITL approval flow.
 
 ## Prerequisites
 
