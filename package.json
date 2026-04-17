@@ -1,5 +1,5 @@
 {
-  "name": "@openauthority/clawthority",
+  "name": "@clawthority/clawthority",
   "version": "1.1.2",
   "description": "Authorization policy engine plugin for Clawthority",
   "type": "module",

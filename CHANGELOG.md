@@ -15,7 +15,6 @@ Addresses findings from the ClawHub security scan on the 1.1.1 upload and reconc
 
 ### Changed
 
-- **Package scope renamed** from `@clawthority/clawthority` to `@openauthority/clawthority` to align with the publishing org on ClawHub. The plugin `id` and `installPath` are unchanged.
 - **Compat range lowered** from `>=2026.3.24-beta.2` to `>=2026.3.13` in `package.json` `openclaw.compat.pluginApi` and `openclaw.compat.minGatewayVersion` so the plugin declares support for the current stable OpenClaw release rather than the docs-example beta.
 
 ### Added
