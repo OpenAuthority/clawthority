@@ -25,5 +25,8 @@ Thumbs.db
 .env
 .env.*
 
+# Runtime state — created by the install script, not committed
+data/.installed
+
 # Claude
 .claude/
