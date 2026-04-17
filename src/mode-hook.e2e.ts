@@ -126,12 +126,14 @@ describe('install mode — production hook handler', () => {
       expect(result?.blockReason).toMatch(/shell|forbidden/i);
     });
 
-    it('blocks an unknown tool (unknown_sensitive_action critical forbid)', async () => {
+    it('permits an unknown tool (unknown_sensitive_action falls through to implicit permit)', async () => {
       const handler = await loadPluginInMode('open');
       const result = await callHook(handler, 'totally_unknown_tool_xyz', {});
-      // Unknown tools normalize to `unknown_sensitive_action`, which is in
-      // OPEN_MODE_RULES as a forbid — so the implicit permit must NOT win.
-      expect(result?.block).toBe(true);
+      // Unknown tools normalize to `unknown_sensitive_action`, which is NOT in
+      // OPEN_MODE_RULES — so the implicit permit must win. OPEN mode is
+      // zero-friction: unknown tools fall through unless a specific critical
+      // forbid matches.
+      expect(result?.block).not.toBe(true);
     });
   });
 
