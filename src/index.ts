@@ -389,14 +389,30 @@ const jsonRulesEngineRef: { current: CedarPolicyEngine | null } = {
 
 /**
  * JSON rule record as written in data/rules.json.
- * Uses Cedar-style fields — effect, resource, match — not the TypeBox schema.
+ *
+ * Two forms are supported:
+ *
+ * 1. Tool/resource name matching (original form):
+ *    { "resource": "tool", "match": "web_search", "effect": "forbid" }
+ *
+ * 2. Action class matching (preferred for semantic rules):
+ *    { "action_class": "filesystem.delete", "effect": "forbid" }
+ *
+ *    Action class values correspond to the normalizer registry in
+ *    src/enforcement/normalize.ts (e.g. filesystem.read, filesystem.delete,
+ *    shell.exec, web.search, credential.read, payment.initiate, etc.).
+ *    This form matches all tools that normalise to that action class,
+ *    so you don't need to enumerate every tool name alias.
  */
 interface JsonRuleRecord {
   id?: string;
   effect: "permit" | "forbid";
-  resource: "tool" | "command" | "channel" | "prompt" | "model";
+  /** Resource-based matching: pair with `match`. */
+  resource?: "tool" | "command" | "channel" | "prompt" | "model";
   /** Exact string or regex source (e.g. "^web_fetch$") to match resource name. */
-  match: string;
+  match?: string;
+  /** Action-class matching: semantic class from the normalizer registry. */
+  action_class?: string;
   reason?: string;
   tags?: string[];
 }
@@ -433,6 +449,29 @@ async function loadJsonRules(): Promise<void> {
     }
 
     const cedarRules: Rule[] = records.map((rec, i) => {
+      // Action-class form: { action_class, effect, reason?, tags? }
+      // Matches all tools that normalise to that action class.
+      if (rec.action_class !== undefined) {
+        if (rec.resource !== undefined || rec.match !== undefined) {
+          console.warn(
+            `[plugin:clawthority] data/rules.json rule[${i}] mixes action_class with resource/match — ignoring resource/match`
+          );
+        }
+        return {
+          effect: rec.effect,
+          action_class: rec.action_class,
+          ...(rec.reason !== undefined ? { reason: rec.reason } : {}),
+          ...(rec.tags !== undefined ? { tags: rec.tags } : {}),
+        } satisfies Rule;
+      }
+
+      // Resource/match form: { resource, match, effect, reason?, tags? }
+      if (rec.resource === undefined || rec.match === undefined) {
+        throw new TypeError(
+          `data/rules.json rule[${i}] must have either action_class or both resource+match`
+        );
+      }
+
       // Convert to RegExp when regex metacharacters are present; otherwise
       // normalise to lowercase (tool names in OpenClaw are always lowercase,
       // so "Exec" in JSON would never match without this).

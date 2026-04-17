@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.4] — 2026-04-17
+
+Fixes user-reported lockout when trying to add a `filesystem.delete` policy rule.
+
+### Fixed
+
+- **`data/rules.json` now supports `action_class` matching.** Previously the JSON hot-reload format only accepted `resource` + `match` (tool name), forcing operators to enumerate every tool alias (e.g. `trash`, `rm`, `delete_file`, ...) to block a semantic action class. Rules can now be written as `{"action_class": "filesystem.delete", "effect": "forbid"}` and will match all tools that normalise to that class. The old `resource`/`match` form still works unchanged.
+
+- **`filesystem.delete` added to `DEFAULT_RULES`** at priority 90 (forbidden, HITL tier). It was present in the normalizer registry but had no corresponding policy rule, leaving it unblocked in both OPEN and CLOSED mode. Now forbidden by default in CLOSED mode. In OPEN mode it falls through to implicit permit unless the operator adds an explicit `data/rules.json` entry.
+
+### ⚠️ Do not edit `dist/` files directly
+
+Editing compiled files in `dist/policy/rules/` while the hot-reload watcher is active can cause a complete tool lockout if the edit produces invalid JavaScript. Always use `data/rules.json` for runtime rule changes, or edit source files in `src/` and rebuild.
+
+---
+
 ## [1.1.3] — 2026-04-17
 
 Fixes a critical regression in OPEN mode where most OpenClaw tools were blocked.

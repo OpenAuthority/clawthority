@@ -95,6 +95,20 @@ const DEFAULT_RULES: Rule[] = [
   // ─── Priority 100: Unconditionally forbidden actions ────────────────────────
 
   /**
+   * Forbid filesystem delete operations.
+   * Destructive filesystem actions are high-risk and should require explicit
+   * operator approval. Active in CLOSED mode; add a data/rules.json entry
+   * with action_class: filesystem.delete to enforce this in OPEN mode too.
+   */
+  {
+    action_class: 'filesystem.delete',
+    effect: 'forbid',
+    priority: 90,
+    reason: 'Filesystem delete operations require human-in-the-loop approval',
+    tags: ['filesystem', 'destructive', 'hitl'],
+  },
+
+  /**
    * Unconditionally forbid shell execution.
    * Direct shell invocation bypasses all command-level policy.
    */
