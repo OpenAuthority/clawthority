@@ -38,6 +38,7 @@ import { matchesActionPattern, checkAction } from './matcher.js';
 import {
   validateHitlPolicyConfig,
   parseHitlPolicyFile,
+  findUnknownSensitiveActionMatches,
   HitlPolicyParseError,
   HitlPolicyValidationError,
 } from './parser.js';
@@ -457,6 +458,91 @@ policies:
     } catch (err) {
       expect(err).toBeInstanceOf(HitlPolicyParseError);
       expect((err as HitlPolicyParseError).filePath).toBe(tmpFile);
+    }
+  });
+});
+
+// ─── 4b. findUnknownSensitiveActionMatches ───────────────────────────────────
+
+describe('findUnknownSensitiveActionMatches', () => {
+  const approval = { channel: 'slack', timeout: 60, fallback: 'deny' as const };
+
+  it('returns empty list when no policy matches unknown_sensitive_action', () => {
+    const config: HitlPolicyConfig = {
+      version: '1',
+      policies: [{ name: 'Deletes', actions: ['filesystem.delete'], approval }],
+    };
+    expect(findUnknownSensitiveActionMatches(config)).toEqual([]);
+  });
+
+  it('detects an exact "unknown_sensitive_action" pattern', () => {
+    const config: HitlPolicyConfig = {
+      version: '1',
+      policies: [
+        { name: 'Trap', actions: ['unknown_sensitive_action'], approval },
+      ],
+    };
+    expect(findUnknownSensitiveActionMatches(config)).toEqual(['Trap']);
+  });
+
+  it('detects a bare "*" wildcard pattern as a match', () => {
+    const config: HitlPolicyConfig = {
+      version: '1',
+      policies: [{ name: 'Catch-all', actions: ['*'], approval }],
+    };
+    expect(findUnknownSensitiveActionMatches(config)).toEqual(['Catch-all']);
+  });
+
+  it('returns each matching policy once, even with multiple matching patterns', () => {
+    const config: HitlPolicyConfig = {
+      version: '1',
+      policies: [
+        {
+          name: 'Dup',
+          actions: ['*', 'unknown_sensitive_action'],
+          approval,
+        },
+      ],
+    };
+    expect(findUnknownSensitiveActionMatches(config)).toEqual(['Dup']);
+  });
+
+  it('parseHitlPolicyFile logs a warning when a policy matches unknown_sensitive_action', async () => {
+    const tmpFile = join(tmpdir(), `hitl-unknown-warn-${Date.now()}.json`);
+    const config: HitlPolicyConfig = {
+      version: '1',
+      policies: [{ name: 'Trap', actions: ['unknown_sensitive_action'], approval }],
+    };
+    await writeFile(tmpFile, JSON.stringify(config), 'utf-8');
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await parseHitlPolicyFile(tmpFile);
+      expect(warnSpy).toHaveBeenCalledOnce();
+      const message = warnSpy.mock.calls[0]?.[0] as string;
+      expect(message).toContain('unknown_sensitive_action');
+      expect(message).toContain('Trap');
+    } finally {
+      warnSpy.mockRestore();
+      await rm(tmpFile, { force: true });
+    }
+  });
+
+  it('parseHitlPolicyFile does not warn for benign policies', async () => {
+    const tmpFile = join(tmpdir(), `hitl-ok-${Date.now()}.json`);
+    const config: HitlPolicyConfig = {
+      version: '1',
+      policies: [{ name: 'Deletes', actions: ['filesystem.delete'], approval }],
+    };
+    await writeFile(tmpFile, JSON.stringify(config), 'utf-8');
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await parseHitlPolicyFile(tmpFile);
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+      await rm(tmpFile, { force: true });
     }
   });
 });
