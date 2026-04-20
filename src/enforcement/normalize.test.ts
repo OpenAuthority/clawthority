@@ -257,6 +257,101 @@ describe('normalize_action — shell metacharacter detection', () => {
 });
 
 // ---------------------------------------------------------------------------
+// normalize_action — reclassification rule 4 (shell wrapper + destructive
+// command → filesystem.delete)
+// ---------------------------------------------------------------------------
+
+describe('normalize_action — shell wrapper with destructive command', () => {
+  it('reclassifies exec + rm to filesystem.delete', () => {
+    const result = normalize_action('exec', { command: 'rm /tmp/file' });
+    expect(result.action_class).toBe('filesystem.delete');
+    expect(result.hitl_mode).toBe('per_request');
+    expect(result.intent_group).toBe('destructive_fs');
+  });
+
+  it('reclassifies bash + rmdir to filesystem.delete', () => {
+    const result = normalize_action('bash', { command: 'rmdir /tmp/dir' });
+    expect(result.action_class).toBe('filesystem.delete');
+  });
+
+  it('reclassifies exec + shred to filesystem.delete', () => {
+    const result = normalize_action('exec', { command: 'shred /tmp/secret' });
+    expect(result.action_class).toBe('filesystem.delete');
+  });
+
+  it('reclassifies exec + unlink to filesystem.delete', () => {
+    const result = normalize_action('exec', { command: 'unlink /tmp/link' });
+    expect(result.action_class).toBe('filesystem.delete');
+  });
+
+  it('reclassifies sudo-prefixed destructive commands', () => {
+    const result = normalize_action('exec', { command: 'sudo rm -rf /tmp/dir' });
+    expect(result.action_class).toBe('filesystem.delete');
+  });
+
+  it('is case-insensitive on the command', () => {
+    const result = normalize_action('exec', { command: 'RM /tmp/file' });
+    expect(result.action_class).toBe('filesystem.delete');
+  });
+
+  it('is case-insensitive on the tool name', () => {
+    const result = normalize_action('EXEC', { command: 'rm /tmp/file' });
+    expect(result.action_class).toBe('filesystem.delete');
+  });
+
+  it('does not reclassify non-destructive exec commands', () => {
+    const result = normalize_action('exec', { command: 'ls /tmp' });
+    // exec is not in aliases → stays unknown_sensitive_action
+    expect(result.action_class).toBe('unknown_sensitive_action');
+  });
+
+  it('does not match English words that happen to contain destructive substrings', () => {
+    // "remove" alone is not a Unix command; don't reclassify
+    const result = normalize_action('exec', { command: 'remove_comment /tmp/file' });
+    expect(result.action_class).toBe('unknown_sensitive_action');
+  });
+
+  it('does not match when destructive word appears mid-command', () => {
+    const result = normalize_action('exec', { command: 'echo rm /tmp/file' });
+    expect(result.action_class).toBe('unknown_sensitive_action');
+  });
+
+  it('does not reclassify when command is missing', () => {
+    const result = normalize_action('exec', {});
+    expect(result.action_class).toBe('unknown_sensitive_action');
+  });
+
+  it('does not reclassify when command is non-string', () => {
+    const result = normalize_action('exec', { command: ['rm', '/tmp/file'] });
+    expect(result.action_class).toBe('unknown_sensitive_action');
+  });
+
+  it('does not reclassify non-shell tools', () => {
+    const result = normalize_action('read_file', { command: 'rm /tmp/file' });
+    expect(result.action_class).toBe('filesystem.read');
+  });
+
+  it('keeps critical risk when shell metachars are present in the command', () => {
+    const result = normalize_action('exec', { command: 'rm /tmp/file; cat /etc/passwd' });
+    expect(result.action_class).toBe('filesystem.delete');
+    expect(result.risk).toBe('critical');
+  });
+
+  it('matches rm with no trailing argument (trailing whitespace or EOL)', () => {
+    expect(normalize_action('exec', { command: 'rm' }).action_class).toBe('filesystem.delete');
+    expect(normalize_action('exec', { command: 'rm  ' }).action_class).toBe('filesystem.delete');
+  });
+
+  it('does not match rm_rf as a substring of a different command', () => {
+    // `rm_file` is a tool-name alias, not a shell command. If someone passes
+    // it as a command string, it should NOT match because rm has a word
+    // boundary requirement.
+    const result = normalize_action('exec', { command: 'rm_file /tmp/x' });
+    expect(result.action_class).toBe('unknown_sensitive_action');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // normalize_action — unknown tools
 // ---------------------------------------------------------------------------
 
