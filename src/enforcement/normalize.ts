@@ -357,6 +357,29 @@ function hasShellMetacharsInParams(params: Record<string, unknown>): boolean {
   return false;
 }
 
+/**
+ * Leading destructive commands we recognise inside a shell `command` param.
+ * Matches at the start of the command string, optionally preceded by `sudo`.
+ * Kept conservative to avoid false positives — only real Unix destructive
+ * commands, not English words like `remove` or `purge`.
+ */
+const DESTRUCTIVE_SHELL_CMD_RE =
+  /^\s*(?:sudo\s+)?(?:rm|rmdir|unlink|shred|trash-put|trash)\b/i;
+
+/** Tool names that are generic shell-execution wrappers. */
+const SHELL_WRAPPER_TOOL_NAMES = new Set<string>([
+  'exec',
+  'bash',
+  'shell_exec',
+  'run_command',
+  'execute_command',
+  'run_terminal_cmd',
+  'terminal_exec',
+  'cmd',
+  'sh',
+  'zsh',
+]);
+
 // ---------------------------------------------------------------------------
 // Target extraction
 // ---------------------------------------------------------------------------
@@ -413,6 +436,12 @@ export function normalizeActionClass(toolName: string): string {
  *      reclassified to `communication.external.send`
  *   3. Any action class where a param value contains shell metacharacters
  *      → risk raised to `critical`
+ *   4. Shell-wrapper tools (`exec`, `bash`, `cmd`, ...) whose `command` param
+ *      begins with a destructive Unix command (`rm`, `rmdir`, `unlink`,
+ *      `shred`, `trash`, optionally `sudo`-prefixed) → reclassified to
+ *      `filesystem.delete`. Lets operators put `filesystem.delete` in HITL
+ *      policy and have it actually fire for hosts that expose only a
+ *      generic shell-exec tool (e.g. OpenClaw's `exec`).
  *
  * @param toolName  Name of the tool being invoked (case-insensitive).
  * @param params    Tool call parameters used for target extraction and
@@ -426,7 +455,8 @@ export function normalize_action(
 
   let action_class = entry.action_class;
   let risk: RiskLevel = entry.default_risk;
-  const hitl_mode: HitlModeNorm = entry.default_hitl_mode;
+  let hitl_mode: HitlModeNorm = entry.default_hitl_mode;
+  let intent_group: IntentGroup | undefined = entry.intent_group;
   const target = extractTarget(params);
 
   // Rule 1: filesystem.write with a URL target → web.post
@@ -450,7 +480,21 @@ export function normalize_action(
     risk = 'critical';
   }
 
-  const intent_group = entry.intent_group;
+  // Rule 4: shell-wrapper tool + destructive command → filesystem.delete
+  const toolKey = toolName.toLowerCase();
+  const command = params['command'];
+  if (
+    SHELL_WRAPPER_TOOL_NAMES.has(toolKey) &&
+    typeof command === 'string' &&
+    DESTRUCTIVE_SHELL_CMD_RE.test(command)
+  ) {
+    const deleteEntry = ALIAS_INDEX.get('rm') ?? UNKNOWN_ENTRY;
+    action_class = deleteEntry.action_class;
+    hitl_mode = deleteEntry.default_hitl_mode;
+    intent_group = deleteEntry.intent_group;
+    if (risk !== 'critical') risk = deleteEntry.default_risk;
+  }
+
   return { action_class, risk, hitl_mode, target, ...(intent_group !== undefined && { intent_group }) };
 }
 

@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { extname } from 'node:path';
 import { Value } from '@sinclair/typebox/value';
 import { HitlPolicyConfigSchema, type HitlPolicyConfig } from './types.js';
+import { matchesActionPattern } from './matcher.js';
 
 /** Thrown when a policy file cannot be read or parsed (syntax / IO error). */
 export class HitlPolicyParseError extends Error {
@@ -61,6 +62,28 @@ export function validateHitlPolicyConfig(
 }
 
 /**
+ * Returns the policy names that contain an action pattern matching
+ * `unknown_sensitive_action` (directly or via wildcard).
+ *
+ * Exposed for testing. Production callers should use {@link parseHitlPolicyFile}
+ * which logs a warning when any such match is found.
+ */
+export function findUnknownSensitiveActionMatches(
+  config: HitlPolicyConfig,
+): string[] {
+  const hits: string[] = [];
+  for (const policy of config.policies) {
+    for (const pattern of policy.actions) {
+      if (matchesActionPattern(pattern, 'unknown_sensitive_action')) {
+        hits.push(policy.name);
+        break;
+      }
+    }
+  }
+  return hits;
+}
+
+/**
  * Reads, parses, and validates a HITL policy file from disk.
  *
  * Supported formats:
@@ -87,5 +110,29 @@ export async function parseHitlPolicyFile(
     throw new HitlPolicyParseError(filePath, err);
   }
 
-  return validateHitlPolicyConfig(filePath, raw);
+  const config = validateHitlPolicyConfig(filePath, raw);
+
+  // ── Footgun check ─────────────────────────────────────────────────────────
+  // A HITL policy pattern that matches `unknown_sensitive_action` (directly
+  // or via `*`) routes every unrecognised tool through approval. That sounds
+  // safe but in practice it locks operators out: the agent's own recovery
+  // tools (read/list/etc., anything not registered as an alias in the
+  // normalizer) all need approval, so even fixing the policy file requires
+  // a human click for every read. This has already produced one production
+  // incident; warn loudly so operators catch the misconfiguration at load
+  // time rather than after the approval queue piles up.
+  const unknownMatches = findUnknownSensitiveActionMatches(config);
+  if (unknownMatches.length > 0) {
+    const list = unknownMatches.join(', ');
+    console.warn(
+      `[hitl-policy] ⚠ HITL policy "${list}" matches unknown_sensitive_action. ` +
+      `This routes every tool not listed in the normalizer alias registry ` +
+      `(src/enforcement/normalize.ts) through human approval, including ` +
+      `read-only operations — typically causing an approval-loop lockout. ` +
+      `Prefer registering the specific tool name as an alias or matching ` +
+      `its real action class (e.g. filesystem.delete) instead.`
+    );
+  }
+
+  return config;
 }

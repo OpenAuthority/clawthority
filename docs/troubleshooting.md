@@ -108,6 +108,52 @@ Review the blocked prompt text. If it is legitimate content that accidentally ma
 
 ---
 
+### HITL approval lockout after adding `unknown_sensitive_action` to the policy
+
+**Symptom:** Every tool call — including `read`, `list`, and other read-only operations — starts firing a HITL approval request. The agent cannot recover because even its fix-up reads are blocked pending approval. `hitl-policy.yaml` contains a pattern that matches `unknown_sensitive_action` (either directly, or via `*`).
+
+**Cause:** `unknown_sensitive_action` is the fallback class for every tool name not listed in the normalizer alias registry. Putting it in a HITL policy means every unregistered tool routes through approval — which in practice is most of a host's tool surface, because the alias registry only covers canonical names (`read_file`, not `read`; `bash`, not `exec`). Operators hit this trying to catch destructive shell commands and unintentionally catch everything.
+
+At load time the parser logs a warning:
+
+```
+[hitl-policy] ⚠ HITL policy "<name>" matches unknown_sensitive_action. …
+```
+
+**Resolution:**
+
+1. Remove the `unknown_sensitive_action` (or bare `*`) pattern from your HITL policy.
+2. If you were trying to gate destructive shell commands through HITL, use `filesystem.delete` instead — shell-wrapper tools (`exec`, `bash`, `cmd`, …) whose `command` param begins with `rm`/`rmdir`/`unlink`/`shred`/`trash` are automatically reclassified to `filesystem.delete` by the normalizer (Rule 4 in [`src/enforcement/normalize.ts`](../src/enforcement/normalize.ts)).
+3. If the host exposes a tool that really should need approval, register it as an alias in the normalizer registry and match on its canonical action class — not on the unknown fallback.
+
+---
+
+### Edits to `src/enforcement/normalize.ts` don't take effect on reload
+
+**Symptom:** You update a normalizer rule (a new alias, a new reclassification rule) and the gateway's hot-reload fires, but tool classifications keep using the old behavior.
+
+**Cause:** The hot-reload watchers reload `hitl-policy.yaml` and `data/rules.json` in place. They do **not** re-import the compiled plugin code. Node's module cache keeps the original `normalize.js` loaded for the lifetime of the process, so classifier changes only take effect after the gateway process restarts.
+
+**Resolution:**
+
+Restart the gateway process:
+
+```bash
+sudo systemctl restart openclaw-gateway
+```
+
+The hot-reload surface is intentionally narrow:
+
+| Change                                            | Picked up via |
+|---------------------------------------------------|---------------|
+| `hitl-policy.yaml` edits                          | Watcher       |
+| `data/rules.json` edits                           | Watcher       |
+| `src/enforcement/normalize.ts` — aliases, rules   | **Restart**   |
+| Any other `src/` file (policy engine, hooks, …)   | **Restart**   |
+| `dist/**` compiled output                         | **Restart**   |
+
+---
+
 ## Rate Limiting Issues
 
 ### Rate limit not resetting

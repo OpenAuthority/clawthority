@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Addresses a tester-reported HITL lockout triggered by hosts that expose only a generic shell-exec tool (e.g. OpenClaw's `exec`).
+
+### Fixed
+
+- **`filesystem.delete` now fires for destructive shell commands.** `normalize_action` previously only recognised destructive intent when the tool name itself was an alias (`rm`, `delete_file`, …). Hosts like OpenClaw route every filesystem operation through a single generic `exec` tool with a `command` parameter, so `exec({command: "rm /tmp/x"})` normalised to `unknown_sensitive_action` and HITL policies keyed on `filesystem.delete` never fired. A new post-lookup reclassification rule (Rule 4) now reclassifies calls to shell-wrapper tools (`exec`, `bash`, `cmd`, `sh`, `run_command`, …) whose `command` begins with `rm`/`rmdir`/`unlink`/`shred`/`trash`/`trash-put` (optionally `sudo`-prefixed) to `filesystem.delete` with the registry's default `per_request` HITL mode and `destructive_fs` intent group. Non-destructive shell commands are unaffected.
+
+- **Warn when a HITL policy matches `unknown_sensitive_action`.** Putting `unknown_sensitive_action` (or a bare `*`) in `hitl-policy.yaml` routes every unrecognised tool — including read-only operations like `read` and `list` that aren't registered as aliases — through human approval, which locks the agent into an approval loop it cannot recover from. `parseHitlPolicyFile` now logs a `[hitl-policy] ⚠` warning at load time naming the offending policy and pointing operators at the right fix (register the tool alias, or match `filesystem.delete` instead).
+
+### Documentation
+
+- **Hot-reload boundary.** [docs/troubleshooting.md](docs/troubleshooting.md) now documents which files reload in place (`hitl-policy.yaml`, `data/rules.json`) and which require a gateway restart (anything under `src/`, including `src/enforcement/normalize.ts`). Adds a dedicated entry for the HITL approval-loop lockout pattern with the recovery steps.
+
+---
+
 ## [1.1.4] — 2026-04-17
 
 Fixes user-reported lockout when trying to add a `filesystem.delete` policy rule, and clears ClawHub static analysis warnings on HITL transport modules.
