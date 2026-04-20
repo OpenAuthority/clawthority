@@ -187,7 +187,9 @@ export async function sendSlackConfirmation(
 
 export type SlackActionCommand = 'approve' | 'deny';
 
-const ACTION_VALUE_RE = /^(approve|deny):([A-Za-z0-9_-]{6,12})$/;
+// Tokens are UUID v7 (36 chars with hyphens) or session_approval keys
+// of the form "session_id:action_class" (may contain ':', '.').
+const ACTION_VALUE_RE = /^(approve|deny):([\w.:-]{6,128})$/;
 
 /**
  * Verifies a Slack request signature.

@@ -124,7 +124,9 @@ export async function sendConfirmation(
 
 export type TelegramCommand = 'approve' | 'deny';
 
-const COMMAND_RE = /^\/(approve|deny)\s+([A-Za-z0-9_-]{6,12})$/;
+// Tokens are UUID v7 (36 chars with hyphens, e.g. "019daa50-5dc1-78ee-9ab4-bcf652bddfa3")
+// or session_approval keys of the form "session_id:action_class" (may contain ':', '.').
+const COMMAND_RE = /^\/(approve|deny)\s+([\w.:-]{6,128})$/;
 
 /**
  * Long-polling listener for Telegram bot updates.

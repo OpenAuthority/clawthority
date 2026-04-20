@@ -285,6 +285,56 @@ describe('SlackInteractionServer', () => {
     expect(onAction).toHaveBeenCalledWith('deny', 'XyZ98765');
   });
 
+  it('handles an approve interaction with a UUID v7 token (36 chars)', async () => {
+    const uuid = '019daa50-5dc1-78ee-9ab4-bcf652bddfa3';
+    const payload = JSON.stringify({
+      type: 'block_actions',
+      actions: [{ action_id: 'hitl_approve', value: `approve:${uuid}` }],
+    });
+    const body = `payload=${encodeURIComponent(payload)}`;
+    const ts = String(Math.floor(Date.now() / 1000));
+    const sig = makeSignature(ts, body);
+
+    const res = await fetch(`http://localhost:${port}/slack/interactions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'X-Slack-Request-Timestamp': ts,
+        'X-Slack-Signature': sig,
+      },
+      body,
+    });
+
+    expect(res.status).toBe(200);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(onAction).toHaveBeenCalledWith('approve', uuid);
+  });
+
+  it('handles an approve interaction with a session_approval token', async () => {
+    const sessionToken = 'sess-abc:filesystem.delete';
+    const payload = JSON.stringify({
+      type: 'block_actions',
+      actions: [{ action_id: 'hitl_approve', value: `approve:${sessionToken}` }],
+    });
+    const body = `payload=${encodeURIComponent(payload)}`;
+    const ts = String(Math.floor(Date.now() / 1000));
+    const sig = makeSignature(ts, body);
+
+    const res = await fetch(`http://localhost:${port}/slack/interactions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'X-Slack-Request-Timestamp': ts,
+        'X-Slack-Signature': sig,
+      },
+      body,
+    });
+
+    expect(res.status).toBe(200);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(onAction).toHaveBeenCalledWith('approve', sessionToken);
+  });
+
   it('rejects requests with invalid signature', async () => {
     const payload = JSON.stringify({
       type: 'block_actions',

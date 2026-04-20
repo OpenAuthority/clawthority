@@ -187,6 +187,46 @@ describe('TelegramListener', () => {
     expect(onCommand).toHaveBeenCalledWith('deny', 'XyZ98765');
   });
 
+  it('parses /approve with a UUID v7 token (36 chars)', async () => {
+    const uuid = '019daa50-5dc1-78ee-9ab4-bcf652bddfa3';
+    const updates = {
+      ok: true,
+      result: [
+        { update_id: 6, message: { text: `/approve ${uuid}`, chat: { id: 12345 } } },
+      ],
+    };
+
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
+      .mockImplementation(() => new Promise(() => {}));
+
+    listener = new TelegramListener('test-token', onCommand);
+    listener.start();
+
+    await vi.waitFor(() => expect(onCommand).toHaveBeenCalled());
+    expect(onCommand).toHaveBeenCalledWith('approve', uuid);
+  });
+
+  it('parses /deny with a session_approval token (session_id:action_class)', async () => {
+    const sessionToken = 'sess-abc:filesystem.delete';
+    const updates = {
+      ok: true,
+      result: [
+        { update_id: 7, message: { text: `/deny ${sessionToken}`, chat: { id: 12345 } } },
+      ],
+    };
+
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
+      .mockImplementation(() => new Promise(() => {}));
+
+    listener = new TelegramListener('test-token', onCommand);
+    listener.start();
+
+    await vi.waitFor(() => expect(onCommand).toHaveBeenCalled());
+    expect(onCommand).toHaveBeenCalledWith('deny', sessionToken);
+  });
+
   it('ignores non-command messages', async () => {
     const updates = {
       ok: true,
