@@ -390,19 +390,31 @@ const jsonRulesEngineRef: { current: CedarPolicyEngine | null } = {
 /**
  * JSON rule record as written in data/rules.json.
  *
- * Two forms are supported:
+ * Three matching forms are supported (one per rule):
  *
  * 1. Tool/resource name matching (original form):
  *    { "resource": "tool", "match": "web_search", "effect": "forbid" }
  *
  * 2. Action class matching (preferred for semantic rules):
- *    { "action_class": "filesystem.delete", "effect": "forbid" }
+ *    { "action_class": "filesystem.delete", "effect": "forbid", "priority": 90 }
  *
  *    Action class values correspond to the normalizer registry in
  *    src/enforcement/normalize.ts (e.g. filesystem.read, filesystem.delete,
  *    shell.exec, web.search, credential.read, payment.initiate, etc.).
  *    This form matches all tools that normalise to that action class,
  *    so you don't need to enumerate every tool name alias.
+ *
+ * 3. Intent-group matching (for cross-cutting semantic categories):
+ *    { "intent_group": "data_exfiltration", "effect": "forbid", "priority": 90 }
+ *
+ *    Intent groups tag clusters of action classes that share a threat model
+ *    regardless of transport (e.g. `data_exfiltration` covers `web.fetch`,
+ *    `web.post` uploads, and anything else the normalizer tags with that
+ *    intent). Rules in this form fire after action-class evaluation and
+ *    participate in HITL gating the same way (priority < 100 → HITL-gated).
+ *
+ * `priority` tiers are documented on the `Rule.priority` field — 90 means
+ * "HITL-gated forbid", 100+ means "unconditional forbid".
  */
 interface JsonRuleRecord {
   id?: string;
@@ -413,6 +425,10 @@ interface JsonRuleRecord {
   match?: string;
   /** Action-class matching: semantic class from the normalizer registry. */
   action_class?: string;
+  /** Intent-group matching: cross-cutting category (e.g. "data_exfiltration"). */
+  intent_group?: string;
+  /** Rule priority — 90 is the HITL-gated tier, 100+ is unconditional. */
+  priority?: number;
   reason?: string;
   tags?: string[];
 }
@@ -428,8 +444,11 @@ interface JsonRuleRecord {
 async function loadJsonRules(): Promise<void> {
   try {
     const moduleDir = dirname(fileURLToPath(import.meta.url));
-    // data/rules.json sits two levels up from dist/ (project root/data/)
-    const rulesPath = resolve(moduleDir, "../../data/rules.json");
+    // data/rules.json sits two levels up from dist/ (project root/data/).
+    // `CLAWTHORITY_RULES_FILE` overrides this for non-standard install
+    // layouts and for tests that need to inject a fixture.
+    const rulesPath = process.env['CLAWTHORITY_RULES_FILE']
+      ?? resolve(moduleDir, "../../data/rules.json");
 
     let raw: string;
     try {
@@ -449,7 +468,25 @@ async function loadJsonRules(): Promise<void> {
     }
 
     const cedarRules: Rule[] = records.map((rec, i) => {
-      // Action-class form: { action_class, effect, reason?, tags? }
+      // Intent-group form: { intent_group, effect, priority?, reason?, tags? }
+      // Matches all action classes carrying that intent group — evaluated by
+      // the handler's intent-group pass, which runs after action-class eval.
+      if (rec.intent_group !== undefined) {
+        if (rec.resource !== undefined || rec.match !== undefined || rec.action_class !== undefined) {
+          console.warn(
+            `[plugin:clawthority] data/rules.json rule[${i}] mixes intent_group with resource/match/action_class — ignoring others`
+          );
+        }
+        return {
+          effect: rec.effect,
+          intent_group: rec.intent_group,
+          ...(rec.priority !== undefined ? { priority: rec.priority } : {}),
+          ...(rec.reason !== undefined ? { reason: rec.reason } : {}),
+          ...(rec.tags !== undefined ? { tags: rec.tags } : {}),
+        } satisfies Rule;
+      }
+
+      // Action-class form: { action_class, effect, priority?, reason?, tags? }
       // Matches all tools that normalise to that action class.
       if (rec.action_class !== undefined) {
         if (rec.resource !== undefined || rec.match !== undefined) {
@@ -460,6 +497,7 @@ async function loadJsonRules(): Promise<void> {
         return {
           effect: rec.effect,
           action_class: rec.action_class,
+          ...(rec.priority !== undefined ? { priority: rec.priority } : {}),
           ...(rec.reason !== undefined ? { reason: rec.reason } : {}),
           ...(rec.tags !== undefined ? { tags: rec.tags } : {}),
         } satisfies Rule;
@@ -468,7 +506,7 @@ async function loadJsonRules(): Promise<void> {
       // Resource/match form: { resource, match, effect, reason?, tags? }
       if (rec.resource === undefined || rec.match === undefined) {
         throw new TypeError(
-          `data/rules.json rule[${i}] must have either action_class or both resource+match`
+          `data/rules.json rule[${i}] must have either action_class, intent_group, or both resource+match`
         );
       }
 
@@ -492,6 +530,7 @@ async function loadJsonRules(): Promise<void> {
         effect: rec.effect,
         resource: rec.resource,
         match,
+        ...(rec.priority !== undefined ? { priority: rec.priority } : {}),
         ...(rec.reason !== undefined ? { reason: rec.reason } : {}),
         ...(rec.tags !== undefined ? { tags: rec.tags } : {}),
       } satisfies Rule;
@@ -994,6 +1033,79 @@ const beforeToolCallHandler: BeforeToolCallHandler = async ({ toolName, params, 
     }
   }
 
+  // ── 2b. Intent-group evaluation ───────────────────────────────────────────
+  // Intent groups tag clusters of action classes that share a threat model
+  // regardless of transport (e.g. `data_exfiltration` applies to web.fetch,
+  // any Rule 7-classified upload, etc.). When the normalised action carries
+  // an intent_group, scan rules that target it across BOTH engines — the
+  // TS-default engine and data/rules.json. A forbid in either participates
+  // in the same HITL-gated / unconditional split as action-class forbids,
+  // so operators can add a priority-90 intent_group rule to gate a whole
+  // category of outbound data movement through human approval. The first
+  // engine returning a forbid wins; ties don't occur because each engine
+  // only holds its own rules.
+  if (
+    normalizedAction.intent_group !== undefined &&
+    pendingHitlGatedBlockReason === null
+  ) {
+    try {
+      const intentEngines: Array<{ engine: CedarPolicyEngine | null; source: 'cedar' | 'json-rules' }> = [
+        { engine: cedarEngineRef.current, source: 'cedar' },
+        { engine: jsonRulesEngineRef.current, source: 'json-rules' },
+      ];
+      let intentBlockHandled = false;
+      for (const { engine, source: intentSource } of intentEngines) {
+        if (engine === null) continue;
+        const intentDecision = engine.evaluateByIntentGroup(
+          normalizedAction.intent_group,
+          ruleContext,
+        );
+        if (intentDecision.effect !== 'forbid' || intentDecision.matchedRule === undefined) continue;
+        const blockReason = intentDecision.reason ?? `Intent '${normalizedAction.intent_group}' denied by policy`;
+        const priority = intentDecision.matchedRule.priority;
+        const ruleTag = `intent:${normalizedAction.intent_group}`;
+        console.log(`[clawthority] │ [intent/${intentSource}] matched ${ruleTag}`);
+        if (intentDecision.matchedRule.reason) console.log(`[clawthority] │ [intent/${intentSource}] reason: ${intentDecision.matchedRule.reason}`);
+        if (isHitlGatedForbid(intentDecision.matchedRule)) {
+          console.log(`[clawthority] │ [intent/${intentSource}] ⏸ HITL-gated forbid (priority=${priority} rule=${ruleTag}) — will defer to HITL policy`);
+          pendingHitlGatedBlockReason = blockReason;
+          pendingHitlGatedSource = intentSource;
+          pendingHitlGatedRule = intentDecision.matchedRule;
+        } else {
+          console.log(`[clawthority] │ DECISION: ✕ BLOCKED (intent/${intentSource} forbid priority=${priority ?? '?'} rule=${ruleTag}) — ${blockReason}`);
+          console.log(`[clawthority] └──────────────────────────────────────────────────────`);
+          await logPolicyDecision({
+            effect: 'forbid',
+            stage: intentSource,
+            resource: 'tool',
+            match: toolName,
+            reason: blockReason,
+            rule: ruleTag,
+            ...(priority !== undefined && { priority }),
+            ...auditBase,
+          });
+          return { block: true, blockReason };
+        }
+        intentBlockHandled = true;
+        break; // first forbid wins; don't keep scanning
+      }
+      void intentBlockHandled;
+    } catch (err) {
+      console.error(`[clawthority] │ [intent] ✕ ERROR — fail closed`, err);
+      console.log(`[clawthority] └──────────────────────────────────────────────────────`);
+      await logPolicyDecision({
+        effect: 'forbid',
+        stage: 'cedar',
+        resource: 'tool',
+        match: toolName,
+        reason: 'Intent-group evaluation error — fail closed',
+        rule: '<error>',
+        ...auditBase,
+      });
+      return { block: true, blockReason: 'Intent-group evaluation error — fail closed' };
+    }
+  }
+
   // ── 3. HITL resolution ────────────────────────────────────────────────────
   // Runs in two situations:
   //   (a) a HITL-gated Cedar/JSON forbid is pending — need operator approval
@@ -1234,11 +1346,15 @@ const plugin: OpenclawPlugin = {
     rulesWatcher = startRulesWatcher(cedarEngineRef, 300, undefined, { defaultEffect: DEFAULT_EFFECT }, ACTIVE_RULES, coverageMap);
 
     // Load user-defined JSON rules from data/rules.json into the dedicated
-    // JSON Cedar engine. Async but errors are swallowed so activation is
-    // never blocked by a missing or malformed rules file.
-    loadJsonRules().catch((err) =>
-      console.error("[plugin:clawthority] unexpected error in loadJsonRules:", err)
-    );
+    // JSON Cedar engine. Awaited so the engine is populated before the host
+    // dispatches its first tool call — an unawaited load races with the
+    // initial `before_tool_call` and silently skips custom rules. Errors
+    // are still swallowed (the file is optional).
+    try {
+      await loadJsonRules();
+    } catch (err) {
+      console.error("[plugin:clawthority] unexpected error in loadJsonRules:", err);
+    }
 
     // ── Diagnostic: log registered hooks and loaded rules ────────────────────
     const registeredHooks = ["before_tool_call", "before_prompt_build", "before_model_resolve"];
