@@ -146,6 +146,7 @@ const REGISTRY: readonly ActionRegistryEntry[] = [
     default_hitl_mode: 'per_request',
     aliases: [
       'fetch',
+      'browser',
       'http_get',
       'web_fetch',
       'get_url',
@@ -414,7 +415,46 @@ const CREDENTIAL_PATH_PATTERNS: readonly string[] = [
   // /etc/shadow
   String.raw`/etc/shadow\b`,
 ];
-const CREDENTIAL_PATH_RE = new RegExp(CREDENTIAL_PATH_PATTERNS.join('|'), 'i');
+/**
+ * Optional extra credential-path patterns supplied by operators via the
+ * `CLAWTHORITY_CREDENTIAL_PATHS` environment variable. Format: a
+ * comma-separated list of regex source strings. Each entry is compiled
+ * once at module load and ORed with the built-in patterns above.
+ *
+ * Example:
+ *   CLAWTHORITY_CREDENTIAL_PATHS='\\.company/secrets\\b,/var/run/my-secrets/\\w+'
+ *
+ * Invalid regex sources log a warning and are skipped; the rest of the
+ * list is still loaded. Keep patterns narrow — matching is case-insensitive
+ * and searches anywhere in the `target` or `command` string, so a loose
+ * pattern like `password` will produce false positives on any tool call
+ * that happens to mention the word.
+ */
+function loadExtraCredentialPathPatterns(): string[] {
+  const raw = process.env['CLAWTHORITY_CREDENTIAL_PATHS'];
+  if (raw === undefined || raw.trim() === '') return [];
+  const patterns: string[] = [];
+  for (const entry of raw.split(',')) {
+    const source = entry.trim();
+    if (source === '') continue;
+    try {
+      // Compile-test each entry so a syntactically broken pattern cannot
+      // take down the combined regex below.
+      new RegExp(source);
+      patterns.push(source);
+    } catch (err) {
+      console.warn(
+        `[clawthority] CLAWTHORITY_CREDENTIAL_PATHS skipping invalid pattern ${JSON.stringify(source)}: ${(err as Error).message}`,
+      );
+    }
+  }
+  return patterns;
+}
+
+const CREDENTIAL_PATH_RE = new RegExp(
+  [...CREDENTIAL_PATH_PATTERNS, ...loadExtraCredentialPathPatterns()].join('|'),
+  'i',
+);
 
 /**
  * Leading commands that indicate a write/copy into the target path (when the
@@ -495,6 +535,33 @@ const CREDENTIAL_ENV_PATTERNS: readonly RegExp[] = [
   /\/proc\/[^/\s]+\/environ\b/,
 ];
 
+/**
+ * Detects outbound file-upload patterns in shell commands. Powers Rule 7.
+ *
+ * Covers the common transports agents use to exfiltrate data to an external
+ * host: curl with an upload body from a file (`-F @path`, `--data @path`,
+ * `--data-binary @path`, `-T path`, `--upload-file path`), and wget with
+ * `--post-file=path`.
+ *
+ * scp / rsync are intentionally NOT matched — both have syntactically
+ * ambiguous arg orders (`scp remote:/f local` is a download, `scp local
+ * remote:/f` is an upload) and directional heuristics produce false
+ * positives too easily. Operators who want to gate those should add
+ * explicit `resource: tool` rules for `scp` / `rsync` in `data/rules.json`.
+ */
+const DATA_EXFIL_UPLOAD_PATTERNS: readonly RegExp[] = [
+  // curl -F field=@path  OR  curl -F @path
+  /\bcurl\b[^|;&<>]*\s-F\s+[^\s|;&<>]*@[^\s|;&<>]+/i,
+  // curl --form (long form of -F)
+  /\bcurl\b[^|;&<>]*\s--form\s+[^\s|;&<>]*@[^\s|;&<>]+/i,
+  // curl -d @path / --data @path / --data-binary @path / --data-raw @path / --data-urlencode @path
+  /\bcurl\b[^|;&<>]*\s(?:-d|--data|--data-binary|--data-raw|--data-urlencode)\s+@[^\s|;&<>]+/i,
+  // curl -T path / --upload-file path
+  /\bcurl\b[^|;&<>]*\s(?:-T|--upload-file)\s+[^\s|;&<>]+/i,
+  // wget --post-file=path
+  /\bwget\b[^|;&<>]*\s--post-file=[^\s|;&<>]+/i,
+];
+
 // ---------------------------------------------------------------------------
 // Target extraction
 // ---------------------------------------------------------------------------
@@ -573,10 +640,17 @@ export function normalizeActionClass(toolName: string): string {
  *      `doppler secrets get`, `heroku config:get`, `az account
  *      get-access-token`) → reclassified to `credential.read`. Skipped if
  *      Rule 4 or Rule 5 already reclassified.
- *   7. (reserved — file-upload exfiltration via `curl -F @path` / `scp` /
- *      `wget --post-file`. The credential-path case is already covered by
- *      Rule 5; the non-credential case needs intent-group evaluation in
- *      the handler and is tracked separately.)
+ *   7. Shell-wrapper tools invoking an outbound file upload — `curl -F
+ *      @path`, `curl -d @path`, `curl --data-binary @path`, `curl -T path`,
+ *      `curl --upload-file path`, `wget --post-file=path` — → reclassified
+ *      to `web.post` with `intent_group: 'data_exfiltration'` and `risk:
+ *      'critical'`. The handler's intent-group evaluation pass lets
+ *      operators gate all `data_exfiltration`-tagged calls via a single
+ *      rules.json entry (or a HITL policy). Skipped when Rule 4 (destructive)
+ *      or Rule 5 (credential) already reclassified, so `rm ... | curl -F
+ *      @-` stays `filesystem.delete` and `curl -F @~/.aws/credentials`
+ *      stays `credential.read`. scp / rsync are NOT matched — their arg
+ *      order makes direction ambiguous.
  *   8. Shell-wrapper tools reading credentials from the environment —
  *      `echo $AWS_SECRET_ACCESS_KEY`, `printenv GITHUB_TOKEN`, `env |
  *      grep token`, `cat /proc/<pid>/environ` — → reclassified to
@@ -678,12 +752,12 @@ export function normalize_action(
 
   // Rule 8: shell-wrapper reading credentials from the environment →
   // credential.read. Same skip semantics as Rule 6.
-  const stillUnclassified =
+  const stillUnclassifiedAfter6 =
     action_class !== 'filesystem.delete' &&
     action_class !== 'credential.read' &&
     action_class !== 'credential.write';
   if (
-    stillUnclassified &&
+    stillUnclassifiedAfter6 &&
     SHELL_WRAPPER_TOOL_NAMES.has(toolKey) &&
     commandStr !== '' &&
     CREDENTIAL_ENV_PATTERNS.some((re) => re.test(commandStr))
@@ -693,6 +767,28 @@ export function normalize_action(
     hitl_mode = credEntry.default_hitl_mode;
     intent_group = credEntry.intent_group;
     if (risk !== 'critical') risk = credEntry.default_risk;
+  }
+
+  // Rule 7: shell-wrapper invoking an outbound file upload → web.post with
+  // intent_group: 'data_exfiltration'. Skipped when an earlier rule already
+  // produced a more specific class — destructive (Rule 4) or credential
+  // (Rules 5/6/8) take precedence.
+  const stillUnclassifiedAfter8 =
+    action_class !== 'filesystem.delete' &&
+    action_class !== 'credential.read' &&
+    action_class !== 'credential.write';
+  if (
+    stillUnclassifiedAfter8 &&
+    SHELL_WRAPPER_TOOL_NAMES.has(toolKey) &&
+    commandStr !== '' &&
+    DATA_EXFIL_UPLOAD_PATTERNS.some((re) => re.test(commandStr))
+  ) {
+    action_class = 'web.post';
+    intent_group = 'data_exfiltration';
+    risk = 'critical';
+    // HITL mode follows web.post's default (per_request).
+    const webPostEntry = ALIAS_INDEX.get('http_post') ?? UNKNOWN_ENTRY;
+    hitl_mode = webPostEntry.default_hitl_mode;
   }
 
   return { action_class, risk, hitl_mode, target, ...(intent_group !== undefined && { intent_group }) };
