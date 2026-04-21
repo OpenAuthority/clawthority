@@ -30,6 +30,8 @@ data/.installed
 
 # Runtime state — budget tracker log, written by the plugin at runtime
 data/budget.jsonl
+# Audit log, written by the plugin at runtime
+data/audit.jsonl
 
 # Build-time generated file — baked by scripts/gen-build-info.mjs
 src/build-info.ts
