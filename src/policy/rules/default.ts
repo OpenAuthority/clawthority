@@ -9,8 +9,13 @@ import { detectSensitiveData } from '../../enforcement/pii-classifier.js';
  *
  * Priority tiers:
  *   10  — permitted baseline actions (unconditional permit)
- *   90  — sensitive actions requiring HITL approval (forbid pending approval)
- *   100 — unconditionally forbidden actions (hard forbid, no override)
+ *   90  — sensitive actions requiring HITL approval ("HITL-gated forbid":
+ *         the rule's `forbid` defers to the HITL policy in
+ *         `hitl-policy.yaml`. If a policy matches the action class AND the
+ *         operator approves, the tool call proceeds. If no HITL policy
+ *         matches, or HITL is not configured, the forbid is upheld. See
+ *         `beforeToolCallHandler` in `src/index.ts` for the routing logic.)
+ *   100 — unconditionally forbidden actions (hard forbid, no HITL override)
  *
  * All `action_class` values must correspond to entries in the normalization
  * registry at `src/enforcement/normalize.ts`; a rule targeting a class the

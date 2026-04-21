@@ -71,7 +71,17 @@ export interface Rule {
   target_in?: string[];
   /**
    * Evaluation priority. Lower numbers are evaluated first.
-   * Tier 10 = permitted baseline, 90 = HITL-gated forbid, 100 = unconditional forbid.
+   *
+   * Tiers used by Clawthority's handler in `src/index.ts`:
+   *   10  — permitted baseline (permit rules)
+   *   90  — HITL-gated forbid: the rule's `forbid` is deferred to the HITL
+   *         policy. If a matching policy approves, the tool call proceeds;
+   *         otherwise the forbid is upheld.
+   *   100 — unconditional forbid: always blocks, regardless of HITL config.
+   *
+   * Rules without an explicit `priority` are treated as unconditional —
+   * user-written `forbid` rules fail closed unless they opt in to the HITL
+   * tier by setting `priority: 90`.
    */
   priority?: number;
 }
