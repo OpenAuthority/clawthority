@@ -7,6 +7,8 @@ import { dirname } from "node:path";
 export interface PolicyDecisionEntry {
   /** ISO 8601 timestamp. */
   ts: string;
+  /** Entry type marker. */
+  type?: 'policy';
   /** Decision effect. */
   effect: string;
   /** Resource type. */
@@ -25,6 +27,23 @@ export interface PolicyDecisionEntry {
    * field was introduced.
    */
   verified?: boolean;
+  /** Tool the host actually called (pre-normalisation). */
+  toolName?: string;
+  /** Normalised action class (e.g. `filesystem.delete`, `credential.read`). */
+  actionClass?: string;
+  /**
+   * Which enforcement stage produced this decision — `stage1-trust` for the
+   * source-trust gate, `cedar` for TS defaults, `json-rules` for
+   * `data/rules.json`, `hitl-gated` when a priority-90 Cedar/JSON forbid
+   * was upheld because no HITL policy matched (or HITL was not configured).
+   */
+  stage?: 'stage1-trust' | 'cedar' | 'json-rules' | 'hitl-gated';
+  /** Priority of the rule that matched, when a rule matched. */
+  priority?: number;
+  /** Human-readable rule identifier (action_class or resource:match). */
+  rule?: string;
+  /** Active install mode at the time of the decision. */
+  mode?: 'open' | 'closed';
 }
 
 /** A HITL decision entry for JSONL logging. */
