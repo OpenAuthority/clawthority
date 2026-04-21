@@ -154,6 +154,61 @@ The hot-reload surface is intentionally narrow:
 
 ---
 
+### Total lockout recovery — everything is blocked, I cannot fix the policy
+
+**Symptom:** Every tool call returns a block. Even the agent's recovery tools (`read`, `list`, `cat`) are denied, so you cannot use the agent to inspect or edit the policy that's doing the blocking. Typical causes:
+
+- A HITL policy that matches `unknown_sensitive_action` (every unrecognised tool loops waiting for approval — see the separate entry above).
+- CLOSED mode with a rule that forbids a class the agent needs for its own recovery path (e.g. blanket forbid on `filesystem.read`).
+- `data/rules.json` ships a `forbid` rule with no `action_class` / `resource` qualifier.
+- HITL transport misconfigured (Telegram/Slack credentials missing) combined with `fallback: deny` on a rule that covers common tool calls.
+
+**Diagnose from `data/audit.jsonl`.** Every block now writes a structured entry with `stage`, `rule`, `priority`, and `mode`. Tail the file to see exactly what is blocking:
+
+```bash
+tail -n 20 data/audit.jsonl | jq 'select(.type == "policy" and .effect == "forbid")'
+```
+
+The `stage` field tells you where to fix it: `stage1-trust` is the source-trust gate (adjust the tool's `source` or remove the high/critical risk classification), `cedar` is the TS defaults in `src/policy/rules/default.ts`, `json-rules` is `data/rules.json`, and `hitl-gated` means a priority-90 rule fired but no HITL policy matched.
+
+**Recovery — from the host OS (SSH into the gateway machine):**
+
+1. **Disable HITL temporarily** so priority-90 rules stop loop-blocking everything:
+
+   ```bash
+   mv <plugin-root>/hitl-policy.yaml <plugin-root>/hitl-policy.yaml.disabled
+   sudo systemctl restart openclaw-gateway
+   ```
+
+   HITL is now off. Priority-90 Cedar forbids will uphold their block (same as pre-HITL behaviour), but at least the approval-loop side of the lockout is gone.
+
+2. **If even non-HITL tools are blocked**, the problem is in Cedar itself. Look at the top of `data/audit.jsonl` entries for the offending `rule` and `priority`:
+
+   - A `priority: 100` entry is a hard forbid. Either the rule is correct and you need to change the agent's behaviour, or you need to edit the rule source and rebuild.
+   - A `priority: 90` entry with `stage: hitl-gated` means "this rule wants HITL approval but no policy matches." Add a HITL policy covering that action class in `hitl-policy.yaml`, or remove the rule.
+   - A rule from `data/rules.json` can be edited live (hot-reload). Delete or adjust the offending entry and save — no restart needed.
+
+3. **If `data/rules.json` is the problem**, edit it. The watcher will pick up the change within ~300ms:
+
+   ```bash
+   vim <plugin-root>/data/rules.json
+   ```
+
+4. **If `src/policy/rules/default.ts` is the problem** (or any other compiled code), edit the source, rebuild, and restart — hot-reload does not cover compiled plugin code:
+
+   ```bash
+   cd <plugin-root>
+   vim src/policy/rules/default.ts
+   npm run build
+   sudo systemctl restart openclaw-gateway
+   ```
+
+**Recovery — from the operator dashboard / remote control UI:** if your control surface can push edits to `hitl-policy.yaml` or `data/rules.json` directly, those changes hot-reload. Editing anything under `src/` still requires a gateway restart.
+
+**Before you ask the agent to help again**, verify the audit log shows the most recent tool calls are no longer blocked. The agent being able to `read` a file is the minimum recovery signal.
+
+---
+
 ## Rate Limiting Issues
 
 ### Rate limit not resetting

@@ -98,30 +98,26 @@ export CLAWTHORITY_MODE=closed
 
 Mode is read once at activation — restart the agent to change it.
 
-Drop a policy bundle at `data/bundles/active/bundle.json`:
+Customise the baseline by dropping hot-reloadable rules into `data/rules.json`:
 
 ```json
-{
-  "version": 1,
-  "rules": [
-    { "effect": "permit", "action_class": "filesystem.read",  "priority": 10 },
-    { "effect": "forbid", "action_class": "shell.exec",       "priority": 100 },
-    { "effect": "forbid", "action_class": "payment.initiate", "priority": 90 }
-  ],
-  "checksum": "<SHA-256 of JSON.stringify(rules)>"
-}
+[
+  { "effect": "permit", "action_class": "filesystem.read" },
+  { "effect": "forbid", "action_class": "payment.initiate", "priority": 90 },
+  { "effect": "forbid", "resource": "tool", "match": "my_custom_tool" }
+]
 ```
 
 Run your agent. A `shell.exec` call now terminates at the boundary:
 
 ```
-[clawthority] │ DECISION: ✕ BLOCKED (cedar/forbid) — shell.exec
+[clawthority] │ DECISION: ✕ BLOCKED (cedar/forbid priority=100 rule=action:shell.exec) — Shell execution is unconditionally forbidden
 ```
 
-Every decision — allow or deny — is streamed to `data/audit.jsonl`.
+Every block — plus every HITL outcome — is appended to `data/audit.jsonl` as structured JSONL with `stage`, `rule`, `priority`, and `mode` fields. See [docs/troubleshooting.md](docs/troubleshooting.md#total-lockout-recovery) for the recovery runbook.
 
 > [!TIP]
-> Bundles are hot-reloaded with monotonic version + checksum enforcement, so you can iterate on rules without restarting your agent.
+> `data/rules.json` and `hitl-policy.yaml` hot-reload within ~300ms. Anything else under `src/` requires a gateway restart.
 
 ---
 
@@ -207,28 +203,17 @@ Channel setup, retry/backoff, and fallback behaviour: [docs/human-in-the-loop.md
 
 ## Configuration
 
-All config lives in `openclaw.plugin.json` — every field is optional:
+Runtime behaviour is configured through three surfaces:
 
-```json
-{
-  "bundlePath":   "data/bundles/active",
-  "proposalPath": "data/bundles/proposals",
-  "auditLogFile": "data/audit.jsonl",
-  "cee": {
-    "trustedDomains": ["company.com"],
-    "protectedPaths": ["~/.ssh/", "~/.gnupg/", "/etc/", "~/.env", ".env", "~/.aws/"]
-  },
-  "hitl": {
-    "telegram": { "botToken": "...", "chatId": "..." },
-    "slack":    { "botToken": "xoxb-...", "channelId": "C0...", "signingSecret": "...", "interactionPort": 3201 }
-  }
-}
-```
+| Surface | Path | Reload |
+|---------|------|--------|
+| Install mode, feature flags, HITL transport secrets | env vars — `CLAWTHORITY_MODE`, `TELEGRAM_BOT_TOKEN`, `SLACK_BOT_TOKEN`, ... | read at activation; restart to change |
+| Policy rules (action-class or resource/match) | `data/rules.json` | hot-reload via watcher (~300ms) |
+| Human-in-the-loop approval routing | `hitl-policy.yaml` | hot-reload via watcher (~300ms) |
 
-Full schema and environment-variable overrides: [docs/configuration.md](docs/configuration.md).
+Structured decisions land in `data/audit.jsonl` — each block carries `stage`, `rule`, `priority`, and `mode` fields for post-mortem analysis.
 
-> [!IMPORTANT]
-> In production, set `data/bundles/active/` read-only for the Clawthority process user. Only your deployment pipeline should have write access.
+Full schema and environment-variable overrides: [docs/configuration.md](docs/configuration.md). Recovery runbook for lockouts: [docs/troubleshooting.md](docs/troubleshooting.md#total-lockout-recovery).
 
 ---
 
