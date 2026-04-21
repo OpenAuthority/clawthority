@@ -430,6 +430,71 @@ const CREDENTIAL_WRITE_CMD_RE =
  */
 const SHELL_REDIRECT_RE = /(?:^|\s)>{1,2}(?!&)/;
 
+/**
+ * Leading CLI invocations that emit credentials without touching a file path.
+ * Powers Rule 6. These are commands that interact with a secret store or
+ * identity provider and return the secret material on stdout, so they should
+ * be classified as `credential.read` regardless of how the host wraps them.
+ *
+ * Kept to well-known, unambiguous subcommands to avoid false positives on
+ * generic tool invocations (e.g. `aws s3 ls` must NOT match).
+ */
+const CREDENTIAL_CLI_PATTERNS: readonly RegExp[] = [
+  // AWS STS / Secrets Manager / SSM (SecureString with decryption)
+  /^\s*(?:sudo\s+)?aws\s+sts\s+(?:get-session-token|get-caller-identity|assume-role(?:-with-(?:web-identity|saml))?|get-federation-token)\b/i,
+  /^\s*(?:sudo\s+)?aws\s+configure\s+get\b/i,
+  /^\s*(?:sudo\s+)?aws\s+secretsmanager\s+get-secret-value\b/i,
+  /^\s*(?:sudo\s+)?aws\s+ssm\s+get-parameters?\b[^|;&<>]*--with-decryption\b/i,
+  // GitHub CLI
+  /^\s*(?:sudo\s+)?gh\s+auth\s+(?:token|status\s+.*--show-token)\b/i,
+  // Google Cloud
+  /^\s*(?:sudo\s+)?gcloud\s+auth\s+(?:print-access-token|print-identity-token|application-default\s+print-access-token)\b/i,
+  // Azure
+  /^\s*(?:sudo\s+)?az\s+account\s+get-access-token\b/i,
+  // HashiCorp Vault
+  /^\s*(?:sudo\s+)?vault\s+(?:kv\s+get|read|token\s+lookup|print\s+token|login)\b/i,
+  // Kubernetes — reading secrets or raw kubeconfig
+  /^\s*(?:sudo\s+)?kubectl\s+get\s+secret(?:s)?\b/i,
+  /^\s*(?:sudo\s+)?kubectl\s+config\s+view\b[^|;&<>]*--raw\b/i,
+  // 1Password CLI
+  /^\s*(?:sudo\s+)?op\s+(?:read|item\s+get)\b/i,
+  // pass (Unix password manager)
+  /^\s*(?:sudo\s+)?pass\s+show\b/i,
+  // Doppler
+  /^\s*(?:sudo\s+)?doppler\s+secrets\s+get\b/i,
+  // Heroku
+  /^\s*(?:sudo\s+)?heroku\s+config:get\b/i,
+];
+
+/**
+ * Detects shell commands that read credentials from environment variables.
+ * Powers Rule 8. Covers the common exfiltration patterns:
+ *
+ *   - `echo $AWS_SECRET_ACCESS_KEY` / `echo ${OPENAI_API_KEY}`
+ *   - `printenv GITHUB_TOKEN`
+ *   - `env | grep -i token` (and variants)
+ *   - `cat /proc/<pid>/environ`
+ *
+ * "Credential-named" variables match either a known cloud-vendor prefix
+ * (AWS_*, GITHUB_*, OPENAI_*, ...) or a suffix naming the secret material
+ * (_TOKEN, _KEY, _SECRET, _PASSWORD, _CREDENTIAL[S]). Names like `$HOME` or
+ * `$PATH` deliberately do NOT match.
+ */
+const CRED_VAR_NAME_SOURCE = String.raw`(?:(?:AWS|GCP|GOOGLE|AZURE|GITHUB|GITLAB|STRIPE|OPENAI|ANTHROPIC|HEROKU|TWILIO|SENDGRID|SLACK|DISCORD|TELEGRAM|NPM|DOCKER|KUBE|VAULT|CIRCLECI|TRAVIS|DATADOG)_[A-Z0-9_]+|[A-Z][A-Z0-9_]*_(?:TOKEN|KEY|SECRET|PASSWORD|PASS|CREDENTIAL|CREDENTIALS))`;
+
+const CREDENTIAL_ENV_PATTERNS: readonly RegExp[] = [
+  // $VAR or ${VAR} referenced anywhere in the command
+  new RegExp(String.raw`\$\{?${CRED_VAR_NAME_SOURCE}\}?`),
+  // printenv VAR
+  new RegExp(
+    String.raw`(?:^|[;|&])\s*(?:sudo\s+)?printenv\b[^|;&<>]*\b${CRED_VAR_NAME_SOURCE}\b`,
+  ),
+  // env | grep <credential-ish>
+  /(?:^|[;|&])\s*(?:sudo\s+)?(?:env|printenv)\s*(?:\s+[-\w]+)*\s*\|\s*grep\b[^|;&]*?(?:token|key|secret|password|credential|api|aws|github|openai|anthropic)/i,
+  // /proc/<pid>/environ — dumps the process env
+  /\/proc\/[^/\s]+\/environ\b/,
+];
+
 // ---------------------------------------------------------------------------
 // Target extraction
 // ---------------------------------------------------------------------------
@@ -501,6 +566,21 @@ export function normalizeActionClass(toolName: string): string {
  *      `rsync`/`install`/`ln`. Skipped when Rule 4 already reclassified to
  *      `filesystem.delete` — deleting a credential file stays a destructive
  *      fs action.
+ *   6. Shell-wrapper tools invoking a credential-emitting CLI subcommand
+ *      that returns the secret on stdout without touching a file path
+ *      (`aws sts …`, `gh auth token`, `gcloud auth print-access-token`,
+ *      `vault kv get`, `kubectl get secret`, `op read`, `pass show`,
+ *      `doppler secrets get`, `heroku config:get`, `az account
+ *      get-access-token`) → reclassified to `credential.read`. Skipped if
+ *      Rule 4 or Rule 5 already reclassified.
+ *   7. (reserved — file-upload exfiltration via `curl -F @path` / `scp` /
+ *      `wget --post-file`. The credential-path case is already covered by
+ *      Rule 5; the non-credential case needs intent-group evaluation in
+ *      the handler and is tracked separately.)
+ *   8. Shell-wrapper tools reading credentials from the environment —
+ *      `echo $AWS_SECRET_ACCESS_KEY`, `printenv GITHUB_TOKEN`, `env |
+ *      grep token`, `cat /proc/<pid>/environ` — → reclassified to
+ *      `credential.read`. Skipped if Rule 4/5/6 already reclassified.
  *
  * @param toolName  Name of the tool being invoked (case-insensitive).
  * @param params    Tool call parameters used for target extraction and
@@ -574,6 +654,45 @@ export function normalize_action(
       intent_group = credEntry.intent_group;
       if (risk !== 'critical') risk = credEntry.default_risk;
     }
+  }
+
+  // Rule 6: shell-wrapper invoking a credential-emitting CLI subcommand →
+  // credential.read. Skipped when an earlier rule already picked a more
+  // specific class (filesystem.delete, credential.read/write).
+  const alreadyReclassified =
+    action_class === 'filesystem.delete' ||
+    action_class === 'credential.read' ||
+    action_class === 'credential.write';
+  if (
+    !alreadyReclassified &&
+    SHELL_WRAPPER_TOOL_NAMES.has(toolKey) &&
+    commandStr !== '' &&
+    CREDENTIAL_CLI_PATTERNS.some((re) => re.test(commandStr))
+  ) {
+    const credEntry = ALIAS_INDEX.get('read_secret') ?? UNKNOWN_ENTRY;
+    action_class = credEntry.action_class;
+    hitl_mode = credEntry.default_hitl_mode;
+    intent_group = credEntry.intent_group;
+    if (risk !== 'critical') risk = credEntry.default_risk;
+  }
+
+  // Rule 8: shell-wrapper reading credentials from the environment →
+  // credential.read. Same skip semantics as Rule 6.
+  const stillUnclassified =
+    action_class !== 'filesystem.delete' &&
+    action_class !== 'credential.read' &&
+    action_class !== 'credential.write';
+  if (
+    stillUnclassified &&
+    SHELL_WRAPPER_TOOL_NAMES.has(toolKey) &&
+    commandStr !== '' &&
+    CREDENTIAL_ENV_PATTERNS.some((re) => re.test(commandStr))
+  ) {
+    const credEntry = ALIAS_INDEX.get('read_secret') ?? UNKNOWN_ENTRY;
+    action_class = credEntry.action_class;
+    hitl_mode = credEntry.default_hitl_mode;
+    intent_group = credEntry.intent_group;
+    if (risk !== 'critical') risk = credEntry.default_risk;
   }
 
   return { action_class, risk, hitl_mode, target, ...(intent_group !== undefined && { intent_group }) };

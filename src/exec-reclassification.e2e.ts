@@ -270,6 +270,114 @@ describe('exec reclassification — production hook handler', () => {
     });
   });
 
+  // ── Rule 6: credential CLI subcommands → credential.read ─────────────────
+
+  describe('Rule 6: credential-emitting CLI subcommands', () => {
+    it('exec + aws sts get-session-token blocks as credential.read', async () => {
+      const handler = await loadPluginInMode('open');
+      const result = await callHook(handler, 'exec', {
+        command: 'aws sts get-session-token',
+      });
+      expect(result?.block).toBe(true);
+      expect(result?.blockReason).toMatch(/credential/i);
+    });
+
+    it('exec + gh auth token blocks as credential.read', async () => {
+      const handler = await loadPluginInMode('open');
+      const result = await callHook(handler, 'exec', { command: 'gh auth token' });
+      expect(result?.block).toBe(true);
+      expect(result?.blockReason).toMatch(/credential/i);
+    });
+
+    it('exec + vault kv get blocks as credential.read', async () => {
+      const handler = await loadPluginInMode('open');
+      const result = await callHook(handler, 'exec', {
+        command: 'vault kv get secret/prod/db',
+      });
+      expect(result?.block).toBe(true);
+      expect(result?.blockReason).toMatch(/credential/i);
+    });
+
+    it('exec + kubectl get secret blocks as credential.read', async () => {
+      const handler = await loadPluginInMode('open');
+      const result = await callHook(handler, 'exec', {
+        command: 'kubectl get secret app-secrets',
+      });
+      expect(result?.block).toBe(true);
+      expect(result?.blockReason).toMatch(/credential/i);
+    });
+
+    it('exec + aws s3 ls does NOT block as credential.read', async () => {
+      const handler = await loadPluginInMode('open');
+      const result = await callHook(handler, 'exec', { command: 'aws s3 ls' });
+      // aws s3 ls normalizes to unknown_sensitive_action in OPEN mode
+      // (exec is not in the shell.exec alias set, no credential rule matches) →
+      // implicit permit.
+      expect(result?.block).not.toBe(true);
+    });
+  });
+
+  // ── Rule 8: env var credential exfiltration → credential.read ─────────────
+
+  describe('Rule 8: env var credential exfiltration', () => {
+    it('exec + echo $AWS_SECRET_ACCESS_KEY blocks as credential.read', async () => {
+      const handler = await loadPluginInMode('open');
+      const result = await callHook(handler, 'exec', {
+        command: 'echo $AWS_SECRET_ACCESS_KEY',
+      });
+      expect(result?.block).toBe(true);
+      expect(result?.blockReason).toMatch(/credential/i);
+    });
+
+    it('exec + echo ${OPENAI_API_KEY} blocks as credential.read', async () => {
+      const handler = await loadPluginInMode('open');
+      const result = await callHook(handler, 'exec', {
+        command: 'echo ${OPENAI_API_KEY}',
+      });
+      expect(result?.block).toBe(true);
+      expect(result?.blockReason).toMatch(/credential/i);
+    });
+
+    it('exec + printenv GITHUB_TOKEN blocks as credential.read', async () => {
+      const handler = await loadPluginInMode('open');
+      const result = await callHook(handler, 'exec', {
+        command: 'printenv GITHUB_TOKEN',
+      });
+      expect(result?.block).toBe(true);
+      expect(result?.blockReason).toMatch(/credential/i);
+    });
+
+    it('exec + env | grep TOKEN blocks as credential.read', async () => {
+      const handler = await loadPluginInMode('open');
+      const result = await callHook(handler, 'exec', { command: 'env | grep TOKEN' });
+      expect(result?.block).toBe(true);
+      expect(result?.blockReason).toMatch(/credential/i);
+    });
+
+    it('exec + cat /proc/self/environ blocks as credential.read', async () => {
+      const handler = await loadPluginInMode('open');
+      const result = await callHook(handler, 'exec', {
+        command: 'cat /proc/self/environ',
+      });
+      expect(result?.block).toBe(true);
+      expect(result?.blockReason).toMatch(/credential/i);
+    });
+
+    it('exec + echo $HOME does NOT block as credential.read', async () => {
+      const handler = await loadPluginInMode('open');
+      const result = await callHook(handler, 'exec', { command: 'echo $HOME' });
+      // $HOME is not a credential-named var → falls through to
+      // unknown_sensitive_action → OPEN implicit permit.
+      expect(result?.block).not.toBe(true);
+    });
+
+    it('exec + echo $PATH does NOT block as credential.read', async () => {
+      const handler = await loadPluginInMode('open');
+      const result = await callHook(handler, 'exec', { command: 'echo $PATH' });
+      expect(result?.block).not.toBe(true);
+    });
+  });
+
   // ── Bare-verb aliases end-to-end ──────────────────────────────────────────
 
   describe('bare-verb aliases', () => {
