@@ -497,17 +497,20 @@ This class exists to make the registry fail-closed: a tool without a registratio
 
 ## Target Extraction
 
-The `target` field in a `NormalizedAction` identifies the resource the action operates on. It is extracted by inspecting tool parameters in the following priority order:
+The `target` field in a `NormalizedAction` identifies the resource the action operates on. It is extracted by inspecting tool parameters in the following priority order (generic fallback, used when no per-class override exists):
 
 | Priority | Parameter key | Typical usage |
 |---|---|---|
-| 1 | `path` | Local filesystem path |
-| 2 | `file` | File name or path |
-| 3 | `url` | HTTP URL |
-| 4 | `destination` | Output location |
-| 5 | `to` | Recipient or endpoint |
-| 6 | `recipient` | Email/message recipient |
-| 7 | `email` | Email address |
+| 1 | `file_path` | Typed file path field (MCP tool schemas) |
+| 2 | `path` | Local filesystem path |
+| 3 | `file` | File name or path |
+| 4 | `repo_url` | Remote repository URL |
+| 5 | `package_name` | Package identifier |
+| 6 | `url` | HTTP URL |
+| 7 | `destination` | Output location |
+| 8 | `to` | Recipient or endpoint |
+| 9 | `recipient` | Email/message recipient |
+| 10 | `email` | Email address |
 
 The first non-empty string value found is used as the target. If no recognized parameter contains a non-empty string, the target is the empty string `""`.
 
@@ -517,11 +520,25 @@ Certain action classes use a dedicated ordered key list instead of the generic s
 
 | Action Class | Key priority (first non-empty wins) |
 |---|---|
+| `filesystem.read` | `file_path` → `path` → `file` |
+| `filesystem.write` | `file_path` → `path` → `file` → `destination` → `url` → `to` → `recipient` → `email` |
+| `filesystem.delete` | `file_path` → `path` → `file` |
+| `filesystem.list` | `file_path` → `path` → `file` |
+| `system.read` | `variable_name` → `name` → `key` |
+| `vcs.read` | `path` → `file_path` → `branch` → `ref` → `revision` |
+| `vcs.write` | `path` → `file_path` → `working_dir` |
+| `vcs.remote` | `repo_url` → `url` → `remote_url` → `remote` |
+| `package.install` | `package_name` → `package` → `name` |
+| `package.run` | `script` → `script_name` → `name` → `package_name` |
+| `package.read` | `package_name` → `package` → `name` |
+| `build.compile` | `target` → `path` → `file_path` → `working_dir` |
+| `build.test` | `target` → `path` → `working_dir` |
+| `build.lint` | `target` → `path` → `file_path` → `working_dir` |
 | `archive.create` | `output_path` → `destination` → `archive_path` → `path` → `file_path` |
 | `archive.extract` | `destination` → `output_dir` → `archive_path` → `path` → `file_path` |
 | `archive.read` | `archive_path` → `path` → `file_path` |
 
-**Rationale:** For `archive.create`, the output path (where the archive is written) is the primary target rather than the source paths. For `archive.extract`, the destination directory is the primary target because that is where files land on disk. For `archive.read`, the archive file itself is the target since the operation only inspects it.
+**Rationale:** Filesystem classes prefer the typed `file_path` field (common in MCP tool schemas) over the generic `path`/`file` to avoid ambiguity between source and destination parameters. `system.read` uses query-oriented keys (`variable_name`, `name`, `key`) because the target is an information item, not a file. `vcs.read` puts `path` first since diff/log operations are most often scoped to a file path rather than a branch; `vcs.write` follows the same convention. `vcs.remote` prioritises `repo_url` as the canonical typed field for remote repository identity; generic `url` is the fallback for tools that don't have a dedicated field. `package.install` and `package.read` prioritise the typed `package_name` field over the looser `name` fallback. `package.run` surfaces the script name as the target since that is the resource being invoked. Build classes use `target` first (a common named-target concept across build tools) before falling back to a working directory or file path. For `archive.create`, the output path (where the archive is written) is the primary target rather than the source paths. For `archive.extract`, the destination directory is the primary target because that is where files land on disk. For `archive.read`, the archive file itself is the target since the operation only inspects it.
 
 The target is embedded in the HITL approval token binding via `SHA-256(action_class|target|payload_hash)`. This means an approval issued for `filesystem.delete` on `/tmp/scratch.txt` cannot be replayed against `/home/user/.ssh/id_rsa`.
 
