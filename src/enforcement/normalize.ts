@@ -317,6 +317,8 @@ const TARGET_KEYS_BY_CLASS: Readonly<Record<string, readonly string[]>> = {
   'filesystem.write':  ['file_path', 'path', 'file', 'destination', 'url', 'to', 'recipient', 'email'],
   'filesystem.delete': ['file_path', 'path', 'file'],
   'filesystem.list':   ['file_path', 'path', 'file'],
+  // System read operations identify the target by variable name or info key.
+  'system.read':       ['variable_name', 'name', 'key'],
   // VCS read operations (status, log, diff) target a file path or branch/ref.
   'vcs.read':          ['path', 'file_path', 'branch', 'ref', 'revision'],
   // VCS write operations (stage, commit) target a file path or working directory.

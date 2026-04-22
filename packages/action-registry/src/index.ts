@@ -66,6 +66,7 @@ export const ActionClass = {
   CredentialWrite: 'credential.write',
   CodeExecute: 'code.execute',
   PaymentInitiate: 'payment.initiate',
+  SystemRead: 'system.read',
   VcsRead: 'vcs.read',
   VcsWrite: 'vcs.write',
   VcsRemote: 'vcs.remote',
@@ -81,7 +82,7 @@ export const ActionClass = {
 export type ActionClassValue = (typeof ActionClass)[keyof typeof ActionClass];
 
 // ---------------------------------------------------------------------------
-// Registry — 28 entries, aliases stored lowercase
+// Registry — 29 entries, aliases stored lowercase
 // ---------------------------------------------------------------------------
 
 export const REGISTRY: readonly ActionRegistryEntry[] = [
@@ -377,6 +378,24 @@ export const REGISTRY: readonly ActionRegistryEntry[] = [
       'stripe_payment',
     ],
     intent_group: 'payment',
+  },
+  {
+    action_class: ActionClass.SystemRead,
+    default_risk: 'low',
+    default_hitl_mode: 'none',
+    aliases: [
+      'get_system_info',
+      'system_info',
+      'get_env_var',
+      'get_env',
+      'read_env',
+      'env_var',
+      'get_hostname',
+      'get_platform',
+      'get_arch',
+      'get_os_info',
+      'uname',
+    ],
   },
   {
     action_class: ActionClass.VcsRead,

@@ -55,7 +55,7 @@ describe('normalizeActionClass', () => {
 });
 
 // ---------------------------------------------------------------------------
-// All 27 action classes resolve from at least one alias
+// All 28 action classes resolve from at least one alias
 // ---------------------------------------------------------------------------
 
 describe('registry coverage — each action class resolves from at least one alias', () => {
@@ -78,6 +78,7 @@ describe('registry coverage — each action class resolves from at least one ali
     ['write_secret',     'credential.write'],
     ['run_code',         'code.execute'],
     ['pay',              'payment.initiate'],
+    ['get_system_info',  'system.read'],
     ['git_log',          'vcs.read'],
     ['git_add',          'vcs.write'],
     ['git_clone',        'vcs.remote'],
@@ -202,6 +203,78 @@ describe('package.read aliases', () => {
 
   it('returns empty target when no package filter is specified', () => {
     const result = normalize_action('pip_list', {});
+    expect(result.target).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// system.read action class — aliases, risk, HITL, target extraction
+// ---------------------------------------------------------------------------
+
+describe('system.read aliases and defaults', () => {
+  it('get_system_info → system.read with low risk and no HITL', () => {
+    const result = normalize_action('get_system_info', {});
+    expect(result.action_class).toBe('system.read');
+    expect(result.risk).toBe('low');
+    expect(result.hitl_mode).toBe('none');
+  });
+
+  it('get_env_var → system.read with low risk and no HITL', () => {
+    const result = normalize_action('get_env_var', { variable_name: 'HOME' });
+    expect(result.action_class).toBe('system.read');
+    expect(result.risk).toBe('low');
+    expect(result.hitl_mode).toBe('none');
+  });
+
+  it('system_info → system.read', () => {
+    const result = normalize_action('system_info', {});
+    expect(result.action_class).toBe('system.read');
+  });
+
+  it('get_env → system.read', () => {
+    const result = normalize_action('get_env', { variable_name: 'PATH' });
+    expect(result.action_class).toBe('system.read');
+  });
+
+  it('read_env → system.read', () => {
+    const result = normalize_action('read_env', { variable_name: 'USER' });
+    expect(result.action_class).toBe('system.read');
+  });
+
+  it('uname → system.read', () => {
+    const result = normalize_action('uname', {});
+    expect(result.action_class).toBe('system.read');
+  });
+
+  it('GET_SYSTEM_INFO (uppercase) → system.read via case-insensitive alias lookup', () => {
+    const result = normalize_action('GET_SYSTEM_INFO', {});
+    expect(result.action_class).toBe('system.read');
+  });
+
+  it('no intent_group on system.read', () => {
+    const result = normalize_action('get_system_info', {});
+    expect(result.intent_group).toBeUndefined();
+  });
+});
+
+describe('system.read target extraction', () => {
+  it('extracts variable_name as target for get_env_var', () => {
+    const result = normalize_action('get_env_var', { variable_name: 'HOME' });
+    expect(result.target).toBe('HOME');
+  });
+
+  it('extracts name as target when variable_name is absent', () => {
+    const result = normalize_action('get_env_var', { name: 'PATH' });
+    expect(result.target).toBe('PATH');
+  });
+
+  it('extracts key as target when variable_name and name are absent', () => {
+    const result = normalize_action('get_env_var', { key: 'USER' });
+    expect(result.target).toBe('USER');
+  });
+
+  it('returns empty target for get_system_info (no params)', () => {
+    const result = normalize_action('get_system_info', {});
     expect(result.target).toBe('');
   });
 });
