@@ -21,7 +21,7 @@ Unknown tool names are **not rejected at lookup time** — they resolve to `unkn
 
 ## Complete Action Registry
 
-The table below lists all 19 canonical action classes with their default risk level, default HITL mode, intent group (where applicable), and the tool aliases that map to each class.
+The table below lists all 22 canonical action classes with their default risk level, default HITL mode, intent group (where applicable), and the tool aliases that map to each class.
 
 | # | Action Class | Risk | HITL Mode | Intent Group | Registered Aliases |
 |---|---|---|---|---|---|
@@ -43,7 +43,10 @@ The table below lists all 19 canonical action classes with their default risk le
 | 16 | `credential.write` | critical | per_request | `credential_access` | `write_secret`, `set_secret`, `set_credential`, `store_secret`, `create_secret` |
 | 17 | `code.execute` | high | per_request | — | `run_code`, `execute_code`, `eval_code`, `python`, `javascript`, `node_exec`, `code_runner` |
 | 18 | `payment.initiate` | critical | per_request | `payment` | `pay`, `payment`, `initiate_payment`, `create_payment`, `charge`, `stripe_payment` |
-| 19 | `unknown_sensitive_action` | critical | per_request | — | *(none — fail-closed catch-all)* |
+| 19 | `archive.create` | medium | per_request | — | `archive_create`, `create_archive`, `tar_create`, `tar_czf`, `tar_compress`, `zip_create`, `create_zip`, `compress`, `compress_files`, `gzip`, `bzip2`, `zstd_compress` |
+| 20 | `archive.extract` | medium | per_request | — | `archive_extract`, `extract_archive`, `unarchive`, `tar_extract`, `tar_xzf`, `tar_decompress`, `unzip`, `gunzip`, `bunzip2`, `decompress`, `extract_files`, `zstd_decompress` |
+| 21 | `archive.read` | low | none | — | `archive_list`, `archive_read`, `list_archive`, `read_archive`, `tar_list`, `tar_tf`, `zip_list`, `list_zip`, `inspect_archive`, `peek_archive` |
+| 22 | `unknown_sensitive_action` | critical | per_request | — | *(none — fail-closed catch-all)* |
 
 ---
 
@@ -60,11 +63,11 @@ Risk levels determine how seriously the enforcement pipeline treats a given acti
 
 ### Rationale by Action Class
 
-**`filesystem.read` / `filesystem.list` / `memory.read` → low**
-These classes observe state without modifying it. The worst-case outcome is information disclosure to the agent, which is bounded by the data the agent already has access to. No external side effects are produced.
+**`filesystem.read` / `filesystem.list` / `memory.read` / `archive.read` → low**
+These classes observe state without modifying it. The worst-case outcome is information disclosure to the agent, which is bounded by the data the agent already has access to. No external side effects are produced. `archive.read` lists archive contents without writing to disk and is therefore read-only by nature.
 
-**`filesystem.write` / `web.search` / `web.fetch` / `browser.scrape` / `web.post` / `communication.slack` / `communication.webhook` / `memory.write` → medium**
-These classes produce side effects (modifying files, calling external endpoints, posting messages) but are generally reversible or have bounded blast radius. A misrouted Slack message or an overwritten file can be corrected. Memory writes are medium rather than high because memory is agent-internal state with no direct external footprint. Web fetch and scrape operations are medium (not low) because they can retrieve sensitive data, exfiltrate information to external URLs embedded in parameters, or be weaponised for SSRF — warranting per-request HITL review.
+**`filesystem.write` / `web.search` / `web.fetch` / `browser.scrape` / `web.post` / `communication.slack` / `communication.webhook` / `memory.write` / `archive.create` / `archive.extract` → medium**
+These classes produce side effects (modifying files, calling external endpoints, posting messages) but are generally reversible or have bounded blast radius. A misrouted Slack message or an overwritten file can be corrected. Memory writes are medium rather than high because memory is agent-internal state with no direct external footprint. Web fetch and scrape operations are medium (not low) because they can retrieve sensitive data, exfiltrate information to external URLs embedded in parameters, or be weaponised for SSRF — warranting per-request HITL review. `archive.create` and `archive.extract` are medium because they write new files to disk and can overwrite existing paths (path-traversal risk during extraction), but the operations are bounded to the local filesystem and recoverable.
 
 **`filesystem.delete` / `shell.exec` / `communication.email` / `credential.read` / `code.execute` → high**
 These classes carry meaningful irreversibility or external exposure:
@@ -424,7 +427,63 @@ Initiates a financial transaction via a payment processor. Critical risk because
 
 ---
 
-### 19. `unknown_sensitive_action`
+### 19. `archive.create`
+
+**Risk:** medium | **HITL:** per_request
+
+Packages one or more files or directories into a compressed archive (tar, zip, gzip, bzip2, zstd, etc.). Medium risk because the operation writes new files to disk (potentially overwriting an existing archive at the output path) and can include sensitive files from the source paths. Per-request HITL ensures each archival operation is individually approved.
+
+> **Security note:** Archive creation tools that accept a source path glob pattern can inadvertently capture credential files (`.env`, `~/.ssh/id_rsa`, etc.). Policy rules should inspect the `target` (output path) and `source` parameters for sensitive path patterns.
+
+| Alias | Typical tool |
+|---|---|
+| `archive_create`, `create_archive` | Generic archive creation |
+| `tar_create`, `tar_czf`, `tar_compress` | tar-based archiving |
+| `zip_create`, `create_zip` | zip-based archiving |
+| `compress`, `compress_files` | Generic compression tools |
+| `gzip` | gzip single-file compression |
+| `bzip2` | bzip2 single-file compression |
+| `zstd_compress` | zstd compression |
+
+---
+
+### 20. `archive.extract`
+
+**Risk:** medium | **HITL:** per_request
+
+Unpacks an existing archive to a destination directory. Medium risk due to the path-traversal attack surface — a maliciously crafted archive can write files outside the intended destination (`../../` entries). Per-request HITL ensures each extraction is individually reviewed before files are written.
+
+> **Security note:** Path traversal ("zip slip") is the primary risk for extraction operations. Policy rules should validate that the `destination` parameter is an absolute path and does not allow traversal outside a designated staging area.
+
+| Alias | Typical tool |
+|---|---|
+| `archive_extract`, `extract_archive`, `unarchive` | Generic extraction |
+| `tar_extract`, `tar_xzf`, `tar_decompress` | tar-based extraction |
+| `unzip` | zip extraction |
+| `gunzip` | gzip decompression |
+| `bunzip2` | bzip2 decompression |
+| `decompress`, `extract_files` | Generic decompression tools |
+| `zstd_decompress` | zstd decompression |
+
+---
+
+### 21. `archive.read`
+
+**Risk:** low | **HITL:** none
+
+Lists the contents of an archive (table of contents) without extracting any files. Read-only and non-destructive; analogous to `filesystem.read` for archive containers. No HITL required by default.
+
+| Alias | Typical tool |
+|---|---|
+| `archive_list`, `list_archive` | Generic archive listing |
+| `archive_read`, `read_archive` | Read-semantic variants |
+| `tar_list`, `tar_tf` | tar table-of-contents listing |
+| `zip_list`, `list_zip` | zip listing tools |
+| `inspect_archive`, `peek_archive` | Inspection-framing variants |
+
+---
+
+### 22. `unknown_sensitive_action`
 
 **Risk:** critical | **HITL:** per_request
 
@@ -451,6 +510,18 @@ The `target` field in a `NormalizedAction` identifies the resource the action op
 | 7 | `email` | Email address |
 
 The first non-empty string value found is used as the target. If no recognized parameter contains a non-empty string, the target is the empty string `""`.
+
+### Per-class target extraction overrides
+
+Certain action classes use a dedicated ordered key list instead of the generic sequence above. When an action class has an override, the generic list is not consulted.
+
+| Action Class | Key priority (first non-empty wins) |
+|---|---|
+| `archive.create` | `output_path` → `destination` → `archive_path` → `path` → `file_path` |
+| `archive.extract` | `destination` → `output_dir` → `archive_path` → `path` → `file_path` |
+| `archive.read` | `archive_path` → `path` → `file_path` |
+
+**Rationale:** For `archive.create`, the output path (where the archive is written) is the primary target rather than the source paths. For `archive.extract`, the destination directory is the primary target because that is where files land on disk. For `archive.read`, the archive file itself is the target since the operation only inspects it.
 
 The target is embedded in the HITL approval token binding via `SHA-256(action_class|target|payload_hash)`. This means an approval issued for `filesystem.delete` on `/tmp/scratch.txt` cannot be replayed against `/home/user/.ssh/id_rsa`.
 
@@ -536,6 +607,7 @@ policies:
 | `filesystem.list` | low |
 | `memory.read` | low |
 | `memory.write` | medium |
+| `archive.read` | low |
 
 ### Actions always requiring per-request HITL by default
 
@@ -555,6 +627,8 @@ policies:
 | `credential.write` | critical | `credential_access` |
 | `code.execute` | high | — |
 | `payment.initiate` | critical | `payment` |
+| `archive.create` | medium | — |
+| `archive.extract` | medium | — |
 | `unknown_sensitive_action` | critical | — |
 
 ### Intent group summary
