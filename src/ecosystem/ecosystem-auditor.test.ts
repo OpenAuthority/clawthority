@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { EcosystemAuditor } from './ecosystem-auditor.js';
@@ -114,8 +114,7 @@ Calls \`rm\`, \`send_email\`, \`git-commit\`, and \`mv\`.
 function makeTmpSkillDir(
   skills: Array<{ dir: string; content: string }>,
 ): string {
-  const root = join(tmpdir(), `eco-audit-test-${Date.now()}`);
-  mkdirSync(root, { recursive: true });
+  const root = mkdtempSync(join(tmpdir(), 'eco-audit-test-'));
   for (const { dir, content } of skills) {
     const skillDir = join(root, dir);
     mkdirSync(skillDir, { recursive: true });
