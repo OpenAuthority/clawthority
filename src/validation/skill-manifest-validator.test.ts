@@ -17,7 +17,7 @@
  *   TC-SMV-Contract: All first-party tool manifests validate against F-05 and registry rules
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   validateToolManifest,
   SkillManifestValidator,
@@ -396,6 +396,178 @@ describe('TC-SMV-08: SkillManifestValidator — risk/HITL alignment with registr
     const m = { ...validManifest(), action_class: 'vcs.write', risk_tier: 'critical' as const };
     const r = smv.validate(m);
     expect(r.errors.some((e) => e.includes('"medium"') && e.includes('vcs.write'))).toBe(true);
+  });
+});
+
+// ─── TC-SMV-09: unsafe_legacy flag validation ─────────────────────────────────
+
+describe('TC-SMV-09: unsafe_legacy flag validation', () => {
+  const FUTURE_DATE = '2099-01-01';
+  const PAST_DATE = '2000-01-01';
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  // ── validateToolManifest (pure schema checks) ──────────────────────────────
+
+  describe('validateToolManifest — unsafe_legacy schema checks', () => {
+    it('accepts manifest with unsafe_legacy: true and a valid future until date', () => {
+      const m = { ...validManifest(), unsafe_legacy: true as const, until: FUTURE_DATE };
+      const r = validateToolManifest(m);
+      expect(r.valid).toBe(true);
+      expect(r.errors).toHaveLength(0);
+    });
+
+    it('accepts manifest without unsafe_legacy (no change to existing behaviour)', () => {
+      const r = validateToolManifest(validManifest());
+      expect(r.valid).toBe(true);
+    });
+
+    it('rejects unsafe_legacy: true without until field', () => {
+      const m = { ...validManifest(), unsafe_legacy: true as const };
+      const r = validateToolManifest(m);
+      expect(r.valid).toBe(false);
+      expect(r.errors.some((e) => e.includes('until'))).toBe(true);
+    });
+
+    it('rejects unsafe_legacy: true with empty until string', () => {
+      const m = { ...validManifest(), unsafe_legacy: true as const, until: '   ' };
+      const r = validateToolManifest(m);
+      expect(r.valid).toBe(false);
+      expect(r.errors.some((e) => e.includes('until'))).toBe(true);
+    });
+
+    it('rejects unsafe_legacy: true with non-date until string', () => {
+      const m = { ...validManifest(), unsafe_legacy: true as const, until: 'not-a-date' };
+      const r = validateToolManifest(m);
+      expect(r.valid).toBe(false);
+      expect(r.errors.some((e) => e.includes('until'))).toBe(true);
+    });
+
+    it('rejects unsafe_legacy: true with an invalid date (wrong format)', () => {
+      const m = { ...validManifest(), unsafe_legacy: true as const, until: '31-12-2099' };
+      const r = validateToolManifest(m);
+      expect(r.valid).toBe(false);
+      expect(r.errors.some((e) => e.includes('until'))).toBe(true);
+    });
+
+    it('rejects unsafe_legacy: true with a syntactically formatted but invalid calendar date', () => {
+      const m = { ...validManifest(), unsafe_legacy: true as const, until: '2099-13-45' };
+      const r = validateToolManifest(m);
+      expect(r.valid).toBe(false);
+      expect(r.errors.some((e) => e.includes('until'))).toBe(true);
+    });
+
+    it('rejects unsafe_legacy: "yes" (non-boolean-true value)', () => {
+      const m = { ...validManifest(), unsafe_legacy: 'yes' as unknown as true };
+      const r = validateToolManifest(m);
+      expect(r.valid).toBe(false);
+      expect(r.errors.some((e) => e.includes('unsafe_legacy'))).toBe(true);
+    });
+
+    it('accepts past until date at the schema level (mode check is registry-aware)', () => {
+      const m = { ...validManifest(), unsafe_legacy: true as const, until: PAST_DATE };
+      const r = validateToolManifest(m);
+      expect(r.valid).toBe(true);
+    });
+  });
+
+  // ── SkillManifestValidator (registry-aware + mode checks) ─────────────────
+
+  describe('SkillManifestValidator — unsafe_legacy bypass and deadline enforcement', () => {
+    it('accepts legacy manifest with future deadline and bypasses E-03 (CLOSED mode)', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const smv = new SkillManifestValidator({ openMode: false });
+      const m = {
+        name: 'legacy-tool',
+        version: '1.0.0',
+        action_class: 'shell.exec',
+        risk_tier: 'high' as const,
+        default_hitl_mode: 'per_request' as const,
+        params: { type: 'object' as const, properties: {}, additionalProperties: false as const },
+        result: { type: 'object' as const, properties: {} },
+        unsafe_legacy: true as const,
+        until: FUTURE_DATE,
+      };
+      const r = smv.validate(m);
+      expect(r.valid).toBe(true);
+      expect(r.errors).toHaveLength(0);
+      expect(warn).toHaveBeenCalledOnce();
+      expect(warn.mock.calls[0]![0]).toContain(FUTURE_DATE);
+    });
+
+    it('logs warning including deadline when unsafe_legacy is found', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const smv = new SkillManifestValidator({ openMode: false });
+      const m = { ...validManifest(), unsafe_legacy: true as const, until: FUTURE_DATE };
+      smv.validate(m);
+      expect(warn).toHaveBeenCalledOnce();
+      expect(warn.mock.calls[0]![0]).toContain(FUTURE_DATE);
+    });
+
+    it('fails validation for past deadline in CLOSED mode (default)', () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const smv = new SkillManifestValidator({ openMode: false });
+      const m = { ...validManifest(), unsafe_legacy: true as const, until: PAST_DATE };
+      const r = smv.validate(m);
+      expect(r.valid).toBe(false);
+      expect(r.errors.some((e) => e.includes('passed') && e.includes(PAST_DATE))).toBe(true);
+    });
+
+    it('passes validation for past deadline in OPEN mode with warning', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const smv = new SkillManifestValidator({ openMode: true });
+      const m = { ...validManifest(), unsafe_legacy: true as const, until: PAST_DATE };
+      const r = smv.validate(m);
+      expect(r.valid).toBe(true);
+      expect(r.errors).toHaveLength(0);
+      expect(warn).toHaveBeenCalledTimes(2);
+      const allWarnings = warn.mock.calls.map((c) => c[0] as string).join(' ');
+      expect(allWarnings).toContain('OPEN mode');
+    });
+
+    it('does not bypass registry checks when unsafe_legacy is absent', () => {
+      const smv = new SkillManifestValidator({ openMode: false });
+      const m = { ...validManifest(), action_class: 'shell.exec', risk_tier: 'high' as const };
+      const r = smv.validate(m);
+      expect(r.valid).toBe(false);
+      expect(r.errors.some((e) => e.includes('shell.exec'))).toBe(true);
+    });
+
+    it('reads OPENAUTHORITY_MODE env var when no openMode option provided (OPEN)', () => {
+      const originalMode = process.env['OPENAUTHORITY_MODE'];
+      process.env['OPENAUTHORITY_MODE'] = 'OPEN';
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        const smv = new SkillManifestValidator();
+        const m = { ...validManifest(), unsafe_legacy: true as const, until: PAST_DATE };
+        const r = smv.validate(m);
+        expect(r.valid).toBe(true);
+      } finally {
+        if (originalMode === undefined) {
+          delete process.env['OPENAUTHORITY_MODE'];
+        } else {
+          process.env['OPENAUTHORITY_MODE'] = originalMode;
+        }
+      }
+    });
+
+    it('reads OPENAUTHORITY_MODE env var when no openMode option provided (CLOSED)', () => {
+      const originalMode = process.env['OPENAUTHORITY_MODE'];
+      delete process.env['OPENAUTHORITY_MODE'];
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        const smv = new SkillManifestValidator();
+        const m = { ...validManifest(), unsafe_legacy: true as const, until: PAST_DATE };
+        const r = smv.validate(m);
+        expect(r.valid).toBe(false);
+      } finally {
+        if (originalMode !== undefined) {
+          process.env['OPENAUTHORITY_MODE'] = originalMode;
+        }
+      }
+    });
   });
 });
 

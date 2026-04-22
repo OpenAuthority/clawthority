@@ -32,6 +32,9 @@ export type { RiskLevel, HitlModeNorm };
 const VALID_RISK_TIERS: ReadonlySet<string> = new Set(['low', 'medium', 'high', 'critical']);
 const VALID_HITL_MODES: ReadonlySet<string> = new Set(['none', 'per_request', 'session_approval']);
 
+/** ISO-8601 date-only pattern (YYYY-MM-DD). */
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
 /**
  * Reserved tool names that are exec wrapper aliases.
  * Mirrors the SHELL_WRAPPER_TOOL_NAMES set used by normalize.ts at runtime.
@@ -79,6 +82,18 @@ export interface ToolManifest {
   params: JsonSchemaObject;
   /** JSON Schema describing the tool's result payload. */
   result: JsonSchemaObject;
+  /**
+   * Escape hatch for legacy tools during a migration period.
+   * Must be `true`. Requires the `until` field to be set.
+   * Registry-aware checks (E-01, E-03, E-05) are bypassed while the deadline is active.
+   */
+  unsafe_legacy?: true;
+  /**
+   * Migration deadline in YYYY-MM-DD format.
+   * Required when `unsafe_legacy` is `true`.
+   * Past this date, validation fails in CLOSED mode.
+   */
+  until?: string;
 }
 
 /** Structured validation outcome from `validateToolManifest` and `SkillManifestValidator`. */
@@ -157,10 +172,43 @@ export function validateToolManifest(manifest: unknown): ManifestValidationResul
 
   validateJsonSchemaObject(m['result'], 'result', false, errors);
 
+  // ── unsafe_legacy / until ─────────────────────────────────────────────────
+
+  if (m['unsafe_legacy'] !== undefined) {
+    if (m['unsafe_legacy'] !== true) {
+      errors.push('unsafe_legacy: must be the boolean true when present.');
+    } else {
+      const until = m['until'];
+      if (typeof until !== 'string' || until.trim() === '') {
+        errors.push(
+          'until: required when unsafe_legacy is true; must be a YYYY-MM-DD date string.',
+        );
+      } else if (!isValidDateString(until)) {
+        errors.push(`until: "${until}" is not a valid YYYY-MM-DD date.`);
+      }
+    }
+  }
+
   return { valid: errors.length === 0, errors };
 }
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
+
+/** Returns true when `s` is a valid YYYY-MM-DD date string. */
+function isValidDateString(s: string): boolean {
+  if (!DATE_PATTERN.test(s)) return false;
+  const d = new Date(s);
+  return !isNaN(d.getTime());
+}
+
+/** Returns true when the given YYYY-MM-DD date is strictly before today (deadline has passed). */
+function isDeadlinePast(dateStr: string): boolean {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const deadline = new Date(dateStr);
+  deadline.setHours(0, 0, 0, 0);
+  return deadline < today;
+}
 
 function validateJsonSchemaObject(
   value: unknown,
@@ -196,6 +244,15 @@ function validateJsonSchemaObject(
 
 // ─── SkillManifestValidator ───────────────────────────────────────────────────
 
+/** Options for `SkillManifestValidator`. */
+export interface SkillManifestValidatorOptions {
+  /**
+   * When `true`, the validator operates in OPEN mode: past `unsafe_legacy` deadlines
+   * produce warnings instead of errors. Defaults to `process.env.OPENAUTHORITY_MODE === "OPEN"`.
+   */
+  openMode?: boolean;
+}
+
 /**
  * Build-time validator for skill manifests.
  *
@@ -208,15 +265,30 @@ function validateJsonSchemaObject(
  *   E-05: risk_tier and default_hitl_mode must align with the registry
  *         default_risk and default_hitl_mode for the declared action_class.
  *
+ * When a manifest declares `unsafe_legacy: true` with a valid `until` date:
+ *   - Registry-aware checks (E-01, E-03, E-05) are bypassed while the deadline is active.
+ *   - A warning is always logged to `console.warn`.
+ *   - Past the deadline, validation fails in CLOSED mode (default); OPEN mode
+ *     demotes the failure to an additional warning.
+ *
  * Violations are caught at manifest parse time, not at execution time.
  */
 export class SkillManifestValidator {
+  private readonly openMode: boolean;
+
+  constructor(opts?: SkillManifestValidatorOptions) {
+    this.openMode = opts?.openMode ?? process.env['OPENAUTHORITY_MODE'] === 'OPEN';
+  }
+
   /**
    * Validates a skill manifest against the full registry-aware rule set.
    *
    * Runs F-05 schema checks first; if those fail, returns immediately without
    * running registry-aware checks (registry checks assume a structurally
    * valid manifest).
+   *
+   * When `unsafe_legacy: true` is set and the `until` deadline is active,
+   * registry-aware checks are skipped and a warning is logged.
    *
    * @param manifest  The value to validate.
    * @returns         A `ManifestValidationResult` with `valid` and `errors`.
@@ -226,6 +298,36 @@ export class SkillManifestValidator {
     if (!schemaResult.valid) return schemaResult;
 
     const m = manifest as ToolManifest;
+
+    // ── unsafe_legacy bypass ──────────────────────────────────────────────────
+
+    if (m.unsafe_legacy === true && typeof m.until === 'string') {
+      const deadlinePast = isDeadlinePast(m.until);
+
+      console.warn(
+        `[OpenAuthority] unsafe_legacy: "${m.name}" is operating in legacy mode until ${m.until}. Migrate before deadline.`,
+      );
+
+      if (deadlinePast) {
+        if (this.openMode) {
+          console.warn(
+            `[OpenAuthority] unsafe_legacy: deadline "${m.until}" for "${m.name}" has passed (OPEN mode — allowed with warning).`,
+          );
+          return { valid: true, errors: [] };
+        }
+        return {
+          valid: false,
+          errors: [
+            `unsafe_legacy: deadline "${m.until}" has passed for "${m.name}". ` +
+              `Legacy mode is no longer permitted in CLOSED mode. Migrate to a supported action_class.`,
+          ],
+        };
+      }
+
+      // Deadline still active — bypass registry checks.
+      return { valid: true, errors: [] };
+    }
+
     const errors: string[] = [];
 
     // E-01: action_class must be registered
