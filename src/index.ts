@@ -1002,8 +1002,17 @@ const beforeToolCallHandler: BeforeToolCallHandler = async ({ toolName, params, 
       const blockReason = decision.reason ?? "Tool call denied by Cedar policy";
       const priority = decision.matchedRule?.priority;
       const ruleTag = formatRuleTag(decision.matchedRule);
-      if (isHitlGatedForbid(decision.matchedRule)) {
-        console.log(`[clawthority] │ [cedar] ⏸ HITL-gated forbid (priority=${priority} rule=${ruleTag}) — will defer to HITL policy`);
+      // Closed-mode implicit deny (no matchedRule) is treated as HITL-gated:
+      // HITL is the operator's escape hatch for action classes without an
+      // explicit permit. If no HITL policy matches, the HITL stage still
+      // upholds the forbid, so closed-mode safety is preserved.
+      const isImplicitDeny = decision.matchedRule === undefined;
+      if (isHitlGatedForbid(decision.matchedRule) || isImplicitDeny) {
+        if (isImplicitDeny) {
+          console.log(`[clawthority] │ [cedar] ⏸ implicit-deny (closed mode, no matching rule) — will defer to HITL policy`);
+        } else {
+          console.log(`[clawthority] │ [cedar] ⏸ HITL-gated forbid (priority=${priority} rule=${ruleTag}) — will defer to HITL policy`);
+        }
         pendingHitlGatedBlockReason = blockReason;
         pendingHitlGatedSource = 'cedar';
         pendingHitlGatedRule = decision.matchedRule;
