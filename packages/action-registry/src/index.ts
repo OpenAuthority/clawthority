@@ -94,6 +94,7 @@ export const REGISTRY: readonly ActionRegistryEntry[] = [
       'read_file',
       'readfile',
       'read_files',
+      'read_files_batch',
       'cat_file',
       'view_file',
       'open_file',

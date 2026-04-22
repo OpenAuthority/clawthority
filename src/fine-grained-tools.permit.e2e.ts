@@ -13,7 +13,7 @@
  *   - hitl_mode: 'none'          → pipeline runs without an approval token
  *   - hitl_mode: 'per_request'   → capability token pre-issued via HitlTestHarness
  *
- * Test IDs: TC-FGT-01 … TC-FGT-72 (Fine-Grained Tools permit)
+ * Test IDs: TC-FGT-01 … TC-FGT-73 (Fine-Grained Tools permit)
  *
  * Covers 27 action classes (all registered classes except the exempt pair
  * unknown_sensitive_action and shell.exec which carry special handling).
@@ -198,6 +198,27 @@ describe('fine-grained tools — permit taxonomy', () => {
         action_class: normalized.action_class,
         target: normalized.target,
         payload_hash: 'hash-fgt-04',
+        hitl_mode: normalized.hitl_mode,
+        rule_context: { agentId: 'agent-1', channel: 'default' },
+      },
+      harness.stage1,
+      buildDefaultPermitStage2(),
+      emitter,
+    );
+
+    expect(result.decision.effect).toBe('permit');
+  });
+
+  it('TC-FGT-73: read_files_batch → filesystem.read is permitted', async () => {
+    const normalized = normalize_action('read_files_batch', { paths: ['/home/user/a.txt', '/home/user/b.txt'] });
+    expect(normalized.action_class).toBe('filesystem.read');
+    expect(normalized.hitl_mode).toBe('none');
+
+    const result = await runPipeline(
+      {
+        action_class: normalized.action_class,
+        target: normalized.target,
+        payload_hash: 'hash-fgt-73',
         hitl_mode: normalized.hitl_mode,
         rule_context: { agentId: 'agent-1', channel: 'default' },
       },
