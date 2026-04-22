@@ -20,7 +20,7 @@
     "plugin:install": "node scripts/post-install.mjs",
     "postinstall": "node scripts/post-install.mjs",
     "prepare": "node scripts/sync-version.mjs",
-    "prebuild": "node scripts/sync-version.mjs && node scripts/gen-build-info.mjs",
+    "prebuild": "npm run build --workspace=packages/action-registry && node scripts/sync-version.mjs && node scripts/gen-build-info.mjs",
     "build": "tsc",
     "sync-version": "node scripts/sync-version.mjs",
     "gen-build-info": "node scripts/gen-build-info.mjs",
