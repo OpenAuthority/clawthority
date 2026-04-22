@@ -37,7 +37,9 @@
     "pretest:dod": "npm run build --workspace=packages/action-registry && node scripts/gen-build-info.mjs",
     "test:dod": "vitest run --config vitest.dod.config.ts",
     "pretest:watch": "npm run build --workspace=packages/action-registry && node scripts/gen-build-info.mjs",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prevalidate:spec": "npm run build --workspace=packages/action-registry && tsc",
+    "validate:spec": "node scripts/validate-spec-alignment.mjs"
   },
   "dependencies": {
     "@openclaw/action-registry": "*",
