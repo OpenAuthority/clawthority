@@ -102,6 +102,10 @@ export const REGISTRY: readonly ActionRegistryEntry[] = [
       'find_files',
       'find_file',
       'search_files',
+      'grep_files',
+      'grep_file',
+      'grep',
+      'search_in_files',
     ],
   },
   {
