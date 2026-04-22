@@ -11,6 +11,8 @@ export const gitDiffManifest: ToolManifest = {
   name: 'git_diff',
   version: '1.0.0',
   action_class: 'vcs.read',
+  risk_tier: 'low',
+  default_hitl_mode: 'none',
   params: {
     type: 'object',
     properties: {
@@ -23,6 +25,7 @@ export const gitDiffManifest: ToolManifest = {
         description: 'Restrict diff output to this file path.',
       },
     },
+    additionalProperties: false,
   },
   result: {
     type: 'object',

@@ -12,6 +12,8 @@ export const listDirManifest: ToolManifest = {
   name: 'list_dir',
   version: '1.0.0',
   action_class: 'filesystem.list',
+  risk_tier: 'low',
+  default_hitl_mode: 'none',
   params: {
     type: 'object',
     properties: {
@@ -24,6 +26,7 @@ export const listDirManifest: ToolManifest = {
         description: 'When true, recursively list all subdirectories. Defaults to false.',
       },
     },
+    additionalProperties: false,
   },
   result: {
     type: 'object',

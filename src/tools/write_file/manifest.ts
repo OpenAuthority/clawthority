@@ -12,6 +12,8 @@ export const writeFileManifest: ToolManifest = {
   name: 'write_file',
   version: '1.0.0',
   action_class: 'filesystem.write',
+  risk_tier: 'medium',
+  default_hitl_mode: 'per_request',
   params: {
     type: 'object',
     properties: {
@@ -24,6 +26,7 @@ export const writeFileManifest: ToolManifest = {
         description: 'UTF-8 text content to write to the file.',
       },
     },
+    additionalProperties: false,
   },
   result: {
     type: 'object',

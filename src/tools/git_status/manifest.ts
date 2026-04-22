@@ -11,9 +11,12 @@ export const gitStatusManifest: ToolManifest = {
   name: 'git_status',
   version: '1.0.0',
   action_class: 'vcs.read',
+  risk_tier: 'low',
+  default_hitl_mode: 'none',
   params: {
     type: 'object',
     properties: {},
+    additionalProperties: false,
   },
   result: {
     type: 'object',

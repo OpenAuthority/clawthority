@@ -11,6 +11,8 @@ export const editFileManifest: ToolManifest = {
   name: 'edit_file',
   version: '1.0.0',
   action_class: 'filesystem.write',
+  risk_tier: 'medium',
+  default_hitl_mode: 'per_request',
   params: {
     type: 'object',
     properties: {
@@ -27,6 +29,7 @@ export const editFileManifest: ToolManifest = {
         description: 'The string to replace old_string with.',
       },
     },
+    additionalProperties: false,
   },
   result: {
     type: 'object',

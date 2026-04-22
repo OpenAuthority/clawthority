@@ -11,6 +11,8 @@ export const readFileManifest: ToolManifest = {
   name: 'read_file',
   version: '1.0.0',
   action_class: 'filesystem.read',
+  risk_tier: 'low',
+  default_hitl_mode: 'none',
   params: {
     type: 'object',
     properties: {
@@ -19,6 +21,7 @@ export const readFileManifest: ToolManifest = {
         description: 'Path to the file to read.',
       },
     },
+    additionalProperties: false,
   },
   result: {
     type: 'object',
