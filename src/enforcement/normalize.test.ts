@@ -1583,6 +1583,16 @@ describe('normalize_action — per-action-class typed target extraction: vcs.rem
     const result = normalize_action('git_clone', { branch: 'main' });
     expect(result.target).toBe('');
   });
+
+  it('falls back to remote_url when repo_url and url are absent', () => {
+    const result = normalize_action('git_push', { remote_url: 'git@github.com:org/repo.git' });
+    expect(result.target).toBe('git@github.com:org/repo.git');
+  });
+
+  it('falls back to remote when repo_url, url, and remote_url are absent', () => {
+    const result = normalize_action('git_fetch', { remote: 'origin' });
+    expect(result.target).toBe('origin');
+  });
 });
 
 describe('normalize_action — per-action-class typed target extraction: package.install', () => {
@@ -1708,6 +1718,12 @@ describe('vcs.remote — alias coverage', () => {
       expect(normalizeActionClass(alias)).toBe('vcs.remote');
     });
   }
+
+  it('vcs.remote has medium risk and per_request HITL', () => {
+    const entry = getRegistryEntry('git_push');
+    expect(entry.default_risk).toBe('medium');
+    expect(entry.default_hitl_mode).toBe('per_request');
+  });
 });
 
 describe('vcs.read — alias coverage', () => {
