@@ -332,6 +332,11 @@ const REGISTRY: readonly ActionRegistryEntry[] = [
       'git.log',
       'log_commits',
       'view_history',
+      'git_diff',
+      'git-diff',
+      'git.diff',
+      'view_diff',
+      'show_diff',
     ],
   },
   {
