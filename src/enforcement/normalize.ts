@@ -32,6 +32,22 @@ export interface NormalizedAction {
   target: string;
   /** Intent group for broader policy targeting, if applicable. */
   intent_group?: IntentGroup;
+  /**
+   * Populated when Rules 4–8 reclassify the action. Callers should emit a
+   * `normalizer-reclassified` telemetry event when this field is present.
+   */
+  reclassification?: {
+    /** Which rule number (4–8) triggered the reclassification. */
+    rule: number;
+    /** Tool name that was passed to normalize_action. */
+    toolName: string;
+    /** Action class immediately before this reclassification. */
+    fromClass: string;
+    /** Action class after this reclassification. */
+    toClass: string;
+    /** First 40 chars of the command string, PII-sanitized. */
+    commandPrefix: string;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -341,6 +357,36 @@ const TARGET_KEYS_BY_CLASS: Readonly<Record<string, readonly string[]>> = {
   'archive.read':      ['archive_path', 'path', 'file_path'],
 };
 
+/**
+ * Sanitizes a command string for telemetry by redacting common credential
+ * patterns, then truncates to the first 40 characters.
+ *
+ * Redacted patterns:
+ *   - `$VAR` / `${VAR}` references to credential-named environment variables
+ *   - `key=value`, `token=value`, `password=value` inline assignments
+ *   - `Bearer <token>` authorization headers
+ */
+export function sanitizeCommandPrefix(cmd: string): string {
+  const sanitized = cmd
+    // $VAR and ${VAR} for credential-named env vars
+    .replace(
+      /\$\{?(?:AWS|GCP|GOOGLE|AZURE|GITHUB|GITLAB|STRIPE|OPENAI|ANTHROPIC|HEROKU|TWILIO|SENDGRID|SLACK|DISCORD|TELEGRAM|NPM|DOCKER|KUBE|VAULT|CIRCLECI|TRAVIS|DATADOG)_[A-Z0-9_]+\}?/g,
+      '[REDACTED]',
+    )
+    .replace(
+      /\$\{?[A-Z][A-Z0-9_]*_(?:TOKEN|KEY|SECRET|PASSWORD|PASS|CREDENTIAL|CREDENTIALS)\}?/g,
+      '[REDACTED]',
+    )
+    // key=value / token=value / password=value patterns
+    .replace(
+      /\b(?:token|key|secret|password|passwd|pass|api_?key|auth(?:_?token)?|credential)\s*[=:]\s*\S+/gi,
+      (m) => m.replace(/[=:]\s*\S+$/, '=[REDACTED]'),
+    )
+    // Bearer <token>
+    .replace(/\bBearer\s+\S+/gi, 'Bearer [REDACTED]');
+  return sanitized.slice(0, 40);
+}
+
 function extractTarget(actionClass: string, params: Record<string, unknown>): string {
   const keys = TARGET_KEYS_BY_CLASS[actionClass] ?? TARGET_PARAM_KEYS;
   for (const key of keys) {
@@ -436,6 +482,7 @@ export function normalize_action(
   let hitl_mode: HitlModeNorm = entry.default_hitl_mode;
   let intent_group: IntentGroup | undefined = entry.intent_group;
   const target = extractTarget(entry.action_class, params);
+  let reclassification: NormalizedAction['reclassification'];
 
   // Rule 1: filesystem.write with a URL target → web.post
   if (
@@ -471,11 +518,13 @@ export function normalize_action(
       commandStr !== '' &&
       DESTRUCTIVE_SHELL_CMD_RE.test(commandStr)
     ) {
+      const fromClass = action_class;
       const deleteEntry = ALIAS_INDEX.get('rm') ?? UNKNOWN_ENTRY;
       action_class = deleteEntry.action_class;
       hitl_mode = deleteEntry.default_hitl_mode;
       intent_group = deleteEntry.intent_group;
       if (risk !== 'critical') risk = deleteEntry.default_risk;
+      reclassification = { rule: 4, toolName, fromClass, toClass: action_class, commandPrefix: sanitizeCommandPrefix(commandStr) };
     }
 
     // Rule 5: reference to a well-known credential path → credential.read / .write
@@ -485,6 +534,7 @@ export function normalize_action(
       const targetHasCredPath = target !== '' && CREDENTIAL_PATH_RE.test(target);
       const commandHasCredPath = commandStr !== '' && CREDENTIAL_PATH_RE.test(commandStr);
       if (targetHasCredPath || commandHasCredPath) {
+        const fromClass = action_class;
         const looksLikeWrite =
           action_class === 'filesystem.write' ||
           (commandStr !== '' &&
@@ -496,6 +546,7 @@ export function normalize_action(
         hitl_mode = credEntry.default_hitl_mode;
         intent_group = credEntry.intent_group;
         if (risk !== 'critical') risk = credEntry.default_risk;
+        reclassification = { rule: 5, toolName, fromClass, toClass: action_class, commandPrefix: sanitizeCommandPrefix(commandStr) };
       }
     }
 
@@ -512,11 +563,13 @@ export function normalize_action(
       commandStr !== '' &&
       CREDENTIAL_CLI_PATTERNS.some((re) => re.test(commandStr))
     ) {
+      const fromClass = action_class;
       const credEntry = ALIAS_INDEX.get('read_secret') ?? UNKNOWN_ENTRY;
       action_class = credEntry.action_class;
       hitl_mode = credEntry.default_hitl_mode;
       intent_group = credEntry.intent_group;
       if (risk !== 'critical') risk = credEntry.default_risk;
+      reclassification = { rule: 6, toolName, fromClass, toClass: action_class, commandPrefix: sanitizeCommandPrefix(commandStr) };
     }
 
     // Rule 8: shell-wrapper reading credentials from the environment →
@@ -531,11 +584,13 @@ export function normalize_action(
       commandStr !== '' &&
       CREDENTIAL_ENV_PATTERNS.some((re) => re.test(commandStr))
     ) {
+      const fromClass = action_class;
       const credEntry = ALIAS_INDEX.get('read_secret') ?? UNKNOWN_ENTRY;
       action_class = credEntry.action_class;
       hitl_mode = credEntry.default_hitl_mode;
       intent_group = credEntry.intent_group;
       if (risk !== 'critical') risk = credEntry.default_risk;
+      reclassification = { rule: 8, toolName, fromClass, toClass: action_class, commandPrefix: sanitizeCommandPrefix(commandStr) };
     }
 
     // Rule 7: shell-wrapper invoking an outbound file upload → web.post with
@@ -552,16 +607,25 @@ export function normalize_action(
       commandStr !== '' &&
       DATA_EXFIL_UPLOAD_PATTERNS.some((re) => re.test(commandStr))
     ) {
+      const fromClass = action_class;
       action_class = 'web.post';
       intent_group = 'data_exfiltration';
       risk = 'critical';
       // HITL mode follows web.post's default (per_request).
       const webPostEntry = ALIAS_INDEX.get('http_post') ?? UNKNOWN_ENTRY;
       hitl_mode = webPostEntry.default_hitl_mode;
+      reclassification = { rule: 7, toolName, fromClass, toClass: action_class, commandPrefix: sanitizeCommandPrefix(commandStr) };
     }
   } // end COMMAND_REGEX_LAYER_ENABLED
 
-  return { action_class, risk, hitl_mode, target, ...(intent_group !== undefined && { intent_group }) };
+  return {
+    action_class,
+    risk,
+    hitl_mode,
+    target,
+    ...(intent_group !== undefined && { intent_group }),
+    ...(reclassification !== undefined && { reclassification }),
+  };
 }
 
 // ---------------------------------------------------------------------------

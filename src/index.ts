@@ -4,6 +4,7 @@ export type {
   PolicyDecisionEntry,
   HitlDecisionEntry,
   NormalizerUnclassifiedEntry,
+  NormalizerReclassifiedEntry,
   JsonlAuditLoggerOptions,
 } from "./audit.js";
 
@@ -126,7 +127,7 @@ export type {
 
 // ─── Internal imports ─────────────────────────────────────────────────────────
 import { JsonlAuditLogger } from "./audit.js";
-import type { HitlDecisionEntry, NormalizerUnclassifiedEntry, PolicyDecisionEntry } from "./audit.js";
+import type { HitlDecisionEntry, NormalizerReclassifiedEntry, NormalizerUnclassifiedEntry, PolicyDecisionEntry } from "./audit.js";
 import { PolicyEngine as CedarPolicyEngine } from "./policy/engine.js";
 import type { Rule, RuleContext } from "./policy/types.js";
 import defaultRules, { OPEN_MODE_RULES } from "./policy/rules.js";
@@ -778,6 +779,19 @@ async function logNormalizerUnclassified(
   } satisfies NormalizerUnclassifiedEntry);
 }
 
+/** Log a normalizer-reclassified event (Rules 4–8 activation) to the JSONL audit file. */
+async function logNormalizerReclassified(
+  entry: Omit<NormalizerReclassifiedEntry, 'ts' | 'type' | 'stage'>,
+): Promise<void> {
+  if (!hitlAuditLogger) return;
+  await hitlAuditLogger.log({
+    ts: new Date().toISOString(),
+    type: 'normalizer-reclassified',
+    stage: 'normalizer-reclassified',
+    ...entry,
+  } satisfies NormalizerReclassifiedEntry);
+}
+
 /** Log a HITL decision to the JSONL audit file. */
 async function logHitlDecision(
   decision: HitlDecisionEntry['decision'],
@@ -895,6 +909,16 @@ const beforeToolCallHandler: BeforeToolCallHandler = async ({ toolName, params, 
 
   const normalizedAction = normalize_action(toolName, normalizedParams);
   console.log(`[clawthority] │ [trust] source=${source ?? "undefined"} → trustLevel=${sourceTrustLevel}  actionClass=${normalizedAction.action_class}  risk=${normalizedAction.risk}`);
+
+  // Emit telemetry when Rules 4–8 reclassified the action.
+  if (normalizedAction.reclassification !== undefined) {
+    await logNormalizerReclassified({
+      ...normalizedAction.reclassification,
+      agentId: identity.auditAgentId,
+      channel: identity.auditChannel,
+      verified: identity.verified,
+    });
+  }
 
   // Build envelope to propagate trust context for audit and pipeline tracing.
   const _envelope = buildEnvelope(
