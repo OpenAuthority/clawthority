@@ -202,7 +202,7 @@ export class OneOffOperationHandler implements EdgeCaseHandler {
       event: 'request_received',
       requestId,
       detail: `One-off operation request received: "${toolName}"`,
-      actor,
+      ...(actor !== undefined ? { actor } : {}),
     });
 
     const entry = this.aliasIndex.get(lowerName);
@@ -252,7 +252,7 @@ export class OneOffOperationHandler implements EdgeCaseHandler {
       event: 'rfc_filed',
       requestId,
       detail: `RFC ${rfc.id} filed for one-off operation "${toolName}"`,
-      actor,
+      ...(actor !== undefined ? { actor } : {}),
     });
 
     const hitlRouting: HITLRoutingResult = {
@@ -270,7 +270,7 @@ export class OneOffOperationHandler implements EdgeCaseHandler {
       event: 'hitl_routed',
       requestId,
       detail: `Routed to request_new_capability meta-tool for "${toolName}" (RFC: ${rfc.id})`,
-      actor,
+      ...(actor !== undefined ? { actor } : {}),
     });
 
     this.requests.push({
@@ -279,7 +279,7 @@ export class OneOffOperationHandler implements EdgeCaseHandler {
       description,
       requestedAt: ts,
       rfcId: rfc.id,
-      actor,
+      ...(actor !== undefined ? { actor } : {}),
     });
 
     return {
