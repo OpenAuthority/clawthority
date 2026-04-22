@@ -51,7 +51,7 @@ export interface NormalizedAction {
 }
 
 // ---------------------------------------------------------------------------
-// Registry — 20 entries, aliases stored lowercase
+// Registry — 22 entries, aliases stored lowercase
 // ---------------------------------------------------------------------------
 
 const REGISTRY: readonly ActionRegistryEntry[] = [
@@ -352,6 +352,44 @@ const REGISTRY: readonly ActionRegistryEntry[] = [
     ],
   },
   {
+    action_class: 'vcs.remote',
+    default_risk: 'medium',
+    default_hitl_mode: 'per_request',
+    aliases: [
+      'git_clone',
+      'git-clone',
+      'git.clone',
+      'clone_repo',
+      'git_push',
+      'git-push',
+      'git.push',
+      'push_commits',
+      'git_pull',
+      'git-pull',
+      'git.pull',
+      'pull_changes',
+      'git_fetch',
+      'git-fetch',
+      'git.fetch',
+      'fetch_remote',
+    ],
+  },
+  {
+    action_class: 'package.install',
+    default_risk: 'medium',
+    default_hitl_mode: 'per_request',
+    aliases: [
+      'install_package',
+      'npm_install',
+      'pip_install',
+      'pip3_install',
+      'yarn_add',
+      'apt_install',
+      'brew_install',
+      'add_package',
+    ],
+  },
+  {
     action_class: 'unknown_sensitive_action',
     default_risk: 'critical',
     default_hitl_mode: 'per_request',
@@ -595,10 +633,16 @@ const DATA_EXFIL_UPLOAD_PATTERNS: readonly RegExp[] = [
 // Target extraction
 // ---------------------------------------------------------------------------
 
-/** Ordered list of param keys inspected when extracting the target resource. */
+/**
+ * Generic fallback param keys inspected when no per-class override exists.
+ * Checked in priority order — first non-empty string wins.
+ */
 const TARGET_PARAM_KEYS = [
+  'file_path',
   'path',
   'file',
+  'repo_url',
+  'package_name',
   'url',
   'destination',
   'to',
@@ -606,8 +650,27 @@ const TARGET_PARAM_KEYS = [
   'email',
 ] as const;
 
-function extractTarget(params: Record<string, unknown>): string {
-  for (const key of TARGET_PARAM_KEYS) {
+/**
+ * Per-action-class ordered param key lists for typed target extraction.
+ * Each list is self-contained — it includes all generic keys relevant to that
+ * class. When an action class has an entry here it is used in full; the
+ * generic TARGET_PARAM_KEYS fallback is not consulted.
+ */
+const TARGET_KEYS_BY_CLASS: Readonly<Record<string, readonly string[]>> = {
+  // Filesystem classes: typed `file_path` field takes priority over generic `path`/`file`.
+  'filesystem.read':   ['file_path', 'path', 'file'],
+  'filesystem.write':  ['file_path', 'path', 'file', 'destination', 'url'],
+  'filesystem.delete': ['file_path', 'path', 'file'],
+  'filesystem.list':   ['file_path', 'path', 'file'],
+  // Remote VCS operations carry the target repository as `repo_url`.
+  'vcs.remote':        ['repo_url', 'url', 'remote_url', 'remote'],
+  // Package installation operations identify the target via `package_name`.
+  'package.install':   ['package_name', 'package', 'name'],
+};
+
+function extractTarget(actionClass: string, params: Record<string, unknown>): string {
+  const keys = TARGET_KEYS_BY_CLASS[actionClass] ?? TARGET_PARAM_KEYS;
+  for (const key of keys) {
     const val = params[key];
     if (typeof val === 'string' && val.length > 0) {
       return val;
@@ -699,7 +762,7 @@ export function normalize_action(
   let risk: RiskLevel = entry.default_risk;
   let hitl_mode: HitlModeNorm = entry.default_hitl_mode;
   let intent_group: IntentGroup | undefined = entry.intent_group;
-  const target = extractTarget(params);
+  const target = extractTarget(entry.action_class, params);
 
   // Rule 1: filesystem.write with a URL target → web.post
   if (

@@ -78,6 +78,10 @@ describe('registry coverage — each action class resolves from at least one ali
     ['write_secret',     'credential.write'],
     ['run_code',         'code.execute'],
     ['pay',              'payment.initiate'],
+    ['git_log',          'vcs.read'],
+    ['git_add',          'vcs.write'],
+    ['git_clone',        'vcs.remote'],
+    ['install_package',  'package.install'],
   ];
 
   for (const [alias, expectedClass] of cases) {
@@ -1373,6 +1377,174 @@ describe('browser.scrape — aliases resolve to browser.scrape with medium risk 
       expect(result.action_class).toBe('browser.scrape');
       expect(result.risk).toBe('medium');
       expect(result.hitl_mode).toBe('per_request');
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// normalize_action — per-action-class typed target extraction
+// ---------------------------------------------------------------------------
+
+describe('normalize_action — per-action-class typed target extraction: filesystem ops', () => {
+  it('TC-TEX-01: extracts file_path for filesystem.read', () => {
+    const result = normalize_action('read_file', { file_path: '/home/user/notes.txt' });
+    expect(result.target).toBe('/home/user/notes.txt');
+  });
+
+  it('TC-TEX-02: file_path takes priority over path for filesystem.read', () => {
+    const result = normalize_action('read_file', { file_path: '/preferred', path: '/fallback' });
+    expect(result.target).toBe('/preferred');
+  });
+
+  it('TC-TEX-03: falls back to path when file_path is absent for filesystem.read', () => {
+    const result = normalize_action('read_file', { path: '/etc/hosts' });
+    expect(result.target).toBe('/etc/hosts');
+  });
+
+  it('TC-TEX-04: extracts file_path for filesystem.write (write_file)', () => {
+    const result = normalize_action('write_file', { file_path: '/tmp/output.txt' });
+    expect(result.target).toBe('/tmp/output.txt');
+  });
+
+  it('TC-TEX-05: extracts file_path for filesystem.write (edit_file)', () => {
+    const result = normalize_action('edit_file', { file_path: '/src/main.ts' });
+    expect(result.target).toBe('/src/main.ts');
+  });
+
+  it('TC-TEX-06: filesystem.write still accepts destination as fallback', () => {
+    const result = normalize_action('write_file', { destination: '/output/data.json' });
+    expect(result.target).toBe('/output/data.json');
+  });
+
+  it('TC-TEX-07: extracts file_path for filesystem.list (list_dir)', () => {
+    const result = normalize_action('list_dir', { file_path: '/project/src' });
+    expect(result.target).toBe('/project/src');
+  });
+
+  it('TC-TEX-08: extracts file_path for filesystem.delete', () => {
+    const result = normalize_action('delete_file', { file_path: '/tmp/old.log' });
+    expect(result.target).toBe('/tmp/old.log');
+  });
+
+  it('TC-TEX-09: file_path is ignored when empty, falls back to path', () => {
+    const result = normalize_action('read_file', { file_path: '', path: '/etc/hosts' });
+    expect(result.target).toBe('/etc/hosts');
+  });
+});
+
+describe('normalize_action — per-action-class typed target extraction: vcs.remote', () => {
+  it('TC-TEX-10: extracts repo_url for git_clone', () => {
+    const result = normalize_action('git_clone', { repo_url: 'https://github.com/org/repo.git' });
+    expect(result.target).toBe('https://github.com/org/repo.git');
+    expect(result.action_class).toBe('vcs.remote');
+  });
+
+  it('TC-TEX-11: extracts repo_url for git_push', () => {
+    const result = normalize_action('git_push', { repo_url: 'git@github.com:org/repo.git' });
+    expect(result.target).toBe('git@github.com:org/repo.git');
+  });
+
+  it('TC-TEX-12: extracts repo_url for git_pull', () => {
+    const result = normalize_action('git_pull', { repo_url: 'https://github.com/org/repo.git' });
+    expect(result.target).toBe('https://github.com/org/repo.git');
+  });
+
+  it('TC-TEX-13: falls back to url when repo_url is absent', () => {
+    const result = normalize_action('git_clone', { url: 'https://github.com/org/repo.git' });
+    expect(result.target).toBe('https://github.com/org/repo.git');
+  });
+
+  it('TC-TEX-14: repo_url takes priority over url for vcs.remote', () => {
+    const result = normalize_action('git_clone', {
+      repo_url: 'https://github.com/org/repo.git',
+      url: 'https://other.example.com',
+    });
+    expect(result.target).toBe('https://github.com/org/repo.git');
+  });
+
+  it('TC-TEX-15: vcs.remote has medium risk and per_request HITL', () => {
+    const result = normalize_action('git_clone', { repo_url: 'https://github.com/org/repo.git' });
+    expect(result.risk).toBe('medium');
+    expect(result.hitl_mode).toBe('per_request');
+  });
+
+  it('TC-TEX-16: returns empty target when no recognised key is present', () => {
+    const result = normalize_action('git_clone', { branch: 'main' });
+    expect(result.target).toBe('');
+  });
+});
+
+describe('normalize_action — per-action-class typed target extraction: package.install', () => {
+  it('TC-TEX-17: extracts package_name for install_package', () => {
+    const result = normalize_action('install_package', { package_name: 'lodash' });
+    expect(result.target).toBe('lodash');
+    expect(result.action_class).toBe('package.install');
+  });
+
+  it('TC-TEX-18: extracts package_name for npm_install', () => {
+    const result = normalize_action('npm_install', { package_name: 'react@18' });
+    expect(result.target).toBe('react@18');
+  });
+
+  it('TC-TEX-19: extracts package_name for pip_install', () => {
+    const result = normalize_action('pip_install', { package_name: 'requests' });
+    expect(result.target).toBe('requests');
+  });
+
+  it('TC-TEX-20: package_name takes priority over package for package.install', () => {
+    const result = normalize_action('npm_install', {
+      package_name: 'preferred-pkg',
+      package: 'fallback-pkg',
+    });
+    expect(result.target).toBe('preferred-pkg');
+  });
+
+  it('TC-TEX-21: falls back to package when package_name is absent', () => {
+    const result = normalize_action('npm_install', { package: 'express' });
+    expect(result.target).toBe('express');
+  });
+
+  it('TC-TEX-22: falls back to name when package_name and package are absent', () => {
+    const result = normalize_action('npm_install', { name: 'chalk' });
+    expect(result.target).toBe('chalk');
+  });
+
+  it('TC-TEX-23: package.install has medium risk and per_request HITL', () => {
+    const result = normalize_action('install_package', { package_name: 'lodash' });
+    expect(result.risk).toBe('medium');
+    expect(result.hitl_mode).toBe('per_request');
+  });
+
+  it('TC-TEX-24: returns empty target when no recognised key is present', () => {
+    const result = normalize_action('npm_install', { version: '18' });
+    expect(result.target).toBe('');
+  });
+});
+
+describe('vcs.remote — alias coverage', () => {
+  const VCS_REMOTE_ALIASES = [
+    'git_clone', 'git-clone', 'git.clone', 'clone_repo',
+    'git_push', 'git-push', 'git.push', 'push_commits',
+    'git_pull', 'git-pull', 'git.pull', 'pull_changes',
+    'git_fetch', 'git-fetch', 'git.fetch', 'fetch_remote',
+  ] as const;
+
+  for (const alias of VCS_REMOTE_ALIASES) {
+    it(`"${alias}" resolves to vcs.remote`, () => {
+      expect(normalizeActionClass(alias)).toBe('vcs.remote');
+    });
+  }
+});
+
+describe('package.install — alias coverage', () => {
+  const PKG_INSTALL_ALIASES = [
+    'install_package', 'npm_install', 'pip_install', 'pip3_install',
+    'yarn_add', 'apt_install', 'brew_install', 'add_package',
+  ] as const;
+
+  for (const alias of PKG_INSTALL_ALIASES) {
+    it(`"${alias}" resolves to package.install`, () => {
+      expect(normalizeActionClass(alias)).toBe('package.install');
     });
   }
 });
