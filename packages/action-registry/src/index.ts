@@ -130,6 +130,11 @@ export const REGISTRY: readonly ActionRegistryEntry[] = [
       'mkdir',
       'create_dir',
       'create_directory',
+      'copy_file',
+      'copy',
+      'cp',
+      'duplicate_file',
+      'copy_file_to',
     ],
   },
   {
