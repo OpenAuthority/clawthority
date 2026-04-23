@@ -32,6 +32,7 @@ import { listDirectoryManifest } from '../tools/list_directory/manifest.js';
 import { deleteFileManifest } from '../tools/delete_file/manifest.js';
 import { createDirectoryManifest } from '../tools/create_directory/manifest.js';
 import { appendFileManifest } from '../tools/append_file/manifest.js';
+import { sendEmailManifest } from '../tools/send_email/manifest.js';
 
 // ─── First-party manifest registry ───────────────────────────────────────────
 
@@ -57,6 +58,7 @@ export const FIRST_PARTY_MANIFESTS: readonly ToolManifest[] = [
   deleteFileManifest,
   createDirectoryManifest,
   appendFileManifest,
+  sendEmailManifest,
 ];
 
 // ─── Activation validator ─────────────────────────────────────────────────────
