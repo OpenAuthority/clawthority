@@ -30,6 +30,10 @@ export const sendSlackManifest: ToolManifest = {
         type: 'string',
         description: 'Timestamp of the parent message to reply in a thread. Optional.',
       },
+      username: {
+        type: 'string',
+        description: 'Bot display name override shown in the channel. Optional.',
+      },
     },
     required: ['channel', 'text'],
     additionalProperties: false,

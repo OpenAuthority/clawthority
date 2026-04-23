@@ -38,6 +38,8 @@ import { searchWebManifest } from '../tools/search_web/manifest.js';
 import { callWebhookManifest } from '../tools/call_webhook/manifest.js';
 import { fetchUrlManifest } from '../tools/fetch_url/manifest.js';
 import { scrapePageManifest } from '../tools/scrape_page/manifest.js';
+import { sendSlackManifest } from '../tools/send_slack/manifest.js';
+import { sendWebhookManifest } from '../tools/send_webhook/manifest.js';
 
 // ─── First-party manifest registry ───────────────────────────────────────────
 
@@ -69,6 +71,8 @@ export const FIRST_PARTY_MANIFESTS: readonly ToolManifest[] = [
   callWebhookManifest,
   fetchUrlManifest,
   scrapePageManifest,
+  sendSlackManifest,
+  sendWebhookManifest,
 ];
 
 // ─── Activation validator ─────────────────────────────────────────────────────

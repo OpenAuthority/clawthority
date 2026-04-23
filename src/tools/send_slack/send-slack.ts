@@ -26,6 +26,8 @@ export interface SendSlackParams {
   text: string;
   /** Timestamp of the parent message to reply in a thread. Optional. */
   thread_ts?: string;
+  /** Bot display name override shown in the channel. Optional. */
+  username?: string;
 }
 
 /** Successful result from the send_slack tool. */
@@ -92,7 +94,7 @@ export async function sendSlack(
   params: SendSlackParams,
   options: SendSlackOptions = {},
 ): Promise<SendSlackResult> {
-  const { channel, text, thread_ts } = params;
+  const { channel, text, thread_ts, username } = params;
   const token = options.token ?? process.env['SLACK_BOT_TOKEN'];
 
   if (!token) {
@@ -105,6 +107,9 @@ export async function sendSlack(
   const body: Record<string, string> = { channel, text };
   if (thread_ts !== undefined) {
     body['thread_ts'] = thread_ts;
+  }
+  if (username !== undefined) {
+    body['username'] = username;
   }
 
   const controller = new AbortController();

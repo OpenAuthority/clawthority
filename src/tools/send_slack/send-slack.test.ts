@@ -15,6 +15,8 @@
  *   TC-SSL-07: Result shape — ts and channel fields present with correct types
  *   TC-SSL-08: Authorization header — Bearer token forwarded to Slack API
  *   TC-SSL-09: Non-JSON response — surfaces as slack-api-error
+ *   TC-SSL-10: username — username forwarded in request body when provided
+ *   TC-SSL-11: username omitted — username absent from body when not provided
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
@@ -316,5 +318,47 @@ describe('TC-SSL-09: non-JSON response — surfaces as slack-api-error', () => {
     }
     expect(err).toBeInstanceOf(SendSlackError);
     expect(err!.code).toBe('slack-api-error');
+  });
+});
+
+// ─── TC-SSL-10: username forwarded ────────────────────────────────────────────
+
+describe('TC-SSL-10: username — username forwarded in request body when provided', () => {
+  it('includes username in the POST body when provided', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      status: 200,
+      text: async () => JSON.stringify({ ok: true, ts: '1512085950.000216', channel: 'C01234ABCDE' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await sendSlack(
+      { channel: 'C01234ABCDE', text: 'hello', username: 'MyBot' },
+      { token: TEST_TOKEN },
+    );
+
+    const callArgs = fetchMock.mock.calls[0]![1] as RequestInit;
+    const body = JSON.parse(callArgs.body as string) as Record<string, string>;
+    expect(body['username']).toBe('MyBot');
+  });
+});
+
+// ─── TC-SSL-11: username omitted ──────────────────────────────────────────────
+
+describe('TC-SSL-11: username omitted — username absent from body when not provided', () => {
+  it('omits username from body when not provided', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      status: 200,
+      text: async () => JSON.stringify({ ok: true, ts: '1512085950.000216', channel: 'C01234ABCDE' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await sendSlack(
+      { channel: 'C01234ABCDE', text: 'hello' },
+      { token: TEST_TOKEN },
+    );
+
+    const callArgs = fetchMock.mock.calls[0]![1] as RequestInit;
+    const body = JSON.parse(callArgs.body as string) as Record<string, string>;
+    expect(body['username']).toBeUndefined();
   });
 });
