@@ -28,19 +28,50 @@ import type { Rule } from './policy/types.js';
 
 // ─── Mock child_process ───────────────────────────────────────────────────────
 //
-// Stub spawnSync so no real shell commands are executed during tests.
-// Returns a stable mocked result that exercises the stdout/stderr/exit_code
-// code paths inside unsafeAdminExec.
+// Stub spawn/spawnSync so no real shell commands are executed during tests.
+// unsafeAdminExec uses the async `spawn` path via an internal Promise wrapper;
+// the mock emits stdout then 'close' on the next tick so the Promise resolves
+// deterministically with the expected stdout/stderr/exit_code shape.
 
-vi.mock('node:child_process', () => ({
-  spawnSync: vi.fn(() => ({
+vi.mock('node:child_process', () => {
+  const makeEmitter = () => {
+    const listeners: Record<string, Array<(arg: unknown) => void>> = {};
+    return {
+      on(event: string, cb: (arg: unknown) => void): void {
+        (listeners[event] ??= []).push(cb);
+      },
+      emit(event: string, arg: unknown): void {
+        for (const cb of listeners[event] ?? []) cb(arg);
+      },
+    };
+  };
+
+  const spawn = vi.fn(() => {
+    const stdout = makeEmitter();
+    const stderr = makeEmitter();
+    const proc = makeEmitter();
+    const procHandle = {
+      stdout: { on: stdout.on },
+      stderr: { on: stderr.on },
+      on: proc.on,
+    };
+    queueMicrotask(() => {
+      stdout.emit('data', Buffer.from('mocked-stdout\n'));
+      proc.emit('close', 0);
+    });
+    return procHandle;
+  });
+
+  const spawnSync = vi.fn(() => ({
     stdout: 'mocked-stdout\n',
     stderr: '',
     status: 0,
     signal: null,
     pid: 12345,
-  })),
-}));
+  }));
+
+  return { spawn, spawnSync };
+});
 
 // ─── HitlTestHarness ──────────────────────────────────────────────────────────
 //
@@ -120,6 +151,8 @@ const ACTION = 'shell.exec' as const;
 const PROPER_COMMAND = 'ls -la /workspace' as const;
 /** A short command that a justification-length policy would reject. */
 const SHORT_COMMAND = 'ls' as const;
+/** Valid justification — at least JUSTIFICATION_MIN_LENGTH (20) characters. */
+const VALID_JUSTIFICATION = 'incident response: restart nginx after failover' as const;
 
 /** Permissive stage2 — permits all shell.exec actions regardless of target. */
 const permissiveStage2 = createStage2(
@@ -191,7 +224,7 @@ describe('unsafe_admin_exec — E2E enforcement and execution', () => {
     async () => {
       process.env['CLAWTHORITY_ENABLE_UNSAFE_ADMIN_EXEC'] = '1';
 
-      const params = { command: PROPER_COMMAND };
+      const params = { command: PROPER_COMMAND, justification: VALID_JUSTIFICATION };
       const payloadHash = computePayloadHash(TOOL_NAME, params);
       const token = harness.approveNext({
         action_class: ACTION,
@@ -223,6 +256,7 @@ describe('unsafe_admin_exec — E2E enforcement and execution', () => {
         logger,
         agentId: RULE_CONTEXT.agentId,
         channel: RULE_CONTEXT.channel,
+        approval_id: token,
       });
 
       expect(execResult.stdout).toBe('mocked-stdout\n');
