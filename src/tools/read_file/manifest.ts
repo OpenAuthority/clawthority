@@ -21,6 +21,7 @@ export const readFileManifest: ToolManifest = {
         description: 'Path to the file to read.',
       },
     },
+    required: ['path'],
     additionalProperties: false,
   },
   result: {
