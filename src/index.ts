@@ -154,6 +154,7 @@ import { EventEmitter } from "node:events";
 import { runPipeline } from "./enforcement/pipeline.js";
 import type { PipelineContext, Stage1Fn, Stage2Fn } from "./enforcement/pipeline.js";
 import { validateCapability } from "./enforcement/stage1-capability.js";
+import { FileAuthorityAdapter } from "./adapter/file-adapter.js";
 
 /**
  * Resolved identity view used by audit and HITL call sites. Derived from
@@ -391,6 +392,12 @@ for (const r of ACTIVE_RULES) {
 const jsonRulesEngineRef: { current: CedarPolicyEngine | null } = {
   current: null,
 };
+
+/**
+ * File-based authority adapter instance, created during activate() with the
+ * same data directory used by loadJsonRules(). null until activate() runs.
+ */
+let adapterRef: FileAuthorityAdapter | null = null;
 
 /**
  * JSON rule record as written in data/rules.json.
@@ -1458,6 +1465,15 @@ const plugin: OpenclawPlugin = {
       await loadJsonRules();
     } catch (err) {
       console.error("[plugin:clawthority] unexpected error in loadJsonRules:", err);
+    }
+
+    // Instantiate the file-based authority adapter using the same rules file
+    // path as loadJsonRules() so both subsystems read from the same source.
+    {
+      const moduleDir = dirname(fileURLToPath(import.meta.url));
+      const bundlePath = process.env['CLAWTHORITY_RULES_FILE']
+        ?? resolve(moduleDir, "../../data/rules.json");
+      adapterRef = new FileAuthorityAdapter({ bundlePath });
     }
 
     // ── Diagnostic: log registered hooks and loaded rules ────────────────────
