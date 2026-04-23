@@ -27,12 +27,17 @@ export const unsafeAdminExecManifest: ToolManifest = {
         type: 'string',
         description: 'Shell command to execute.',
       },
+      justification: {
+        type: 'string',
+        description:
+          'Human-readable reason for this invocation. Must be at least 20 characters. Recorded verbatim in the audit trail.',
+      },
       working_dir: {
         type: 'string',
         description: 'Working directory for command execution. Optional.',
       },
     },
-    required: ['command'],
+    required: ['command', 'justification'],
     additionalProperties: false,
   },
   result: {
