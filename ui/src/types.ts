@@ -103,6 +103,31 @@ export interface BatchingConfig {
   maxBatchSize: number;
 }
 
+// ─── Unclassified Tool Widget types ──────────────────────────────────────────
+
+/** A single bucketed data point for the unclassified tool time series. */
+export interface UnclassifiedDataPoint {
+  /** ISO date string (YYYY-MM-DD). */
+  date: string;
+  count: number;
+}
+
+/** Per-tool breakdown row returned by the audit endpoint. */
+export interface UnclassifiedToolBreakdown {
+  toolName: string;
+  count: number;
+  /** Per-date breakdown for this tool name. */
+  series: UnclassifiedDataPoint[];
+}
+
+/** Response shape from GET /api/audit/unclassified. */
+export interface UnclassifiedWidgetData {
+  series: UnclassifiedDataPoint[];
+  breakdown: UnclassifiedToolBreakdown[];
+  totalCount: number;
+  dateRange: { from: string; to: string };
+}
+
 /** An entry in the audit trail produced by batch approval operations. */
 export interface BatchAuditEntry {
   /** ISO 8601 timestamp when the batch decision was made. */

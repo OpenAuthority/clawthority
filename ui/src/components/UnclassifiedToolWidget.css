@@ -1,0 +1,302 @@
+/* ─── UnclassifiedToolWidget (utw-) ─────────────────────────────────────────
+   BEM-style prefix: utw-
+   Colour tokens consistent with rde- and bap- components.
+   ──────────────────────────────────────────────────────────────────────────── */
+
+.utw-root {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 0.875rem;
+  color: #111827;
+  overflow: hidden;
+}
+
+/* ─── Header ──────────────────────────────────────────────────────────────── */
+
+.utw-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.875rem 1rem;
+  border-bottom: 1px solid #e5e7eb;
+  background: #f9fafb;
+}
+
+.utw-header__title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.utw-header__title {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: #111827;
+  margin: 0;
+}
+
+.utw-header__subtitle {
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+
+.utw-header__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* ─── Export button ───────────────────────────────────────────────────────── */
+
+.utw-btn-export {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.3rem 0.75rem;
+  background: #ffffff;
+  color: #374151;
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  transition: background 0.1s, border-color 0.1s;
+}
+
+.utw-btn-export:hover {
+  background: #f3f4f6;
+  border-color: #9ca3af;
+}
+
+.utw-btn-export:focus-visible {
+  outline: 2px solid #6366f1;
+  outline-offset: 2px;
+}
+
+/* ─── Filter bar ──────────────────────────────────────────────────────────── */
+
+.utw-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.625rem 1rem;
+  background: #fafafa;
+  border-bottom: 1px solid #f3f4f6;
+  font-size: 0.8125rem;
+  color: #374151;
+}
+
+.utw-filter-bar__label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.utw-filter-bar__input {
+  padding: 0.25rem 0.5rem;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  font-size: 0.8125rem;
+  background: #ffffff;
+  color: #111827;
+}
+
+.utw-filter-bar__input:focus {
+  outline: 2px solid #6366f1;
+  outline-offset: 1px;
+  border-color: #6366f1;
+}
+
+.utw-btn-apply {
+  padding: 0.25rem 0.75rem;
+  background: #6366f1;
+  color: #ffffff;
+  border: 1px solid #6366f1;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  transition: background 0.1s;
+}
+
+.utw-btn-apply:hover {
+  background: #4f46e5;
+  border-color: #4f46e5;
+}
+
+.utw-btn-apply:focus-visible {
+  outline: 2px solid #6366f1;
+  outline-offset: 2px;
+}
+
+.utw-filter-bar__reset {
+  margin-left: auto;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.8125rem;
+  color: #6b7280;
+  padding: 0.25rem 0.35rem;
+  border-radius: 4px;
+  transition: color 0.1s;
+}
+
+.utw-filter-bar__reset:hover {
+  color: #374151;
+  background: #f3f4f6;
+}
+
+/* ─── Chart area ──────────────────────────────────────────────────────────── */
+
+.utw-chart-area {
+  padding: 1rem 1rem 0.5rem;
+}
+
+.utw-chart-area--empty {
+  padding: 2.5rem 1rem;
+  text-align: center;
+  color: #9ca3af;
+  font-size: 0.8125rem;
+  font-style: italic;
+}
+
+.utw-chart-svg {
+  display: block;
+  width: 100%;
+  overflow: visible;
+}
+
+/* SVG element styles */
+.utw-bar {
+  cursor: pointer;
+  transition: opacity 0.1s;
+}
+
+.utw-bar:hover {
+  opacity: 0.8;
+}
+
+.utw-bar--active {
+  opacity: 1;
+}
+
+.utw-bar--dimmed {
+  opacity: 0.35;
+}
+
+/* ─── Drill-down active indicator ────────────────────────────────────────── */
+
+.utw-drill-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.375rem 1rem;
+  background: #eff6ff;
+  border-top: 1px solid #bfdbfe;
+  border-bottom: 1px solid #bfdbfe;
+  font-size: 0.8125rem;
+  color: #1d4ed8;
+}
+
+.utw-drill-indicator__clear {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.8125rem;
+  color: #3b82f6;
+  padding: 0.125rem 0.35rem;
+  border-radius: 3px;
+  font-weight: 500;
+}
+
+.utw-drill-indicator__clear:hover {
+  background: #dbeafe;
+}
+
+/* ─── Breakdown section ───────────────────────────────────────────────────── */
+
+.utw-breakdown {
+  border-top: 1px solid #e5e7eb;
+}
+
+.utw-breakdown__header {
+  display: flex;
+  align-items: center;
+  padding: 0.625rem 1rem 0.375rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #6b7280;
+}
+
+.utw-breakdown__table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.utw-breakdown__row {
+  cursor: pointer;
+  border-top: 1px solid #f3f4f6;
+  transition: background 0.1s;
+}
+
+.utw-breakdown__row:hover {
+  background: #f9fafb;
+}
+
+.utw-breakdown__row--active {
+  background: #eff6ff;
+}
+
+.utw-breakdown__row--active:hover {
+  background: #dbeafe;
+}
+
+.utw-breakdown__cell {
+  padding: 0.5rem 1rem;
+  vertical-align: middle;
+}
+
+.utw-breakdown__tool-name {
+  font-family: ui-monospace, 'Cascadia Code', monospace;
+  font-size: 0.8125rem;
+  color: #111827;
+}
+
+.utw-breakdown__bar-cell {
+  width: 40%;
+}
+
+.utw-breakdown__bar-track {
+  background: #f3f4f6;
+  border-radius: 3px;
+  height: 8px;
+  overflow: hidden;
+}
+
+.utw-breakdown__bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: #6366f1;
+  transition: width 0.25s ease-out;
+}
+
+.utw-breakdown__count-cell {
+  text-align: right;
+  font-size: 0.8125rem;
+  color: #374151;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.utw-breakdown__pct {
+  color: #9ca3af;
+  font-size: 0.75rem;
+  margin-left: 0.25rem;
+}

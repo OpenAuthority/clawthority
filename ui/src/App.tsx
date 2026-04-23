@@ -12,7 +12,8 @@
 import { useCallback, useState } from 'react';
 import { BatchApprovalPanel } from './components/BatchApprovalPanel.js';
 import { RuleDeleteModal } from './components/RuleDeleteModal.js';
-import type { AuditHit, BatchAuditEntry, BatchingConfig, PendingApprovalItem, Rule } from './types.js';
+import { UnclassifiedToolWidget } from './components/UnclassifiedToolWidget.js';
+import type { AuditHit, BatchAuditEntry, BatchingConfig, PendingApprovalItem, Rule, UnclassifiedWidgetData } from './types.js';
 
 // ─── Demo data ────────────────────────────────────────────────────────────────
 
@@ -240,6 +241,68 @@ const DEFAULT_BATCHING_CONFIG: BatchingConfig = {
   maxBatchSize: 0,
 };
 
+// ─── Demo data: unclassified tool widget ──────────────────────────────────────
+
+/** Generates N days of demo data going back from today. */
+function buildDemoUnclassifiedData(): UnclassifiedWidgetData {
+  const today = new Date();
+  const days = 30;
+  const tools = ['custom_scraper', 'shell_exec', 'fetch_url', 'run_code', 'unknown_op'];
+
+  // Simulate daily counts per tool (seeded, not truly random for determinism)
+  const seriesMap = new Map<string, number>();
+  const toolSeriesMap = new Map<string, Map<string, number>>();
+
+  for (let d = days - 1; d >= 0; d--) {
+    const date = new Date(today.getTime() - d * 24 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10);
+    let dayTotal = 0;
+
+    for (const tool of tools) {
+      // Deterministic pseudo-count based on tool index and day offset
+      const toolIdx = tools.indexOf(tool);
+      const count =
+        d % 3 === 0 ? toolIdx + 1 : d % 5 === 0 ? toolIdx * 2 : toolIdx > 2 ? 1 : 0;
+      if (count === 0) continue;
+
+      dayTotal += count;
+      seriesMap.set(date, (seriesMap.get(date) ?? 0) + count);
+
+      const tMap = toolSeriesMap.get(tool) ?? new Map<string, number>();
+      tMap.set(date, (tMap.get(date) ?? 0) + count);
+      toolSeriesMap.set(tool, tMap);
+    }
+    if (dayTotal === 0) {
+      // Ensure at least some data points have zero gaps (skip empty dates)
+    }
+  }
+
+  const series = [...seriesMap.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, count]) => ({ date, count }));
+
+  const breakdown = [...toolSeriesMap.entries()]
+    .map(([toolName, tMap]) => ({
+      toolName,
+      count: [...tMap.values()].reduce((a, b) => a + b, 0),
+      series: [...tMap.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([date, count]) => ({ date, count })),
+    }))
+    .sort((a, b) => b.count - a.count);
+
+  const totalCount = breakdown.reduce((acc, b) => acc + b.count, 0);
+  const from = new Date(today.getTime() - (days - 1) * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+  const to = today.toISOString().slice(0, 10);
+
+  return { series, breakdown, totalCount, dateRange: { from, to } };
+}
+
+const DEMO_UNCLASSIFIED_DATA: UnclassifiedWidgetData = buildDemoUnclassifiedData();
+
 // ─── App ──────────────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -249,6 +312,8 @@ export default function App() {
   const [pendingItems, setPendingItems] = useState<PendingApprovalItem[]>(DEMO_PENDING_ITEMS);
   const [batchConfig, setBatchConfig] = useState<BatchingConfig>(DEFAULT_BATCHING_CONFIG);
   const [auditLog, setAuditLog] = useState<BatchAuditEntry[]>([]);
+
+  const [unclassifiedData, setUnclassifiedData] = useState<UnclassifiedWidgetData>(DEMO_UNCLASSIFIED_DATA);
 
   const pendingRule = rules.find((r) => r.id === pendingDeleteId) ?? null;
 
@@ -348,6 +413,33 @@ export default function App() {
       setAuditLog((prev) => [...prev, ...newEntries]);
     },
     [pendingItems, batchConfig.groupBy],
+  );
+
+  // In a real integration these handlers would fetch from /api/audit/unclassified.
+  // The demo re-filters the static dataset client-side.
+  const handleUnclassifiedFilterChange = useCallback((from: string, to: string) => {
+    const filtered = {
+      ...DEMO_UNCLASSIFIED_DATA,
+      series: DEMO_UNCLASSIFIED_DATA.series.filter((p) => p.date >= from && p.date <= to),
+      breakdown: DEMO_UNCLASSIFIED_DATA.breakdown.map((b) => ({
+        ...b,
+        series: b.series.filter((p) => p.date >= from && p.date <= to),
+        count: b.series.filter((p) => p.date >= from && p.date <= to).reduce((acc, p) => acc + p.count, 0),
+      })).filter((b) => b.count > 0),
+      totalCount: DEMO_UNCLASSIFIED_DATA.series
+        .filter((p) => p.date >= from && p.date <= to)
+        .reduce((acc, p) => acc + p.count, 0),
+      dateRange: { from, to },
+    };
+    setUnclassifiedData(filtered);
+  }, []);
+
+  const handleUnclassifiedExport = useCallback(
+    (_from: string, _to: string, _toolName?: string) => {
+      // In a real integration: window.location.href = `/api/audit/unclassified?from=${_from}&to=${_to}${_toolName ? `&toolName=${encodeURIComponent(_toolName)}` : ''}&export=csv`
+      alert('Export: in a live deployment this downloads unclassified-tools.csv from the audit API.');
+    },
+    [],
   );
 
   return (
@@ -532,6 +624,21 @@ export default function App() {
           auditLog={auditLog}
           onApprove={handleApprove}
           onDeny={handleDeny}
+        />
+      </div>
+
+      {/* ── Unclassified Tool Count Widget ────────────────────────────────── */}
+      <div style={{ marginTop: '2.5rem' }}>
+        <h2 style={{ fontSize: '1.125rem', fontWeight: 600, marginBottom: '0.25rem' }}>
+          Unclassified Tool Count
+        </h2>
+        <p style={{ color: '#6b7280', fontSize: '0.875rem', marginBottom: '1rem' }}>
+          Tools that could not be mapped to a known action class. Click a tool row to drill down.
+        </p>
+        <UnclassifiedToolWidget
+          data={unclassifiedData}
+          onFilterChange={handleUnclassifiedFilterChange}
+          onExport={handleUnclassifiedExport}
         />
       </div>
     </div>

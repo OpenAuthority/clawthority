@@ -46,9 +46,11 @@
     "@openclaw/action-registry": "*",
     "@sinclair/typebox": "^0.34.0",
     "chokidar": "^4.0.0",
+    "express": "^4.21.0",
     "yaml": "^2.8.2"
   },
   "devDependencies": {
+    "@types/express": "^4.17.21",
     "@types/node": "^22.0.0",
     "@vitest/coverage-v8": "^2.1.9",
     "typescript": "^5.7.0",
