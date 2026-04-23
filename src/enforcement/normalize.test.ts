@@ -2265,6 +2265,78 @@ describe('normalize_action — reclassification field (Rules 4–8)', () => {
     vi.resetModules();
   });
 
+  // Mode-aware defaults for CLAWTHORITY_COMMAND_REGEX_LAYER
+
+  it('CLOSED mode defaults regex layer to false (no reclassification)', async () => {
+    const ORIG_MODE = process.env['CLAWTHORITY_MODE'];
+    const ORIG_FLAG = process.env['CLAWTHORITY_COMMAND_REGEX_LAYER'];
+    process.env['CLAWTHORITY_MODE'] = 'closed';
+    delete process.env['CLAWTHORITY_COMMAND_REGEX_LAYER'];
+    vi.resetModules();
+    const { normalize_action: fresh } = await import('./normalize.js');
+    const result = fresh('bash', { command: 'rm -rf /tmp/build' });
+    expect(result.reclassification).toBeUndefined();
+    // Restore
+    if (ORIG_MODE === undefined) delete process.env['CLAWTHORITY_MODE'];
+    else process.env['CLAWTHORITY_MODE'] = ORIG_MODE;
+    if (ORIG_FLAG === undefined) delete process.env['CLAWTHORITY_COMMAND_REGEX_LAYER'];
+    else process.env['CLAWTHORITY_COMMAND_REGEX_LAYER'] = ORIG_FLAG;
+    vi.resetModules();
+  });
+
+  it('OPEN mode defaults regex layer to true (reclassification fires)', async () => {
+    const ORIG_MODE = process.env['CLAWTHORITY_MODE'];
+    const ORIG_FLAG = process.env['CLAWTHORITY_COMMAND_REGEX_LAYER'];
+    process.env['CLAWTHORITY_MODE'] = 'open';
+    delete process.env['CLAWTHORITY_COMMAND_REGEX_LAYER'];
+    vi.resetModules();
+    const { normalize_action: fresh } = await import('./normalize.js');
+    const result = fresh('bash', { command: 'rm -rf /tmp/build' });
+    expect(result.reclassification).toBeDefined();
+    expect(result.reclassification!.rule).toBe(4);
+    // Restore
+    if (ORIG_MODE === undefined) delete process.env['CLAWTHORITY_MODE'];
+    else process.env['CLAWTHORITY_MODE'] = ORIG_MODE;
+    if (ORIG_FLAG === undefined) delete process.env['CLAWTHORITY_COMMAND_REGEX_LAYER'];
+    else process.env['CLAWTHORITY_COMMAND_REGEX_LAYER'] = ORIG_FLAG;
+    vi.resetModules();
+  });
+
+  it('explicit CLAWTHORITY_COMMAND_REGEX_LAYER=true overrides CLOSED mode', async () => {
+    const ORIG_MODE = process.env['CLAWTHORITY_MODE'];
+    const ORIG_FLAG = process.env['CLAWTHORITY_COMMAND_REGEX_LAYER'];
+    process.env['CLAWTHORITY_MODE'] = 'closed';
+    process.env['CLAWTHORITY_COMMAND_REGEX_LAYER'] = 'true';
+    vi.resetModules();
+    const { normalize_action: fresh } = await import('./normalize.js');
+    const result = fresh('bash', { command: 'rm -rf /tmp/build' });
+    expect(result.reclassification).toBeDefined();
+    expect(result.reclassification!.rule).toBe(4);
+    // Restore
+    if (ORIG_MODE === undefined) delete process.env['CLAWTHORITY_MODE'];
+    else process.env['CLAWTHORITY_MODE'] = ORIG_MODE;
+    if (ORIG_FLAG === undefined) delete process.env['CLAWTHORITY_COMMAND_REGEX_LAYER'];
+    else process.env['CLAWTHORITY_COMMAND_REGEX_LAYER'] = ORIG_FLAG;
+    vi.resetModules();
+  });
+
+  it('explicit CLAWTHORITY_COMMAND_REGEX_LAYER=false overrides OPEN mode', async () => {
+    const ORIG_MODE = process.env['CLAWTHORITY_MODE'];
+    const ORIG_FLAG = process.env['CLAWTHORITY_COMMAND_REGEX_LAYER'];
+    process.env['CLAWTHORITY_MODE'] = 'open';
+    process.env['CLAWTHORITY_COMMAND_REGEX_LAYER'] = 'false';
+    vi.resetModules();
+    const { normalize_action: fresh } = await import('./normalize.js');
+    const result = fresh('bash', { command: 'rm -rf /tmp/build' });
+    expect(result.reclassification).toBeUndefined();
+    // Restore
+    if (ORIG_MODE === undefined) delete process.env['CLAWTHORITY_MODE'];
+    else process.env['CLAWTHORITY_MODE'] = ORIG_MODE;
+    if (ORIG_FLAG === undefined) delete process.env['CLAWTHORITY_COMMAND_REGEX_LAYER'];
+    else process.env['CLAWTHORITY_COMMAND_REGEX_LAYER'] = ORIG_FLAG;
+    vi.resetModules();
+  });
+
   // Precedence — higher-priority rule sets reclassification, lower rule doesn't overwrite
   it('Rule 4 wins over Rule 5: rm of cred file → rule=4 (filesystem.delete)', () => {
     const result = normalize_action('bash', { command: 'rm ~/.aws/credentials' });

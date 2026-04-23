@@ -289,15 +289,27 @@ const DATA_EXFIL_UPLOAD_PATTERNS: readonly RegExp[] = [
 /**
  * When set to `false` (case-insensitive), Rules 4–8 in `normalize_action` are
  * skipped entirely. This prepares for retiring the command-regex layer while
- * maintaining backward compatibility (default: `true`).
+ * maintaining backward compatibility.
+ *
+ * Default is mode-aware:
+ *   - `CLAWTHORITY_MODE=closed` → defaults to `false` (stricter posture)
+ *   - `CLAWTHORITY_MODE=open` or unset → defaults to `true`
+ *
+ * An explicit `CLAWTHORITY_COMMAND_REGEX_LAYER` value always overrides the
+ * mode-based default.
  *
  * Example:
  *   CLAWTHORITY_COMMAND_REGEX_LAYER=false
  */
 const COMMAND_REGEX_LAYER_ENABLED: boolean = (() => {
   const raw = process.env['CLAWTHORITY_COMMAND_REGEX_LAYER'];
-  if (raw === undefined) return true;
-  return raw.trim().toLowerCase() !== 'false';
+  if (raw !== undefined) {
+    // Explicit env var always wins.
+    return raw.trim().toLowerCase() !== 'false';
+  }
+  // No explicit setting — derive from mode. CLOSED mode defaults to false.
+  const mode = process.env['CLAWTHORITY_MODE']?.trim().toLowerCase();
+  return mode !== 'closed';
 })();
 
 // ---------------------------------------------------------------------------
