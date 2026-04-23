@@ -36,6 +36,8 @@ import { sendEmailManifest } from '../tools/send_email/manifest.js';
 import { httpGetManifest } from '../tools/http_get/manifest.js';
 import { searchWebManifest } from '../tools/search_web/manifest.js';
 import { callWebhookManifest } from '../tools/call_webhook/manifest.js';
+import { fetchUrlManifest } from '../tools/fetch_url/manifest.js';
+import { scrapePageManifest } from '../tools/scrape_page/manifest.js';
 
 // ─── First-party manifest registry ───────────────────────────────────────────
 
@@ -65,6 +67,8 @@ export const FIRST_PARTY_MANIFESTS: readonly ToolManifest[] = [
   httpGetManifest,
   searchWebManifest,
   callWebhookManifest,
+  fetchUrlManifest,
+  scrapePageManifest,
 ];
 
 // ─── Activation validator ─────────────────────────────────────────────────────
