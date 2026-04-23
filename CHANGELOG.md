@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+#### `unsafe_admin_exec` — emergency admin shell escape hatch (CS-11)
+
+`unsafe_admin_exec` is a privileged tool that maps to the `shell.exec` action class and provides an audited emergency escape hatch for administrative shell access. It is inert by default and requires all of the following to execute:
+
+- `CLAWTHORITY_ENABLE_UNSAFE_ADMIN_EXEC=1` environment variable.
+- A `justification` parameter of at least 20 characters, recorded verbatim in every audit log entry.
+- A HITL capability token (`approval_id`) for every invocation — auto-approval is never permitted.
+- The capability token must not have been previously consumed (replay protection via `ApprovalManager`).
+
+All invocations are audit-logged regardless of outcome. Commands are sanitized (truncated to 40 chars, Bearer tokens and `token=` assignments redacted) before writing to the audit trail. The tool is registered in the action registry as an alias of `shell.exec` with `risk_tier: 'high'` and `default_hitl_mode: 'per_request'`.
+
 ---
 
 ## [1.2.1] — 2026-04-24
