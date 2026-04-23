@@ -9,9 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.2.1] — 2026-04-23
+## [1.2.1] — 2026-04-24
 
-First release to ship the two-stage enforcement pipeline, 17 registered first-party tools, `FileAuthorityAdapter` with live bundle hot-reload, and `FileCredentialVault`. v1.2.0 delivered the enforcement engine; v1.2.1 delivers the capability system and the tool surface it protects.
+First release to ship the two-stage enforcement pipeline, 23 registered first-party tools, `FileAuthorityAdapter` with live bundle hot-reload, and `FileCredentialVault`. v1.2.0 delivered the enforcement engine; v1.2.1 delivers the capability system and the tool surface it protects.
 
 ### Added
 
@@ -33,9 +33,11 @@ All 17 tools ship with TypeBox-validated manifests (schema, action class, risk t
 
 **Filesystem (8):** `append_file`, `create_directory`, `delete_file`, `edit_file`, `list_dir`, `list_directory`, `read_file`, `write_file`
 
-**HTTP (1):** `http_get` — 30 s `AbortController` timeout; response body truncated at 1 MB.
+**HTTP (3):** `http_get` — 30 s `AbortController` timeout; response body truncated at 1 MB. `fetch_url` — follows redirects and exposes `final_url`; optional `allowed_domains` pre-flight allowlist check. `scrape_page` — Cheerio-based static HTML extraction; returns `{ url, title, text, elements? }` where `elements` is only present when `selectors` is non-empty.
 
-**Communication (1):** `send_email` — dependency-free Node.js SMTP transport (`createConnection` / `tlsConnect`). PORT 465 (implicit TLS) and STARTTLS on PORT 587 are both supported; AUTH LOGIN is used when credentials are present. Configure via `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`.
+**Web (2):** `search_web` — web search with optional domain filtering. `call_webhook` — configurable HTTP method with optional payload.
+
+**Communication (3):** `send_email` — dependency-free Node.js SMTP transport (`createConnection` / `tlsConnect`). PORT 465 (implicit TLS) and STARTTLS on PORT 587 are both supported; AUTH LOGIN is used when credentials are present. Configure via `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`. `send_slack` — posts to Slack via the Web API (`chat.postMessage`) using a `SLACK_BOT_TOKEN` bearer token; requires `channel` and `text`. `send_webhook` — HTTP POST with required `payload`; auto-injects `Content-Type: application/json` unless the caller has already set it (checked case-insensitively).
 
 #### FileAuthorityAdapter
 

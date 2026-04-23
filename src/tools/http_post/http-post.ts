@@ -101,7 +101,7 @@ export async function httpPost(params: HttpPostParams): Promise<HttpPostResult> 
   try {
     response = await fetch(url, {
       method: 'POST',
-      body: body ?? undefined,
+      ...(body != null ? { body } : {}),
       headers: headers ?? {},
       signal: controller.signal,
     });

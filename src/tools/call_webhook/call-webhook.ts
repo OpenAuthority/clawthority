@@ -114,7 +114,7 @@ export async function callWebhook(params: CallWebhookParams): Promise<CallWebhoo
     response = await fetch(url, {
       method,
       headers: requestHeaders,
-      body,
+      ...(body !== undefined ? { body } : {}),
       signal: controller.signal,
     });
   } catch (err: unknown) {

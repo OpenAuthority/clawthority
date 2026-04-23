@@ -160,7 +160,7 @@ export async function runWithHitl(
     action_class: ctx.action_class,
     target: ctx.target,
     payload_hash: ctx.payload_hash,
-    session_id: ctx.session_id,
+    ...(ctx.session_id !== undefined ? { session_id: ctx.session_id } : {}),
   });
 
   const hitlDecision = await handle.promise;

@@ -80,7 +80,7 @@ export async function httpPatch(params: HttpPatchParams): Promise<HttpPatchResul
   try {
     response = await fetch(url, {
       method: 'PATCH',
-      body: body ?? undefined,
+      ...(body != null ? { body } : {}),
       headers: headers ?? {},
       signal: controller.signal,
     });

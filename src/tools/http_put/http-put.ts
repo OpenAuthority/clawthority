@@ -80,7 +80,7 @@ export async function httpPut(params: HttpPutParams): Promise<HttpPutResult> {
   try {
     response = await fetch(url, {
       method: 'PUT',
-      body: body ?? undefined,
+      ...(body != null ? { body } : {}),
       headers: headers ?? {},
       signal: controller.signal,
     });

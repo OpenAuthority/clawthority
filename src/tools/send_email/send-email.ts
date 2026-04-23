@@ -355,12 +355,14 @@ export async function sendEmail(
     );
   }
 
+  const smtpUser = options.smtpUser ?? process.env['SMTP_USER'];
+  const smtpPass = options.smtpPass ?? process.env['SMTP_PASS'];
   const envelope: SmtpEnvelope = {
     host,
     port,
     secure: smtpSecure,
-    user: options.smtpUser ?? process.env['SMTP_USER'],
-    pass: options.smtpPass ?? process.env['SMTP_PASS'],
+    ...(smtpUser !== undefined ? { user: smtpUser } : {}),
+    ...(smtpPass !== undefined ? { pass: smtpPass } : {}),
     from,
     to: splitAddresses(to),
     cc: cc ? splitAddresses(cc) : [],
