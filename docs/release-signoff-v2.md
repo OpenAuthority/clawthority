@@ -1,7 +1,7 @@
-# Release Sign-Off — v2.0.0
+# Release Sign-Off — v1.2.0
 
 **Date:** 2026-04-23
-**Release:** `@clawthority/clawthority@2.0.0`
+**Release:** `@clawthority/clawthority@1.2.0`
 **Branch:** `fine-grained-tools-implementation-plan`
 
 ---
@@ -17,7 +17,7 @@ All 20 release readiness checks pass (DOD-1 through DOD-8 and V-01 through V-12)
 | DOD-1 | Unit test configuration targets `src/**/*.test.ts` | PASS |
 | DOD-2 | E2E test configuration exists (`vitest.e2e.config.ts`) | PASS |
 | DOD-3 | Coverage thresholds declared in `vitest.config.ts` | PASS |
-| DOD-4 | CHANGELOG contains release entry for v2.0.0 | PASS |
+| DOD-4 | CHANGELOG contains release entry for v1.2.0 | PASS |
 | DOD-5 | Migration guide published (`docs/migration-v2.md`) | PASS |
 | DOD-6 | Spec alignment audit completed | PASS |
 | DOD-7 | Security review document exists (`docs/security-review-v2.md`) | PASS |
@@ -38,7 +38,7 @@ All 20 release readiness checks pass (DOD-1 through DOD-8 and V-01 through V-12)
 | V-09 | Security review document exists (`docs/security-review-v2.md`) | PASS |
 | V-10 | No open critical security findings in `docs/security-review-v2.md` | PASS |
 | V-11 | `CHANGELOG.md` follows Keep a Changelog format | PASS |
-| V-12 | `package.json` version matches target release version (2.0.0) | PASS |
+| V-12 | `package.json` version matches target release version (1.2.0) | PASS |
 
 ---
 
@@ -58,7 +58,7 @@ All 20 release readiness checks pass (DOD-1 through DOD-8 and V-01 through V-12)
 No findings classified **Critical + Open**. F-06 is Critical but its status is **Blocked (not
 implemented)** — the feature does not exist and cannot be activated.
 
-F-01 and F-02 are Medium-Open with documented mitigations. They do not block the v2.0.0 release.
+F-01 and F-02 are Medium-Open with documented mitigations. They do not block the v1.2.0 release.
 
 ---
 
@@ -72,8 +72,8 @@ F-01 and F-02 are Medium-Open with documented mitigations. They do not block the
 - [x] No runtime `child_process` imports in `src/index.ts`
 
 ### Release materials
-- [x] `CHANGELOG.md` promoted from `[Unreleased]` to `[2.0.0] — 2026-04-23`
-- [x] `package.json` version bumped to `2.0.0`
+- [x] `CHANGELOG.md` promoted from `[Unreleased]` to `[1.2.0] — 2026-04-23`
+- [x] `package.json` version bumped to `1.2.0`
 - [x] `docs/migration-v2.md` created and reviewed
 - [x] `docs/security-review-v2.md` current — no open critical findings
 - [x] `docs/spec-alignment-audit.md` present
@@ -119,7 +119,7 @@ All validation criteria are met. The security review has no open critical findin
 guide is published. Release notes are complete in `CHANGELOG.md`. All prior dependency tasks
 (T124–T134) are resolved.
 
-**Release target:** `@clawthority/clawthority@2.0.0`
+**Release target:** `@clawthority/clawthority@1.2.0`
 
 ---
 

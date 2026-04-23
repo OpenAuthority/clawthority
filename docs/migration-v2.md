@@ -1,10 +1,10 @@
-# Migration Guide — v2.0
+# Migration Guide — v1.2
 
-This guide covers the changes required when upgrading Clawthority from **v1.x** to **v2.0**.
+This guide covers the changes required when upgrading Clawthority from **v1.x** to **v1.2**.
 
 ## Summary
 
-v2.0 delivers shell-wrapper command reclassification (Rules 4–8), corrects priority-90 HITL
+v1.2 delivers shell-wrapper command reclassification (Rules 4–8), corrects priority-90 HITL
 routing, and adds several operator-controlled configuration options. The upgrade is
 backward-compatible for most deployments. Operators who configured `hitl-policy.yaml` with
 `unknown_sensitive_action` or who relied on the previous blocking behaviour of `filesystem.delete`
@@ -16,9 +16,9 @@ in CLOSED mode will need to review their policies.
 
 In v1.x, any tool call routed through a generic shell-wrapper (`exec`, `bash`, `sh`,
 `run_command`, …) was classified as `unknown_sensitive_action` regardless of the command content.
-In v2.0, the normalizer inspects the `command` parameter and reclassifies:
+In v1.2, the normalizer inspects the `command` parameter and reclassifies:
 
-| Command pattern | v1.x class | v2.0 class |
+| Command pattern | v1.x class | v1.2 class |
 |---|---|---|
 | `exec({command: "rm /tmp/x"})` | `unknown_sensitive_action` | `filesystem.delete` |
 | `exec({command: "cat ~/.aws/credentials"})` | `unknown_sensitive_action` | `credential.read` |
@@ -38,7 +38,7 @@ In v1.x, the default priority-90 forbid rules (`filesystem.delete`, `credential.
 `credential.write`, `payment.initiate`) caused a hard block in CLOSED mode before the HITL stage
 ran. Operators configuring HITL for these action classes found the approval flow never triggered.
 
-In v2.0, priority-90 forbids are **HITL-gated**: if a matching HITL policy approves, the tool
+In v1.2, priority-90 forbids are **HITL-gated**: if a matching HITL policy approves, the tool
 call proceeds. If no HITL policy matches (or HITL is not configured), the forbid is upheld.
 
 Priority-100 rules (`shell.exec`, `code.execute`) are unchanged — unconditional forbid, HITL
@@ -54,7 +54,7 @@ cannot override.
 
 The following tool name aliases are now registered in the normalizer:
 
-| Tool name | v1.x class | v2.0 class |
+| Tool name | v1.x class | v1.2 class |
 |---|---|---|
 | `read` | `unknown_sensitive_action` | `filesystem.read` |
 | `write` | `unknown_sensitive_action` | `filesystem.write` |
@@ -93,7 +93,7 @@ Open `hitl-policy.yaml` and check for `unknown_sensitive_action` entries:
 Replace with the specific action classes you want to gate:
 
 ```yaml
-# After (v2.0):
+# After (v1.2):
 - action_class: filesystem.delete
   channel: slack
   mode: per_request
@@ -209,7 +209,7 @@ import { ReleaseValidator } from './src/validation/release-validator.js';
 
 const result = new ReleaseValidator().validate({
   root: process.cwd(),
-  targetVersion: '2.0.0',
+  targetVersion: '1.2.0',
 });
 
 if (!result.valid) {

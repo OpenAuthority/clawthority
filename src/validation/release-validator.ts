@@ -1,5 +1,5 @@
 /**
- * v2.0 release readiness validator.
+ * Release readiness validator.
  *
  * Provides the `ReleaseValidator` class, which runs a structured exit checklist
  * against the project root directory to determine whether a release is ready to
@@ -78,7 +78,7 @@ function fileExists(root: string, relativePath: string): boolean {
 // ─── ReleaseValidator ─────────────────────────────────────────────────────────
 
 /**
- * Automated exit-checklist validator for v2.0 release readiness.
+ * Automated exit-checklist validator for release readiness.
  *
  * Runs DOD-1 through DOD-8 (Definition of Done) and V-01 through V-12
  * (Verification) checks against the project root directory. All checks are

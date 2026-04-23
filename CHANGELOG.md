@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [2.0.0] — 2026-04-23
+## [1.2.0] — 2026-04-23
 
 Addresses a class of tester-reported classification gaps on hosts that expose a single generic shell-exec tool (e.g. OpenClaw's `exec`). Destructive commands and credential-file access now normalise to the right semantic action class, so the policies Clawthority ships for `filesystem.delete`, `credential.read`, and `credential.write` actually fire instead of silently falling through to `unknown_sensitive_action`.
 
