@@ -1,0 +1,9 @@
+[
+  {
+    "effect": "forbid",
+    "action_class": "shell.exec",
+    "priority": 100,
+    "reason": "shell.exec is unconditionally forbidden at priority 100 and cannot be overridden by any lower-priority permit. Replace shell.exec usage with fine-grained tools: filesystem.read, filesystem.write, filesystem.list, filesystem.delete, web.search, web.fetch, or web.post.",
+    "tags": ["system", "security", "audit"]
+  }
+]

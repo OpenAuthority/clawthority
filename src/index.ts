@@ -472,6 +472,21 @@ async function loadJsonRules(): Promise<void> {
       throw new TypeError("data/rules.json must be a JSON array of rule objects");
     }
 
+    // Reject any permit rule targeting shell.exec — this class is
+    // unconditionally forbidden at priority 100 and cannot be overridden
+    // via data/rules.json. Any such entry indicates a misconfiguration.
+    const shellExecPermitIdx = records.findIndex(
+      (rec) => rec.effect === 'permit' && rec.action_class === 'shell.exec'
+    );
+    if (shellExecPermitIdx !== -1) {
+      throw new TypeError(
+        `data/rules.json rule[${shellExecPermitIdx}]: shell.exec cannot be permitted — ` +
+        'it is unconditionally forbidden at priority 100. ' +
+        'Replace shell.exec usage with fine-grained tools: filesystem.read, filesystem.write, ' +
+        'filesystem.list, web.search, web.fetch, or web.post.'
+      );
+    }
+
     const cedarRules: Rule[] = records.map((rec, i) => {
       // Intent-group form: { intent_group, effect, priority?, reason?, tags? }
       // Matches all action classes carrying that intent group — evaluated by

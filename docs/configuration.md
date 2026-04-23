@@ -174,6 +174,38 @@ When a rate limit is exceeded, the request is forbidden regardless of the rule's
 | `"write_*"` | Any name starting with `write_` (prefix wildcard) |
 | `"/^(read\|list)_/"` | Any name matching the regular expression |
 
+### Unconditionally forbidden action classes
+
+Certain action classes are hardcoded as forbidden at priority 100 and **cannot be permitted via `data/rules.json`**. Attempting to add a `permit` rule for any of these classes causes `loadJsonRules()` to reject the file entirely with an error logged to console.
+
+| Action Class | Reason |
+|---|---|
+| `shell.exec` | Generic shell execution bypasses all command-level policy; one invocation can affect any resource the process can reach. |
+| `code.execute` | Arbitrary code execution bypasses parameter-level policy. |
+
+#### Migrating from `shell.exec` to fine-grained tools
+
+Replace generic shell invocations with purpose-built action classes that carry scoped permissions:
+
+| Was (`shell.exec`) | Use instead |
+|---|---|
+| Reading a file (`cat`, `head`, `less`) | `filesystem.read` |
+| Listing a directory (`ls`, `find`) | `filesystem.list` |
+| Writing or creating a file (`echo >`, `tee`) | `filesystem.write` |
+| Deleting a file (`rm`) | `filesystem.delete` |
+| Fetching a URL (`curl`, `wget`) | `web.fetch` |
+| Posting data to an endpoint | `web.post` |
+| Searching the web | `web.search` |
+
+Fine-grained tools are registered in `src/enforcement/normalize.ts` with their canonical action class, risk tier, and HITL mode. Use `action_class` rules in `data/rules.json` to gate them:
+
+```json
+[
+  { "effect": "forbid", "action_class": "filesystem.delete", "priority": 90, "reason": "Filesystem deletes require HITL approval" },
+  { "effect": "permit", "action_class": "filesystem.read",   "priority": 10, "reason": "Read-only operations permitted" }
+]
+```
+
 ### Example rules.json
 
 ```json
