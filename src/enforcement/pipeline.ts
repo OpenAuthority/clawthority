@@ -55,6 +55,14 @@ export interface CeeDecision {
   reason: string;
   /** Identifier of the stage that produced this decision. */
   stage?: string;
+  /**
+   * Priority of the matched rule, if applicable.
+   *
+   * Populated by stage2 from `matchedRule.priority` to allow HITL-dispatch
+   * wrappers to distinguish HITL-gated forbids (priority < 100) from
+   * unconditional forbids (priority >= 100 or absent).
+   */
+  priority?: number;
 }
 
 /** Stage 1: capability gate — validates an issued capability token. */

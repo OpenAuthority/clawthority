@@ -16,8 +16,11 @@ import { runPipeline } from './pipeline.js';
 import type { PipelineContext, Stage1Fn, Stage2Fn } from './pipeline.js';
 import { createStage2, createEnforcementEngine } from './stage2-policy.js';
 import { validateCapability } from './stage1-capability.js';
+import { runWithHitl } from './hitl-dispatch.js';
+import type { HitlDispatchOpts } from './hitl-dispatch.js';
 import { ApprovalManager, computeBinding } from '../hitl/approval-manager.js';
 import type { HitlPolicy } from '../hitl/types.js';
+import type { HitlPolicyConfig } from '../hitl/types.js';
 import type { Rule } from '../policy/types.js';
 import type { Capability } from '../adapter/types.js';
 
@@ -625,5 +628,518 @@ describe('TC-PI-05: HITL timeout applies fallback', () => {
     expect(events[0]!.decision).toMatchObject({ effect: 'permit' });
     expect(typeof events[0]!.timestamp).toBe('string');
     expect(events[0]!.timestamp as string).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+});
+
+// ─── Helpers for TC-PI-06 through TC-PI-10 ────────────────────────────────────
+
+/**
+ * Drains the entire microtask queue by deferring to the next macrotask via
+ * setImmediate.  Use this in place of `await Promise.resolve()` when the code
+ * under test has multiple async hops (e.g. runPipeline→stage1→stage2→runWithHitl
+ * continuation) before reaching the point being asserted.
+ */
+const flushPromises = (): Promise<void> =>
+  new Promise<void>((resolve) => setImmediate(resolve));
+
+/** A HITL policy config that matches every action class. */
+const matchAllHitlConfig: HitlPolicyConfig = {
+  version: '1',
+  policies: [
+    {
+      name: 'approve-all',
+      actions: ['*'],
+      approval: { channel: 'slack', timeout: 30, fallback: 'deny' },
+    },
+  ],
+};
+
+/** A HITL policy config that matches filesystem.* actions. */
+const matchFilesystemHitlConfig: HitlPolicyConfig = {
+  version: '1',
+  policies: [
+    {
+      name: 'filesystem-approvals',
+      actions: ['filesystem.*'],
+      approval: { channel: 'slack', timeout: 30, fallback: 'deny' },
+    },
+  ],
+};
+
+/** A HITL policy config that matches nothing relevant to filesystem.read. */
+const matchNothingHitlConfig: HitlPolicyConfig = {
+  version: '1',
+  policies: [
+    {
+      name: 'payment-only',
+      actions: ['payment.initiate'],
+      approval: { channel: 'slack', timeout: 30, fallback: 'deny' },
+    },
+  ],
+};
+
+/** Stage2 that returns forbid with priority 90 (HITL-gated). */
+const hitlGatedForbidStage2: Stage2Fn = async () => ({
+  effect: 'forbid',
+  reason: 'filesystem.delete requires human approval',
+  stage: 'stage2',
+  priority: 90,
+});
+
+/** Stage2 that returns forbid with priority 100 (unconditional). */
+const unconditionalForbidStage2: Stage2Fn = async () => ({
+  effect: 'forbid',
+  reason: 'blocked unconditionally',
+  stage: 'stage2',
+  priority: 100,
+});
+
+/** Stage2 that returns forbid with priority 200 (unconditional). */
+const highPriorityForbidStage2: Stage2Fn = async () => ({
+  effect: 'forbid',
+  reason: 'blocked by high-priority rule',
+  stage: 'stage2',
+  priority: 200,
+});
+
+/** Stage2 that returns forbid with no priority (treated as unconditional). */
+const noPriorityForbidStage2: Stage2Fn = async () => ({
+  effect: 'forbid',
+  reason: 'blocked by rule with no priority',
+  stage: 'stage2',
+});
+
+/** Creates a HitlDispatchOpts with the given manager and capStore. */
+function makeDispatchOpts(
+  manager: ApprovalManager,
+  capStore: Map<string, Capability>,
+  hitlConfig: HitlPolicyConfig = matchAllHitlConfig,
+): HitlDispatchOpts {
+  return {
+    hitlConfig,
+    manager,
+    issueCapability: async (action_class, target, payload_hash, session_id) => {
+      const approval_id = `cap-issued-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const cap: Capability = {
+        approval_id,
+        binding: computeBinding(action_class, target, payload_hash),
+        action_class,
+        target,
+        issued_at: Date.now() - 1_000,
+        expires_at: Date.now() + 3_600_000,
+        ...(session_id !== undefined ? { session_id } : {}),
+      };
+      capStore.set(approval_id, cap);
+      return cap;
+    },
+    agentId: 'agent-1',
+    channelId: 'default',
+  };
+}
+
+/** Context for filesystem.delete used in TC-PI-06 through TC-PI-10. */
+const deleteCtx: PipelineContext = {
+  action_class: 'filesystem.delete',
+  target: '/tmp/deleteme.txt',
+  payload_hash: 'ph-delete-001',
+  hitl_mode: 'none',
+  rule_context: { agentId: 'agent-1', channel: 'test' },
+};
+
+// ─── TC-PI-06: HITL not dispatched when pipeline permits ──────────────────────
+
+describe('TC-PI-06: HITL not dispatched when pipeline permits', () => {
+  it('runWithHitl returns permit without dispatching when both stages permit', async () => {
+    const manager = new ApprovalManager();
+    const capStore = new Map<string, Capability>();
+    const opts = makeDispatchOpts(manager, capStore, matchAllHitlConfig);
+    const issueCapSpy = vi.spyOn(opts, 'issueCapability');
+
+    const result = await runWithHitl(
+      makeCtx(),
+      permitStage1,
+      permitStage2,
+      new EventEmitter(),
+      opts,
+    );
+
+    expect(result.decision.effect).toBe('permit');
+    expect(manager.size).toBe(0);
+    expect(issueCapSpy).not.toHaveBeenCalled();
+  });
+
+  it('runWithHitl emits a single permit event when pipeline permits', async () => {
+    const manager = new ApprovalManager();
+    const capStore = new Map<string, Capability>();
+    const opts = makeDispatchOpts(manager, capStore, matchAllHitlConfig);
+    const emitter = new EventEmitter();
+    const events: Array<Record<string, unknown>> = [];
+    emitter.on('executionEvent', (e) => events.push(e as Record<string, unknown>));
+
+    await runWithHitl(makeCtx(), permitStage1, permitStage2, emitter, opts);
+
+    expect(events).toHaveLength(1);
+    expect(events[0]!.decision).toMatchObject({ effect: 'permit' });
+  });
+
+  it('runWithHitl does not dispatch HITL even when a HITL policy matches and pipeline permits', async () => {
+    const manager = new ApprovalManager();
+    const capStore = new Map<string, Capability>();
+    // Policy matches everything — but since pipeline permits, HITL is never dispatched.
+    const opts = makeDispatchOpts(manager, capStore, matchAllHitlConfig);
+
+    const result = await runWithHitl(
+      deleteCtx,
+      permitStage1,
+      permitStage2,
+      new EventEmitter(),
+      opts,
+    );
+
+    expect(result.decision.effect).toBe('permit');
+    expect(manager.size).toBe(0);
+  });
+});
+
+// ─── TC-PI-07: Priority >= 100 forbid blocks unconditionally ──────────────────
+
+describe('TC-PI-07: priority >= 100 forbid blocks unconditionally — HITL not dispatched', () => {
+  it('priority-100 forbid returns block without dispatching HITL', async () => {
+    const manager = new ApprovalManager();
+    const capStore = new Map<string, Capability>();
+    const opts = makeDispatchOpts(manager, capStore, matchAllHitlConfig);
+    const issueCapSpy = vi.spyOn(opts, 'issueCapability');
+
+    const result = await runWithHitl(
+      deleteCtx,
+      permitStage1,
+      unconditionalForbidStage2,
+      new EventEmitter(),
+      opts,
+    );
+
+    expect(result.decision.effect).toBe('forbid');
+    expect(result.decision.reason).toBe('blocked unconditionally');
+    expect(manager.size).toBe(0);
+    expect(issueCapSpy).not.toHaveBeenCalled();
+  });
+
+  it('priority-200 forbid blocks unconditionally even when HITL policy matches', async () => {
+    const manager = new ApprovalManager();
+    const capStore = new Map<string, Capability>();
+    const opts = makeDispatchOpts(manager, capStore, matchAllHitlConfig);
+
+    const result = await runWithHitl(
+      deleteCtx,
+      permitStage1,
+      highPriorityForbidStage2,
+      new EventEmitter(),
+      opts,
+    );
+
+    expect(result.decision.effect).toBe('forbid');
+    expect(manager.size).toBe(0);
+  });
+
+  it('forbid with no priority blocks unconditionally', async () => {
+    const manager = new ApprovalManager();
+    const capStore = new Map<string, Capability>();
+    const opts = makeDispatchOpts(manager, capStore, matchAllHitlConfig);
+
+    const result = await runWithHitl(
+      deleteCtx,
+      permitStage1,
+      noPriorityForbidStage2,
+      new EventEmitter(),
+      opts,
+    );
+
+    expect(result.decision.effect).toBe('forbid');
+    expect(manager.size).toBe(0);
+  });
+
+  it('priority-90 forbid with no matching HITL policy blocks without dispatching', async () => {
+    const manager = new ApprovalManager();
+    const capStore = new Map<string, Capability>();
+    // matchNothingHitlConfig does not match filesystem.delete
+    const opts = makeDispatchOpts(manager, capStore, matchNothingHitlConfig);
+
+    const result = await runWithHitl(
+      deleteCtx,
+      permitStage1,
+      hitlGatedForbidStage2,
+      new EventEmitter(),
+      opts,
+    );
+
+    expect(result.decision.effect).toBe('forbid');
+    expect(manager.size).toBe(0);
+  });
+});
+
+// ─── TC-PI-08: priority < 100 + HITL match → dispatch → approve → re-run ─────
+
+describe('TC-PI-08: priority-90 forbid + HITL policy match dispatches HITL; approval permits', () => {
+  it('approval resolves with permit on the re-run', async () => {
+    const manager = new ApprovalManager();
+    const capStore = new Map<string, Capability>();
+    const stage1 = makeRealStage1(manager, capStore);
+    const opts = makeDispatchOpts(manager, capStore, matchFilesystemHitlConfig);
+
+    const runPromise = runWithHitl(
+      deleteCtx,
+      stage1,
+      hitlGatedForbidStage2,
+      new EventEmitter(),
+      opts,
+    );
+
+    // Flush microtasks so runWithHitl reaches await handle.promise
+    await flushPromises();
+
+    const pending = manager.listPending();
+    expect(pending).toHaveLength(1);
+    manager.resolveApproval(pending[0]!.token, 'approved');
+
+    const result = await runPromise;
+
+    expect(result.decision.effect).toBe('permit');
+  });
+
+  it('approval causes capability to be minted before the re-run', async () => {
+    const manager = new ApprovalManager();
+    const capStore = new Map<string, Capability>();
+    const stage1 = makeRealStage1(manager, capStore);
+    const opts = makeDispatchOpts(manager, capStore, matchFilesystemHitlConfig);
+    const issueCapSpy = vi.spyOn(opts, 'issueCapability');
+
+    const runPromise = runWithHitl(
+      deleteCtx,
+      stage1,
+      hitlGatedForbidStage2,
+      new EventEmitter(),
+      opts,
+    );
+
+    await flushPromises();
+    const pending = manager.listPending();
+    manager.resolveApproval(pending[0]!.token, 'approved');
+    await runPromise;
+
+    // issueCapability was called exactly once — before the re-run
+    expect(issueCapSpy).toHaveBeenCalledOnce();
+    expect(issueCapSpy).toHaveBeenCalledWith(
+      deleteCtx.action_class,
+      deleteCtx.target,
+      deleteCtx.payload_hash,
+      undefined,
+    );
+  });
+
+  it('re-run emits a permit executionEvent after approval', async () => {
+    const manager = new ApprovalManager();
+    const capStore = new Map<string, Capability>();
+    const stage1 = makeRealStage1(manager, capStore);
+    const opts = makeDispatchOpts(manager, capStore, matchFilesystemHitlConfig);
+
+    const emitter = new EventEmitter();
+    const events: Array<Record<string, unknown>> = [];
+    emitter.on('executionEvent', (e) => events.push(e as Record<string, unknown>));
+
+    const runPromise = runWithHitl(deleteCtx, stage1, hitlGatedForbidStage2, emitter, opts);
+
+    await flushPromises();
+    const pending = manager.listPending();
+    manager.resolveApproval(pending[0]!.token, 'approved');
+    await runPromise;
+
+    // Two events: one for the initial forbid run, one for the re-run permit
+    const permitEvents = events.filter(
+      (e) => (e['decision'] as Record<string, unknown>)['effect'] === 'permit',
+    );
+    expect(permitEvents).toHaveLength(1);
+  });
+
+  it('only priority-90 forbids are overridden on the re-run; priority-100 forbids still block', async () => {
+    const manager = new ApprovalManager();
+    const capStore = new Map<string, Capability>();
+    const stage1 = makeRealStage1(manager, capStore);
+    // stage2 that first returns priority-90 forbid, then priority-100 on re-run
+    let callCount = 0;
+    const mixedStage2: Stage2Fn = async () => {
+      callCount++;
+      if (callCount === 1) {
+        // First call (initial pipeline run): priority-90 → HITL-gated
+        return { effect: 'forbid', reason: 'hitl-gated rule', stage: 'stage2', priority: 90 };
+      }
+      // Second call (re-run after approval): priority-100 → unconditional block
+      return { effect: 'forbid', reason: 'unconditional block fires on re-run', stage: 'stage2', priority: 100 };
+    };
+    const opts = makeDispatchOpts(manager, capStore, matchAllHitlConfig);
+
+    const runPromise = runWithHitl(deleteCtx, stage1, mixedStage2, new EventEmitter(), opts);
+
+    await flushPromises();
+    const pending = manager.listPending();
+    manager.resolveApproval(pending[0]!.token, 'approved');
+    const result = await runPromise;
+
+    // The re-run's stage2 returns priority-100 forbid — approvedStage2 wrapper
+    // does not override it because priority >= UNCONDITIONAL_FORBID_PRIORITY.
+    expect(result.decision.effect).toBe('forbid');
+    expect(result.decision.reason).toBe('unconditional block fires on re-run');
+  });
+});
+
+// ─── TC-PI-09: HITL deny returns block with pipeline reason ───────────────────
+
+describe('TC-PI-09: HITL deny returns forbid with original pipeline reason', () => {
+  it('denied approval returns forbid with original pipeline reason', async () => {
+    const manager = new ApprovalManager();
+    const capStore = new Map<string, Capability>();
+    const opts = makeDispatchOpts(manager, capStore, matchFilesystemHitlConfig);
+
+    const runPromise = runWithHitl(
+      deleteCtx,
+      permitStage1,
+      hitlGatedForbidStage2,
+      new EventEmitter(),
+      opts,
+    );
+
+    await flushPromises();
+    const pending = manager.listPending();
+    manager.resolveApproval(pending[0]!.token, 'denied');
+
+    const result = await runPromise;
+
+    expect(result.decision.effect).toBe('forbid');
+    expect(result.decision.reason).toBe('filesystem.delete requires human approval');
+    expect(result.decision.stage).toBe('hitl');
+  });
+
+  it('denied approval does not dispatch issueCapability', async () => {
+    const manager = new ApprovalManager();
+    const capStore = new Map<string, Capability>();
+    const opts = makeDispatchOpts(manager, capStore, matchFilesystemHitlConfig);
+    const issueCapSpy = vi.spyOn(opts, 'issueCapability');
+
+    const runPromise = runWithHitl(
+      deleteCtx,
+      permitStage1,
+      hitlGatedForbidStage2,
+      new EventEmitter(),
+      opts,
+    );
+
+    await flushPromises();
+    const pending = manager.listPending();
+    manager.resolveApproval(pending[0]!.token, 'denied');
+    await runPromise;
+
+    expect(issueCapSpy).not.toHaveBeenCalled();
+  });
+
+  it('denied approval token is consumed in the approval manager', async () => {
+    const manager = new ApprovalManager();
+    const capStore = new Map<string, Capability>();
+    const opts = makeDispatchOpts(manager, capStore, matchFilesystemHitlConfig);
+
+    const runPromise = runWithHitl(
+      deleteCtx,
+      permitStage1,
+      hitlGatedForbidStage2,
+      new EventEmitter(),
+      opts,
+    );
+
+    await flushPromises();
+    const pending = manager.listPending();
+    const token = pending[0]!.token;
+    manager.resolveApproval(token, 'denied');
+    await runPromise;
+
+    expect(manager.isConsumed(token)).toBe(true);
+    expect(manager.size).toBe(0);
+  });
+});
+
+// ─── TC-PI-10: Capability minted before re-run ────────────────────────────────
+
+describe('TC-PI-10: capability minted before re-run', () => {
+  it('issued capability is in the store when stage1 validates it on re-run', async () => {
+    const manager = new ApprovalManager();
+    const capStore = new Map<string, Capability>();
+    const stage1 = makeRealStage1(manager, capStore);
+    const opts = makeDispatchOpts(manager, capStore, matchFilesystemHitlConfig);
+
+    // Track when issueCapability is called vs when stage1 runs on re-run
+    const callOrder: string[] = [];
+    const origIssue = opts.issueCapability;
+    opts.issueCapability = async (...args) => {
+      callOrder.push('issueCapability');
+      return origIssue(...args);
+    };
+
+    // Wrap stage1 to detect re-run
+    let stage1CallCount = 0;
+    const trackingStage1: Stage1Fn = async (pCtx) => {
+      stage1CallCount++;
+      if (stage1CallCount > 1) {
+        callOrder.push('stage1-rerun');
+      }
+      return stage1(pCtx);
+    };
+
+    const runPromise = runWithHitl(
+      deleteCtx,
+      trackingStage1,
+      hitlGatedForbidStage2,
+      new EventEmitter(),
+      opts,
+    );
+
+    await flushPromises();
+    const pending = manager.listPending();
+    manager.resolveApproval(pending[0]!.token, 'approved');
+    await runPromise;
+
+    // issueCapability must appear before stage1-rerun
+    const issueIdx = callOrder.indexOf('issueCapability');
+    const rerunIdx = callOrder.indexOf('stage1-rerun');
+    expect(issueIdx).toBeGreaterThanOrEqual(0);
+    expect(rerunIdx).toBeGreaterThan(issueIdx);
+  });
+
+  it('capability in store has correct binding for the action', async () => {
+    const manager = new ApprovalManager();
+    const capStore = new Map<string, Capability>();
+    const stage1 = makeRealStage1(manager, capStore);
+    const opts = makeDispatchOpts(manager, capStore, matchFilesystemHitlConfig);
+
+    const runPromise = runWithHitl(
+      deleteCtx,
+      stage1,
+      hitlGatedForbidStage2,
+      new EventEmitter(),
+      opts,
+    );
+
+    await flushPromises();
+    const pending = manager.listPending();
+    manager.resolveApproval(pending[0]!.token, 'approved');
+    const result = await runPromise;
+
+    expect(result.decision.effect).toBe('permit');
+
+    // Verify the capability that was issued has the correct binding
+    const caps = [...capStore.values()];
+    expect(caps).toHaveLength(1);
+    const expectedBinding = computeBinding(
+      deleteCtx.action_class,
+      deleteCtx.target,
+      deleteCtx.payload_hash,
+    );
+    expect(caps[0]!.binding).toBe(expectedBinding);
   });
 });
