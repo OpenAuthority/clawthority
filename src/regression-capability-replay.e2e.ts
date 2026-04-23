@@ -10,6 +10,8 @@
  *  TC-REPLAY-03  SHA-256 binding determinism and param-specificity (unit check)
  *  TC-REPLAY-04  consumed token + original P1 → capability already consumed
  *  TC-REPLAY-05  executionEvent audit trail captures both replay rejections
+ *  TC-REPLAY-06  expired capability token (past TTL) → capability expired
+ *  TC-REPLAY-07  executionEvent audit trail captures expired token rejection
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
@@ -86,6 +88,35 @@ class HitlTestHarness {
   /** Records that a capability was exercised (moves token to consumed set). */
   markConsumed(token: string): void {
     this.approvalManager.resolveApproval(token, 'approved');
+  }
+
+  /**
+   * Issues an already-expired capability (expires_at in the past).
+   * Used to test TTL expiration rejection without relying on real-time delays.
+   */
+  approveExpired(opts: ApproveNextOpts): string {
+    const handle = this.approvalManager.createApprovalRequest({
+      toolName: opts.action_class,
+      agentId: 'test-agent',
+      channelId: 'test-channel',
+      policy: TEST_POLICY,
+      action_class: opts.action_class,
+      target: opts.target,
+      payload_hash: opts.payload_hash,
+    });
+
+    const now = Date.now();
+    const capability: Capability = {
+      approval_id: handle.token,
+      binding: computeBinding(opts.action_class, opts.target, opts.payload_hash),
+      action_class: opts.action_class,
+      target: opts.target,
+      issued_at: now - 3_600_000,  // issued 1 hour ago
+      expires_at: now - 1,         // expired 1 ms ago
+    };
+
+    this.issued.set(handle.token, capability);
+    return handle.token;
   }
 
   shutdown(): void {
@@ -326,6 +357,69 @@ describe('Capability token replay regression', () => {
       for (const evt of auditEvents) {
         expect(evt.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
       }
+    },
+  );
+
+  // ── TC-REPLAY-06 ──────────────────────────────────────────────────────────
+
+  it(
+    'TC-REPLAY-06: presenting an expired capability token (past TTL) is rejected (capability expired)',
+    async () => {
+      const hashP1 = computePayloadHash(TOOL_NAME, PARAMS_P1);
+      // Issue a capability that is already past its TTL.
+      const token = harness.approveExpired({ action_class: ACTION, target: TARGET, payload_hash: hashP1 });
+
+      const result = await runPipeline(
+        {
+          action_class: ACTION,
+          target: TARGET,
+          payload_hash: hashP1,
+          hitl_mode: 'per_request',
+          approval_id: token,
+          rule_context: { agentId: 'agent-1', channel: 'default' },
+        },
+        harness.stage1,
+        permissiveStage2,
+        emitter,
+      );
+
+      expect(result.decision.effect).toBe('forbid');
+      expect(result.decision.reason).toBe('capability expired');
+      expect(result.decision.stage).toBe('stage1');
+    },
+  );
+
+  // ── TC-REPLAY-07 ──────────────────────────────────────────────────────────
+
+  it(
+    'TC-REPLAY-07: audit trail (executionEvent) captures expired token rejection with correct reason',
+    async () => {
+      const auditEvents: Array<{ decision: CeeDecision; timestamp: string }> = [];
+      emitter.on('executionEvent', (evt) => auditEvents.push(evt));
+
+      const hashP1 = computePayloadHash(TOOL_NAME, PARAMS_P1);
+      const expiredToken = harness.approveExpired({ action_class: ACTION, target: TARGET, payload_hash: hashP1 });
+
+      await runPipeline(
+        {
+          action_class: ACTION,
+          target: TARGET,
+          payload_hash: hashP1,
+          hitl_mode: 'per_request',
+          approval_id: expiredToken,
+          rule_context: { agentId: 'agent-1', channel: 'default' },
+        },
+        harness.stage1,
+        permissiveStage2,
+        emitter,
+      );
+
+      // One audit event must have been emitted for the expired-token rejection.
+      expect(auditEvents).toHaveLength(1);
+      expect(auditEvents[0]!.decision.effect).toBe('forbid');
+      expect(auditEvents[0]!.decision.reason).toBe('capability expired');
+      expect(auditEvents[0]!.decision.stage).toBe('stage1');
+      expect(auditEvents[0]!.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
     },
   );
 });
