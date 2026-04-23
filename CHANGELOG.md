@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### `rotate_secret` — credential rotation tool (CS-03)
+
+`rotate_secret` generates a cryptographically-random 256-bit hex value for an existing secret and writes it to the configured backend store atomically. It maps to the `credential.rotate` action class (`risk_tier: 'critical'`, `default_hitl_mode: 'per_request'`).
+
+Security invariants:
+
+- The generated value is **never** written to the audit log — only the key name, store identifier, and value length appear in log entries.
+- An absent or empty allowlist causes all key access to be denied (controlled by `CLAWTHORITY_SECRET_ALLOWLIST` env var or the `allowlist` option).
+- The key must already exist in the store — rotation does not create new keys (`key-not-found` error).
+- The HITL capability token is consumed **before** the write so it cannot be replayed even if the process is killed during the operation.
+
+Gate order: allowlist check → HITL token presence → replay protection → key existence check → generate + consume token → write.
+
 #### `unsafe_admin_exec` — emergency admin shell escape hatch (CS-11)
 
 `unsafe_admin_exec` is a privileged tool that maps to the `shell.exec` action class and provides an audited emergency escape hatch for administrative shell access. It is inert by default and requires all of the following to execute:
