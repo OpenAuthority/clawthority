@@ -128,6 +128,39 @@ export interface UnclassifiedWidgetData {
   dateRange: { from: string; to: string };
 }
 
+// ─── Legacy Rules Widget types ────────────────────────────────────────────────
+
+/** A single bucketed data point for the legacy-rules time series. */
+export interface LegacyRulesDataPoint {
+  /** ISO date string (YYYY-MM-DD). */
+  date: string;
+  count: number;
+}
+
+/** Per-rule breakdown row returned by GET /api/audit/legacy-rules. */
+export interface LegacyRuleBreakdown {
+  /** Rule number (4–8). */
+  rule: number;
+  count: number;
+  /** Per-date breakdown for this rule. */
+  series: LegacyRulesDataPoint[];
+}
+
+/** Response shape from GET /api/audit/legacy-rules. */
+export interface LegacyRulesWidgetData {
+  /** Aggregate daily hit counts across all rules 4–8. */
+  series: LegacyRulesDataPoint[];
+  /** Per-rule breakdown, sorted by count descending. */
+  byRule: LegacyRuleBreakdown[];
+  totalCount: number;
+  dateRange: { from: string; to: string };
+  /**
+   * Number of trailing days (from `dateRange.to` backwards) with zero hits.
+   * Exit criterion: retire rules when this reaches 30.
+   */
+  consecutiveZeroDays: number;
+}
+
 /** An entry in the audit trail produced by batch approval operations. */
 export interface BatchAuditEntry {
   /** ISO 8601 timestamp when the batch decision was made. */

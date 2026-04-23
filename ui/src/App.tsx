@@ -11,9 +11,10 @@
 
 import { useCallback, useState } from 'react';
 import { BatchApprovalPanel } from './components/BatchApprovalPanel.js';
+import { LegacyRulesWidget } from './components/LegacyRulesWidget.js';
 import { RuleDeleteModal } from './components/RuleDeleteModal.js';
 import { UnclassifiedToolWidget } from './components/UnclassifiedToolWidget.js';
-import type { AuditHit, BatchAuditEntry, BatchingConfig, PendingApprovalItem, Rule, UnclassifiedWidgetData } from './types.js';
+import type { AuditHit, BatchAuditEntry, BatchingConfig, LegacyRulesWidgetData, PendingApprovalItem, Rule, UnclassifiedWidgetData } from './types.js';
 
 // ─── Demo data ────────────────────────────────────────────────────────────────
 
@@ -303,6 +304,67 @@ function buildDemoUnclassifiedData(): UnclassifiedWidgetData {
 
 const DEMO_UNCLASSIFIED_DATA: UnclassifiedWidgetData = buildDemoUnclassifiedData();
 
+// ─── Demo data: legacy rules widget ───────────────────────────────────────────
+
+/** Generates 30 days of demo Rules 4–8 data with 5 trailing zero days. */
+function buildDemoLegacyRulesData(): LegacyRulesWidgetData {
+  const today = new Date();
+  const days = 30;
+  const rules = [4, 5, 6, 7, 8];
+  // Last 5 days intentionally have 0 hits to demonstrate consecutive-zero tracking
+  const trailingZeroDays = 5;
+
+  const seriesMap = new Map<string, number>();
+  const ruleSeriesMap = new Map<number, Map<string, number>>();
+
+  for (let d = days - 1; d >= trailingZeroDays; d--) {
+    const date = new Date(today.getTime() - d * 24 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10);
+
+    for (const rule of rules) {
+      const ruleOffset = rule - 4;
+      const count =
+        d % 7 === 0 ? ruleOffset + 2 : d % 3 === 0 ? ruleOffset + 1 : ruleOffset > 1 ? 1 : 0;
+      if (count === 0) continue;
+
+      seriesMap.set(date, (seriesMap.get(date) ?? 0) + count);
+
+      const rMap = ruleSeriesMap.get(rule) ?? new Map<string, number>();
+      rMap.set(date, (rMap.get(date) ?? 0) + count);
+      ruleSeriesMap.set(rule, rMap);
+    }
+  }
+
+  const series = [...seriesMap.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, count]) => ({ date, count }));
+
+  const byRule = rules
+    .filter((rule) => ruleSeriesMap.has(rule))
+    .map((rule) => {
+      const rMap = ruleSeriesMap.get(rule)!;
+      return {
+        rule,
+        count: [...rMap.values()].reduce((a, b) => a + b, 0),
+        series: [...rMap.entries()]
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([date, count]) => ({ date, count })),
+      };
+    })
+    .sort((a, b) => b.count - a.count);
+
+  const totalCount = byRule.reduce((acc, b) => acc + b.count, 0);
+  const from = new Date(today.getTime() - (days - 1) * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+  const to = today.toISOString().slice(0, 10);
+
+  return { series, byRule, totalCount, dateRange: { from, to }, consecutiveZeroDays: trailingZeroDays };
+}
+
+const DEMO_LEGACY_RULES_DATA: LegacyRulesWidgetData = buildDemoLegacyRulesData();
+
 // ─── App ──────────────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -314,6 +376,7 @@ export default function App() {
   const [auditLog, setAuditLog] = useState<BatchAuditEntry[]>([]);
 
   const [unclassifiedData, setUnclassifiedData] = useState<UnclassifiedWidgetData>(DEMO_UNCLASSIFIED_DATA);
+  const [legacyRulesData, setLegacyRulesData] = useState<LegacyRulesWidgetData>(DEMO_LEGACY_RULES_DATA);
 
   const pendingRule = rules.find((r) => r.id === pendingDeleteId) ?? null;
 
@@ -438,6 +501,36 @@ export default function App() {
     (_from: string, _to: string, _toolName?: string) => {
       // In a real integration: window.location.href = `/api/audit/unclassified?from=${_from}&to=${_to}${_toolName ? `&toolName=${encodeURIComponent(_toolName)}` : ''}&export=csv`
       alert('Export: in a live deployment this downloads unclassified-tools.csv from the audit API.');
+    },
+    [],
+  );
+
+  const handleLegacyRulesFilterChange = useCallback((from: string, to: string) => {
+    const filtered: LegacyRulesWidgetData = {
+      ...DEMO_LEGACY_RULES_DATA,
+      series: DEMO_LEGACY_RULES_DATA.series.filter((p) => p.date >= from && p.date <= to),
+      byRule: DEMO_LEGACY_RULES_DATA.byRule
+        .map((b) => ({
+          ...b,
+          series: b.series.filter((p) => p.date >= from && p.date <= to),
+          count: b.series
+            .filter((p) => p.date >= from && p.date <= to)
+            .reduce((acc, p) => acc + p.count, 0),
+        }))
+        .filter((b) => b.count > 0),
+      totalCount: DEMO_LEGACY_RULES_DATA.series
+        .filter((p) => p.date >= from && p.date <= to)
+        .reduce((acc, p) => acc + p.count, 0),
+      dateRange: { from, to },
+      consecutiveZeroDays: DEMO_LEGACY_RULES_DATA.consecutiveZeroDays,
+    };
+    setLegacyRulesData(filtered);
+  }, []);
+
+  const handleLegacyRulesExport = useCallback(
+    (_from: string, _to: string, _rule?: number) => {
+      // In a real integration: window.location.href = `/api/audit/legacy-rules?from=${_from}&to=${_to}${_rule !== undefined ? `&rule=${_rule}` : ''}&export=csv`
+      alert('Export: in a live deployment this downloads legacy-rules.csv from the audit API.');
     },
     [],
   );
@@ -639,6 +732,22 @@ export default function App() {
           data={unclassifiedData}
           onFilterChange={handleUnclassifiedFilterChange}
           onExport={handleUnclassifiedExport}
+        />
+      </div>
+
+      {/* ── Legacy Rules 4–8 Usage Widget ─────────────────────────────────── */}
+      <div style={{ marginTop: '2.5rem' }}>
+        <h2 style={{ fontSize: '1.125rem', fontWeight: 600, marginBottom: '0.25rem' }}>
+          Legacy Rules 4–8 Usage
+        </h2>
+        <p style={{ color: '#6b7280', fontSize: '0.875rem', marginBottom: '1rem' }}>
+          Command-regex reclassification hits for deprecated rules. Track progress toward the
+          retirement exit criterion: 0 hits for 30 consecutive days.
+        </p>
+        <LegacyRulesWidget
+          data={legacyRulesData}
+          onFilterChange={handleLegacyRulesFilterChange}
+          onExport={handleLegacyRulesExport}
         />
       </div>
     </div>
