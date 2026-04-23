@@ -161,6 +161,37 @@ export interface LegacyRulesWidgetData {
   consecutiveZeroDays: number;
 }
 
+// ─── Unsafe Legacy Tools Widget types ────────────────────────────────────────
+
+/** Urgency classification derived from days remaining until a skill's deadline. */
+export type UnsafeLegacyStatus = 'overdue' | 'urgent' | 'ok' | 'no-deadline';
+
+/** A skill carrying an unsafe_legacy exemption. */
+export interface UnsafeLegacyTool {
+  skillName: string;
+  actionClass: string;
+  /** ISO date string (YYYY-MM-DD), or null if not specified. */
+  deadline: string | null;
+  reason: string | null;
+  /**
+   * Calendar days remaining until the deadline (negative = overdue).
+   * Null when no valid deadline is present.
+   */
+  daysRemaining: number | null;
+  status: UnsafeLegacyStatus;
+  /** Relative path to the skill's SKILL.md manifest. */
+  manifestPath: string;
+}
+
+/** Response shape from GET /api/skills/unsafe-legacy. */
+export interface UnsafeLegacyToolsData {
+  /** All skills with a truthy unsafe_legacy field, sorted by deadline proximity. */
+  tools: UnsafeLegacyTool[];
+  totalCount: number;
+  overdueCount: number;
+  urgentCount: number;
+}
+
 /** An entry in the audit trail produced by batch approval operations. */
 export interface BatchAuditEntry {
   /** ISO 8601 timestamp when the batch decision was made. */

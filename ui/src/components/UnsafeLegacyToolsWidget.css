@@ -1,0 +1,245 @@
+/* ─── UnsafeLegacyToolsWidget (ult-) ──────────────────────────────────────────
+   BEM-style prefix: ult-
+   Colour tokens consistent with lrw- and other dashboard components.
+   ──────────────────────────────────────────────────────────────────────────── */
+
+.ult-root {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 0.875rem;
+  color: #111827;
+  overflow: hidden;
+}
+
+/* ─── Header ──────────────────────────────────────────────────────────────── */
+
+.ult-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.875rem 1rem;
+  border-bottom: 1px solid #e5e7eb;
+  background: #f9fafb;
+}
+
+.ult-header__title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.ult-header__title {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: #111827;
+  margin: 0;
+}
+
+.ult-header__subtitle {
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+
+.ult-header__code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.7rem;
+  background: #f3f4f6;
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
+  color: #374151;
+}
+
+.ult-header__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* ─── Refresh button ──────────────────────────────────────────────────────── */
+
+.ult-btn-refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.3rem 0.75rem;
+  background: #ffffff;
+  color: #374151;
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  transition: background 0.1s, border-color 0.1s;
+}
+
+.ult-btn-refresh:hover {
+  background: #f3f4f6;
+  border-color: #9ca3af;
+}
+
+.ult-btn-refresh:focus-visible {
+  outline: 2px solid #6366f1;
+  outline-offset: 2px;
+}
+
+/* ─── Summary bar ─────────────────────────────────────────────────────────── */
+
+.ult-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.5rem 1rem;
+  background: #fafafa;
+  border-bottom: 1px solid #f3f4f6;
+  font-size: 0.8125rem;
+  color: #374151;
+}
+
+.ult-summary__item {
+  color: #374151;
+}
+
+.ult-summary__badge {
+  display: inline-block;
+  padding: 0.15em 0.6em;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border: 1px solid transparent;
+}
+
+.ult-summary__badge--overdue {
+  background: #fee2e2;
+  color: #b91c1c;
+  border-color: #fca5a5;
+}
+
+.ult-summary__badge--urgent {
+  background: #fffbeb;
+  color: #92400e;
+  border-color: #fde68a;
+}
+
+/* ─── Empty state ─────────────────────────────────────────────────────────── */
+
+.ult-empty {
+  padding: 2.5rem 1rem;
+  text-align: center;
+  color: #9ca3af;
+  font-size: 0.8125rem;
+  font-style: italic;
+}
+
+.ult-empty code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.8125rem;
+  font-style: normal;
+  background: #f3f4f6;
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
+  color: #374151;
+}
+
+/* ─── Table ───────────────────────────────────────────────────────────────── */
+
+.ult-table-wrap {
+  overflow-x: auto;
+}
+
+.ult-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+
+.ult-table__head-row {
+  background: #f9fafb;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.ult-table__head-cell {
+  padding: 0.5rem 1rem;
+  text-align: left;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #6b7280;
+  white-space: nowrap;
+}
+
+.ult-table__row {
+  border-top: 1px solid #f3f4f6;
+  transition: background 0.1s;
+}
+
+.ult-table__row:hover {
+  background: #f9fafb;
+}
+
+.ult-table__cell {
+  padding: 0.625rem 1rem;
+  vertical-align: middle;
+  color: #374151;
+}
+
+.ult-table__cell--mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.8rem;
+  color: #374151;
+}
+
+/* Days remaining — normal */
+.ult-table__cell--days {
+  font-variant-numeric: tabular-nums;
+  color: #374151;
+  white-space: nowrap;
+}
+
+/* Days remaining — urgent or overdue */
+.ult-table__cell--days-urgent {
+  font-weight: 600;
+  color: #b91c1c;
+}
+
+.ult-table__cell--status {
+  white-space: nowrap;
+}
+
+/* ─── Tool name + manifest path ───────────────────────────────────────────── */
+
+.ult-tool-name {
+  display: block;
+  font-weight: 600;
+  color: #111827;
+  font-size: 0.875rem;
+}
+
+.ult-manifest-path {
+  display: block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.7rem;
+  color: #9ca3af;
+  margin-top: 0.1rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 24ch;
+}
+
+/* ─── Status badge ────────────────────────────────────────────────────────── */
+
+.ult-status-badge {
+  display: inline-block;
+  padding: 0.2em 0.6em;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}

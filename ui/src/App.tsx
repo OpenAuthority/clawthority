@@ -14,7 +14,8 @@ import { BatchApprovalPanel } from './components/BatchApprovalPanel.js';
 import { LegacyRulesWidget } from './components/LegacyRulesWidget.js';
 import { RuleDeleteModal } from './components/RuleDeleteModal.js';
 import { UnclassifiedToolWidget } from './components/UnclassifiedToolWidget.js';
-import type { AuditHit, BatchAuditEntry, BatchingConfig, LegacyRulesWidgetData, PendingApprovalItem, Rule, UnclassifiedWidgetData } from './types.js';
+import { UnsafeLegacyToolsWidget } from './components/UnsafeLegacyToolsWidget.js';
+import type { AuditHit, BatchAuditEntry, BatchingConfig, LegacyRulesWidgetData, PendingApprovalItem, Rule, UnclassifiedWidgetData, UnsafeLegacyToolsData } from './types.js';
 
 // ─── Demo data ────────────────────────────────────────────────────────────────
 
@@ -365,6 +366,78 @@ function buildDemoLegacyRulesData(): LegacyRulesWidgetData {
 
 const DEMO_LEGACY_RULES_DATA: LegacyRulesWidgetData = buildDemoLegacyRulesData();
 
+// ─── Demo data: unsafe legacy tools widget ────────────────────────────────────
+
+const today = new Date();
+const isoToday = today.toISOString().slice(0, 10);
+
+function offsetDate(days: number): string {
+  const d = new Date(today.getTime() + days * 24 * 60 * 60 * 1000);
+  return d.toISOString().slice(0, 10);
+}
+
+const DEMO_UNSAFE_LEGACY_TOOLS_DATA: UnsafeLegacyToolsData = {
+  tools: [
+    {
+      skillName: 'deploy_infra',
+      actionClass: 'shell.exec',
+      deadline: offsetDate(-14),
+      reason: 'Terraform wrapper pending action-class migration',
+      daysRemaining: -14,
+      status: 'overdue',
+      manifestPath: 'skills/deploy_infra/SKILL.md',
+    },
+    {
+      skillName: 'run_migrations',
+      actionClass: 'shell.exec',
+      deadline: isoToday,
+      reason: null,
+      daysRemaining: 0,
+      status: 'urgent',
+      manifestPath: 'skills/run_migrations/SKILL.md',
+    },
+    {
+      skillName: 'build_docker',
+      actionClass: 'shell.exec',
+      deadline: offsetDate(12),
+      reason: 'Docker CLI integration in progress (E-06)',
+      daysRemaining: 12,
+      status: 'urgent',
+      manifestPath: 'skills/build_docker/SKILL.md',
+    },
+    {
+      skillName: 'sync_s3',
+      actionClass: 'shell.exec',
+      deadline: offsetDate(25),
+      reason: 'Awaiting storage.upload action class in action-registry',
+      daysRemaining: 25,
+      status: 'urgent',
+      manifestPath: 'skills/sync_s3/SKILL.md',
+    },
+    {
+      skillName: 'lint_codebase',
+      actionClass: 'shell.exec',
+      deadline: offsetDate(60),
+      reason: 'Low-risk read-only lint runner; deadline extended by operator',
+      daysRemaining: 60,
+      status: 'ok',
+      manifestPath: 'skills/lint_codebase/SKILL.md',
+    },
+    {
+      skillName: 'legacy_report',
+      actionClass: 'shell.exec',
+      deadline: null,
+      reason: null,
+      daysRemaining: null,
+      status: 'no-deadline',
+      manifestPath: 'skills/legacy_report/SKILL.md',
+    },
+  ],
+  totalCount: 6,
+  overdueCount: 1,
+  urgentCount: 3,
+};
+
 // ─── App ──────────────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -377,6 +450,7 @@ export default function App() {
 
   const [unclassifiedData, setUnclassifiedData] = useState<UnclassifiedWidgetData>(DEMO_UNCLASSIFIED_DATA);
   const [legacyRulesData, setLegacyRulesData] = useState<LegacyRulesWidgetData>(DEMO_LEGACY_RULES_DATA);
+  const [unsafeLegacyData] = useState<UnsafeLegacyToolsData>(DEMO_UNSAFE_LEGACY_TOOLS_DATA);
 
   const pendingRule = rules.find((r) => r.id === pendingDeleteId) ?? null;
 
@@ -749,6 +823,18 @@ export default function App() {
           onFilterChange={handleLegacyRulesFilterChange}
           onExport={handleLegacyRulesExport}
         />
+      </div>
+
+      {/* ── Unsafe Legacy Tools Widget ─────────────────────────────────────── */}
+      <div style={{ marginTop: '2.5rem' }}>
+        <h2 style={{ fontSize: '1.125rem', fontWeight: 600, marginBottom: '0.25rem' }}>
+          Unsafe Legacy Tools
+        </h2>
+        <p style={{ color: '#6b7280', fontSize: '0.875rem', marginBottom: '1rem' }}>
+          Skills with an <code style={{ fontFamily: 'monospace', fontSize: '0.85em' }}>unsafe_legacy</code> exemption.
+          Track deadlines and remediate overdue or urgent entries.
+        </p>
+        <UnsafeLegacyToolsWidget data={unsafeLegacyData} />
       </div>
     </div>
   );
