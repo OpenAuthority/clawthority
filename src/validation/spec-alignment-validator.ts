@@ -425,10 +425,18 @@ export class SpecAlignmentValidator {
   /**
    * Paths allowed to use node:child_process / spawnSync for SA-S-01 and
    * SA-S-02. FEP's shell-prohibition targets *unstructured* shell execution
-   * (command injection surface). These files invoke external binaries with
-   * explicit argv arrays and `{ shell: false }` — the safe pattern — or are
-   * meta-level lint/release validators that must reference the forbidden
-   * API names as data.
+   * (command injection surface). Entries here fall into three categories:
+   *
+   *   1. Safe-pattern exec — external binaries invoked with explicit argv
+   *      arrays and `{ shell: false }`, no command-injection surface.
+   *   2. Meta-level validators/build scripts that must reference the
+   *      forbidden API names as data to detect them in other files.
+   *   3. Designed escape hatches — single, audited, HITL-gated tools whose
+   *      documented purpose is exactly to provide controlled shell access
+   *      when all other mechanisms fail. These are opt-in via env var,
+   *      payload-bound at the pipeline layer, and must be reviewed on
+   *      every code change. Adding a new entry to this bucket requires an
+   *      RFC per docs/rfc/README.md.
    */
   private static readonly CHILD_PROCESS_ALLOWLIST: readonly RegExp[] = [
     // Git tools: spawnSync('git', [argv], { shell: false }) — explicit argv,
@@ -437,6 +445,12 @@ export class SpecAlignmentValidator {
     // Meta-level validators that must reference the forbidden API names
     // as strings/regex sources to detect them in other files.
     /^src\/validation\/spec-alignment-validator\.ts$/,
+    // Designed escape hatch (CS-11): unsafe_admin_exec is the sole opt-in
+    // path for controlled shell execution. Inert unless
+    // CLAWTHORITY_ENABLE_UNSAFE_ADMIN_EXEC=1, always HITL-gated, always
+    // audit-logged with justification, capability bound to the exact
+    // command string via SHA-256 payload hash at pipeline Stage 1.
+    /^src\/tools\/unsafe_admin_exec\/unsafe-admin-exec\.ts$/,
   ];
 
   private static isAllowlisted(relPath: string): boolean {
