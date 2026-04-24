@@ -21,6 +21,24 @@ Key behaviours:
 - A pre-constructed `envVault` singleton is exported for use by credential tools that resolve to the `env` store.
 - `@experimental` — same stability guarantee as `FileCredentialVault`; avoid hard dependencies outside the W2 workstream.
 
+#### `store_secret` — file vault credential storage tool (T160)
+
+`store_secret` saves a secret value to a file-based credential store and maps to the `credential.write` action class (`risk_tier: 'critical'`, `default_hitl_mode: 'per_request'`). The file vault is the only supported provider because env is read-only by nature. Accepts `key` (required), `value` (required), and `path` (optional — path to the JSON credentials file; created if absent).
+
+Security invariants:
+
+- The supplied value is **never** written to the audit log — only key name, backend identifier, and value length appear in log entries.
+- An absent or empty allowlist causes all key access to be denied (fail-closed; controlled by `CLAWTHORITY_SECRET_ALLOWLIST` env var or the `allowlist` option).
+- The HITL capability token is consumed **before** the write so it cannot be replayed even if the process is killed immediately after the operation.
+- Only the file vault provider is supported; callers that omit both `path` and an injected backend receive a `write-error` before any gate check.
+- Backends are injected via options, enabling tests to supply lightweight in-memory stubs (`MemorySecretBackend`) without file I/O.
+
+Gate order: backend resolution → allowlist check → HITL token presence → replay protection → consume token → write → return.
+
+#### `WritableFileSecretBackend` — writable file-based secret backend (T160)
+
+`WritableFileSecretBackend` (`src/tools/secrets/secret-backend.ts`) is a file-based `SecretBackend` that persists secrets to a local JSON credentials file. Unlike `FileCredentialVault` (read-only), it supports `set()` by writing the entire updated credentials map back to disk via `writeFileSync` after each mutation. Use `WritableFileSecretBackend.load(path)` to construct from an existing file (empty backend is returned when the file is absent). Validation ensures the file contains a flat string-to-string record before loading.
+
 #### `list_secrets` — credential enumeration tool (T89)
 
 `list_secrets` enumerates the names of secrets present in a configured backend store and maps to the `credential.list` action class (`risk_tier: 'high'`, `default_hitl_mode: 'per_request'`). Only key names are returned — values are never retrieved or exposed. Supported built-in backends: `env` (checks `process.env`) and any injected `SecretBackend`.

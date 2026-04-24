@@ -1,5 +1,5 @@
 /**
- * Secret backend abstractions shared by read_secret, write_secret, and rotate_secret.
+ * Secret backend abstractions shared by read_secret, write_secret, rotate_secret, and store_secret.
  *
  * Backends are injected into each tool function via options, enabling tests to
  * supply lightweight in-memory stubs without touching process.env or external
@@ -7,6 +7,7 @@
  *
  * Supported built-in backends:
  *   env    — reads/writes process.env; the default when no store is specified.
+ *   file   — reads/writes a local JSON credentials file (WritableFileSecretBackend).
  *
  * The allowlist restricts which keys any secret tool may access. When injected
  * via options the supplied value takes precedence; otherwise the implementation
@@ -15,6 +16,7 @@
  */
 
 import { randomBytes } from 'node:crypto';
+import { readFileSync, writeFileSync } from 'node:fs';
 
 // ─── Backend interface ────────────────────────────────────────────────────────
 
@@ -153,6 +155,93 @@ const GENERATED_SECRET_BYTES = 32;
  */
 export function generateSecretValue(): string {
   return randomBytes(GENERATED_SECRET_BYTES).toString('hex');
+}
+
+// ─── File-based writable backend ─────────────────────────────────────────────
+
+/** Returns true when `obj` is a non-null, non-array object with only string values. */
+function isStringRecord(obj: unknown): obj is Record<string, string> {
+  if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) return false;
+  return Object.values(obj as Record<string, unknown>).every((v) => typeof v === 'string');
+}
+
+/**
+ * File-based secret backend that persists secrets to a local JSON credentials file.
+ *
+ * Credentials are loaded into memory at construction and written back to disk on
+ * every `set()` call using `writeFileSync`. Use {@link WritableFileSecretBackend.load}
+ * to construct an instance from an existing file, or the constructor to create a new
+ * empty backend with a given file path.
+ *
+ * The backing file must contain a flat JSON object mapping string keys to string
+ * values. Non-string values are rejected at load time.
+ *
+ * Used exclusively by `store_secret`. Inject a {@link MemorySecretBackend} in
+ * tests to avoid file I/O.
+ */
+export class WritableFileSecretBackend implements SecretBackend {
+  private readonly store: Map<string, string>;
+  private readonly filePath: string;
+
+  constructor(filePath: string, initial: Record<string, string> = {}) {
+    this.filePath = filePath;
+    this.store = new Map(Object.entries(initial));
+  }
+
+  /**
+   * Loads credentials from a JSON file at `filePath`.
+   *
+   * If the file does not exist, an empty backend is returned and the file will
+   * be created on the first `set()` call.
+   *
+   * @throws {Error} When the file exists but contains invalid JSON or a
+   *   non-flat-string-record value.
+   */
+  static load(filePath: string): WritableFileSecretBackend {
+    let content: string;
+    try {
+      content = readFileSync(filePath, 'utf-8');
+    } catch {
+      // File not found — start empty; created on first write.
+      return new WritableFileSecretBackend(filePath);
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(content) as unknown;
+    } catch (err) {
+      throw new Error(
+        `[file-backend] invalid JSON in credential file at ${filePath}: ${String(err)}`,
+      );
+    }
+
+    if (!isStringRecord(parsed)) {
+      throw new Error(
+        `[file-backend] credential file at ${filePath} must be a flat object with string values`,
+      );
+    }
+
+    return new WritableFileSecretBackend(filePath, parsed);
+  }
+
+  get(key: string): string | undefined {
+    return this.store.get(key);
+  }
+
+  /**
+   * Stores `value` under `key` and persists the entire credentials map to disk.
+   *
+   * @throws {Error} When the file write fails (e.g. permission denied).
+   */
+  set(key: string, value: string): void {
+    this.store.set(key, value);
+    const obj = Object.fromEntries(this.store);
+    writeFileSync(this.filePath, JSON.stringify(obj, null, 2), 'utf-8');
+  }
+
+  has(key: string): boolean {
+    return this.store.has(key);
+  }
 }
 
 // ─── Backend resolution ───────────────────────────────────────────────────────

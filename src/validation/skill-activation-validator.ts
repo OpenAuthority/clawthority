@@ -50,6 +50,7 @@ import { httpDeleteManifest } from '../tools/http_delete/manifest.js';
 import { httpPutManifest } from '../tools/http_put/manifest.js';
 import { httpPostManifest } from '../tools/http_post/manifest.js';
 import { listSecretsManifest } from '../tools/list_secrets/manifest.js';
+import { storeSecretManifest } from '../tools/store_secret/manifest.js';
 
 // ─── First-party manifest registry ───────────────────────────────────────────
 
@@ -93,6 +94,7 @@ export const FIRST_PARTY_MANIFESTS: readonly ToolManifest[] = [
   httpPutManifest,
   httpPostManifest,
   listSecretsManifest,
+  storeSecretManifest,
 ];
 
 // ─── Activation validator ─────────────────────────────────────────────────────
