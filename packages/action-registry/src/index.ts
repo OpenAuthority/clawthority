@@ -308,6 +308,7 @@ export const REGISTRY: readonly ActionRegistryEntry[] = [
       'webhook',
       'trigger_webhook',
       'post_webhook',
+      'send_notification',
     ],
     intent_group: 'external_send',
   },

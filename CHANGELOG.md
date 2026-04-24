@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### `send_notification` — generic notification tool (HC-11)
+
+`send_notification` sends a notification message to a communication platform via webhook and maps to the `communication.webhook` action class (`risk_tier: 'medium'`, `default_hitl_mode: 'per_request'`). The `platform` parameter selects a formatting adapter that shapes the JSON payload for the target service.
+
+Key behaviours:
+
+- Accepts `platform` (required — `'slack' | 'discord' | 'teams' | 'generic'`), `message` (required), and `url` (required — webhook endpoint).
+- Platform adapters format the payload: Slack uses `{ text }`, Discord uses `{ content }`, Teams uses `{ text }`, and generic uses `{ message }`.
+- Validates the platform value at runtime and throws `SendNotificationError` with `code: 'unsupported-platform'` for unrecognised values.
+- Delegates HTTP delivery to `sendWebhook`; propagates `invalid-url`, `network-error`, and `timeout` errors as `SendNotificationError` with matching codes.
+- A non-2xx HTTP response from the webhook endpoint throws `SendNotificationError` with `code: 'delivery-error'`.
+- Returns `{ delivered: true, status_code }` on successful delivery (2xx response).
+- `send_notification` is registered as an alias for the `communication.webhook` action class in the action registry.
+
+Gate order: platform validation → URL scheme validation (via `sendWebhook`) → HITL token check (pipeline) → network request → 2xx check → return.
+
 #### `EnvCredentialVault` — environment variable credential provider (T75)
 
 `EnvCredentialVault` (`src/vault/env-vault.ts`) is the second `ICredentialVault` / `SecretBackend` implementation, complementing `FileCredentialVault` for the v1.2.1 env + file only approach. It reads secrets directly from `process.env` with no async loading step — values are resolved at call time so late-injected env vars are always visible.
