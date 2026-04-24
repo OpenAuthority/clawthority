@@ -128,7 +128,7 @@ describe('plugin integration suite', () => {
   it('TC-01: lifecycle activate → pipeline → audit event → deactivate completes without errors', async () => {
     // Step 1 — activate
     const { ctx } = createMockContext();
-    plugin.activate(ctx);
+    await plugin.activate(ctx);
 
     // Step 2 — build pipeline with a permissive Stage 2 engine
     const engine = createEnforcementEngine([
@@ -540,7 +540,7 @@ describe('plugin integration suite', () => {
 
   it('TC-11: deactivate closes all watchers and is idempotent (safe to call twice)', async () => {
     const { ctx } = createMockContext();
-    plugin.activate(ctx);
+    await plugin.activate(ctx);
 
     // Record how many watchers were created during activation.
     const watchCallCount = vi.mocked(chokidar.watch).mock.calls.length;

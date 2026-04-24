@@ -9,7 +9,7 @@
  *   http_get    → web.fetch    (intent_group: data_exfiltration)
  *   http_post   → web.post     (intent_group: web_access)
  *   http_put    → web.post     (intent_group: web_access)
- *   http_delete → unknown_sensitive_action (not registered; fails closed)
+ *   http_delete → web.post     (intent_group: web_access)
  *   http_patch  → web.post     (intent_group: web_access)
  *
  * TC-HTT-01  http_get    PERMIT          — token issued, permissive stage2 → permit
@@ -500,8 +500,8 @@ describe('http_put — web.post (web_access) enforcement', () => {
 // ─── http_delete — TC-HTT-10..12 ──────────────────────────────────────────────
 //
 // http_delete is registered in @openclaw/action-registry as web.post (web_access).
-// risk: medium, hitl_mode: per_request.  The pipeline enforces HITL gating and
-// stage2 URL policy correctly.
+// hitl_mode: per_request. The pipeline enforces HITL gating and stage2 URL
+// policy via the same path as http_post.
 
 describe('http_delete — web.post (web_access) enforcement', () => {
   let emitter: EventEmitter;
@@ -519,7 +519,6 @@ describe('http_delete — web.post (web_access) enforcement', () => {
   it('TC-HTT-10: PERMIT — valid HITL token, permissive stage2, pipeline permits http_delete', async () => {
     const normalized = normalize_action('http_delete', { url: TRUSTED_URL });
 
-    // http_delete is registered as web.post (web_access), medium risk.
     expect(normalized.action_class).toBe('web.post');
     expect(normalized.intent_group).toBe('web_access');
     expect(normalized.hitl_mode).toBe('per_request');

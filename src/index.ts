@@ -961,8 +961,8 @@ const beforeToolCallHandler: BeforeToolCallHandler = async ({ toolName, params, 
     payload_hash: payloadHash,
     hitl_mode: 'none',
     rule_context: ruleContext,
-    source,
     risk: normalizedAction.risk,
+    ...(source !== undefined && { source }),
     ...(normalizedAction.intent_group !== undefined && { intent_group: normalizedAction.intent_group }),
   };
 
