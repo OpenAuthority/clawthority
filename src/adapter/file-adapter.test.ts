@@ -28,6 +28,8 @@ vi.mock('chokidar', () => ({
 
 vi.mock('node:fs/promises', () => ({
   readFile: vi.fn(),
+  writeFile: vi.fn().mockResolvedValue(undefined),
+  mkdir: vi.fn().mockResolvedValue(undefined),
 }));
 
 const BUNDLE_PATH = '/tmp/test-bundle.json';
@@ -272,6 +274,30 @@ describe('FileAuthorityAdapter.watchPolicyBundle', () => {
     await handle.stop();
     await handle.stop();
     expect(watcherStub.close).toHaveBeenCalledOnce();
+  });
+
+  it('creates an empty bundle on disk when the file does not exist (ENOENT)', async () => {
+    const fsPromises = await import('node:fs/promises');
+    const mkdirMock = fsPromises.mkdir as ReturnType<typeof vi.fn>;
+    const writeFileMock = fsPromises.writeFile as ReturnType<typeof vi.fn>;
+
+    const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+    readFileMock.mockRejectedValueOnce(enoent);
+
+    const onUpdate = vi.fn();
+    const handle = await adapter.watchPolicyBundle(onUpdate);
+
+    expect(mkdirMock).toHaveBeenCalledWith('/tmp', { recursive: true });
+    expect(writeFileMock).toHaveBeenCalledWith(
+      BUNDLE_PATH,
+      expect.stringContaining('"version": 0'),
+      'utf-8',
+    );
+    expect(onUpdate).toHaveBeenCalledOnce();
+    expect(onUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ version: 0, rules: [] }),
+    );
+    await handle.stop();
   });
 });
 

@@ -1,5 +1,5 @@
-import { readFile } from 'node:fs/promises';
-import { basename } from 'node:path';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { basename, dirname } from 'node:path';
 import chokidar from 'chokidar';
 import { Value } from '@sinclair/typebox/value';
 import { uuidv7 } from '../envelope.js';
@@ -32,6 +32,13 @@ export interface FileAuthorityAdapterConfig {
 
 const DEFAULT_TTL_SECONDS = 3600;
 const RELOAD_DEBOUNCE_MS = 300;
+
+/**
+ * Default bundle written to disk when `bundlePath` does not exist at startup.
+ * Shape is compatible with both PolicyBundleSchema (object with `version`) and
+ * the UI-managed rules loader in watcher.ts, which extracts the `rules` array.
+ */
+const DEFAULT_EMPTY_BUNDLE: PolicyBundle = { version: 0, rules: [] };
 
 /**
  * File-based implementation of IAuthorityAdapter intended for local
@@ -103,6 +110,26 @@ export class FileAuthorityAdapter implements IAuthorityAdapter {
         const content = await readFile(bundlePath, 'utf-8');
         raw = JSON.parse(content) as unknown;
       } catch (err) {
+        if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
+          try {
+            await mkdir(dirname(bundlePath), { recursive: true });
+            await writeFile(
+              bundlePath,
+              JSON.stringify(DEFAULT_EMPTY_BUNDLE, null, 2) + '\n',
+              'utf-8',
+            );
+            console.log(
+              `[file-adapter] bundle ${name} not found; created empty bundle at ${bundlePath}`,
+            );
+            return { ...DEFAULT_EMPTY_BUNDLE, rules: [] };
+          } catch (createErr) {
+            console.error(
+              `[file-adapter] failed to create empty bundle at ${bundlePath}:`,
+              createErr,
+            );
+            return null;
+          }
+        }
         console.error(`[file-adapter] failed to read bundle ${name}:`, err);
         return null;
       }
