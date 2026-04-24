@@ -125,6 +125,7 @@ export const REGISTRY: readonly ActionRegistryEntry[] = [
     aliases: [
       'write',
       'edit',
+      'apply_patch',
       'write_file',
       'writefile',
       'create_file',
@@ -193,6 +194,7 @@ export const REGISTRY: readonly ActionRegistryEntry[] = [
     default_hitl_mode: 'per_request',
     aliases: [
       'web_search',
+      'x_search',
       'google_search',
       'bing_search',
       'duckduckgo_search',
@@ -304,6 +306,7 @@ export const REGISTRY: readonly ActionRegistryEntry[] = [
     default_risk: 'medium',
     default_hitl_mode: 'per_request',
     aliases: [
+      'message',
       'call_webhook',
       'webhook',
       'trigger_webhook',
@@ -318,6 +321,7 @@ export const REGISTRY: readonly ActionRegistryEntry[] = [
     default_hitl_mode: 'none',
     aliases: [
       'memory_get',
+      'memory_search',
       'read_memory',
       'get_memory',
       'recall',
@@ -389,6 +393,7 @@ export const REGISTRY: readonly ActionRegistryEntry[] = [
     default_risk: 'high',
     default_hitl_mode: 'per_request',
     aliases: [
+      'code_execution',
       'run_code',
       'execute_code',
       'eval_code',
@@ -417,6 +422,18 @@ export const REGISTRY: readonly ActionRegistryEntry[] = [
     default_risk: 'low',
     default_hitl_mode: 'none',
     aliases: [
+      'session_status',
+      'sessions_list',
+      'sessions_history',
+      'sessions_spawn',
+      'sessions_send',
+      'sessions_yield',
+      'subagents',
+      'agents_list',
+      'nodes',
+      'image',
+      'cron',
+      'gateway',
       'get_system_info',
       'system_info',
       'get_env_var',

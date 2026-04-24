@@ -1,6 +1,6 @@
 {
   "name": "@openclaw/action-registry",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Shared action class registry for OpenClaw / Clawthority",
   "type": "module",
   "main": "./dist/index.js",
