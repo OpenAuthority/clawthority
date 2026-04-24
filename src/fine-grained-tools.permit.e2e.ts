@@ -13,19 +13,21 @@
  *   - hitl_mode: 'none'          → pipeline runs without an approval token
  *   - hitl_mode: 'per_request'   → capability token pre-issued via HitlTestHarness
  *
- * Test IDs: TC-FGT-01 … TC-FGT-73 (Fine-Grained Tools permit)
+ * Test IDs: TC-FGT-01 … TC-FGT-89 (Fine-Grained Tools permit)
  *
- * Covers 27 action classes (all registered classes except the exempt pair
+ * Covers 30 action classes (all registered classes except the exempt pair
  * unknown_sensitive_action and shell.exec which carry special handling).
  *
  * ── Action class coverage ────────────────────────────────────────────────────
  *  hitl: none      filesystem.read, filesystem.list, memory.read, memory.write,
- *                  vcs.read, package.read, build.test, build.lint            (25)
+ *                  vcs.read, package.read, build.test, build.lint,
+ *                  system.read, archive.read                                  (32)
  *  hitl: per_req   filesystem.write, filesystem.delete, web.search, web.fetch,
  *                  browser.scrape, web.post, shell.exec, communication.email,
  *                  communication.slack, communication.webhook, credential.read,
  *                  credential.write, code.execute, payment.initiate, vcs.write,
- *                  vcs.remote, package.install, package.run, build.compile    (47)
+ *                  vcs.remote, package.install, package.run, build.compile,
+ *                  archive.create, archive.extract                            (57)
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
@@ -2115,6 +2117,479 @@ describe('fine-grained tools — permit taxonomy', () => {
     expect(normalized.hitl_mode).toBe('per_request');
 
     const HASH = 'hash-fgt-72';
+    const token = harness.approveNext({
+      action_class: normalized.action_class,
+      target: normalized.target,
+      payload_hash: HASH,
+    });
+
+    const result = await runPipeline(
+      {
+        action_class: normalized.action_class,
+        target: normalized.target,
+        payload_hash: HASH,
+        hitl_mode: normalized.hitl_mode,
+        approval_id: token,
+        rule_context: { agentId: 'agent-1', channel: 'default' },
+      },
+      harness.stage1,
+      buildDefaultPermitStage2(),
+      emitter,
+    );
+
+    expect(result.decision.effect).toBe('permit');
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // filesystem.read extensions  (hitl: none)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  it('TC-FGT-73: check_exists → filesystem.read is permitted', async () => {
+    const normalized = normalize_action('check_exists', { path: '/var/run/app.pid' });
+    expect(normalized.action_class).toBe('filesystem.read');
+    expect(normalized.hitl_mode).toBe('none');
+
+    const result = await runPipeline(
+      {
+        action_class: normalized.action_class,
+        target: normalized.target,
+        payload_hash: 'hash-fgt-73',
+        hitl_mode: normalized.hitl_mode,
+        rule_context: { agentId: 'agent-1', channel: 'default' },
+      },
+      harness.stage1,
+      buildDefaultPermitStage2(),
+      emitter,
+    );
+
+    expect(result.decision.effect).toBe('permit');
+  });
+
+  it('TC-FGT-74: find_files → filesystem.read is permitted', async () => {
+    const normalized = normalize_action('find_files', { pattern: '**/*.ts', path: '/workspace/src' });
+    expect(normalized.action_class).toBe('filesystem.read');
+    expect(normalized.hitl_mode).toBe('none');
+
+    const result = await runPipeline(
+      {
+        action_class: normalized.action_class,
+        target: normalized.target,
+        payload_hash: 'hash-fgt-74',
+        hitl_mode: normalized.hitl_mode,
+        rule_context: { agentId: 'agent-1', channel: 'default' },
+      },
+      harness.stage1,
+      buildDefaultPermitStage2(),
+      emitter,
+    );
+
+    expect(result.decision.effect).toBe('permit');
+  });
+
+  it('TC-FGT-75: grep_files → filesystem.read is permitted', async () => {
+    const normalized = normalize_action('grep_files', { pattern: 'TODO', path: '/workspace' });
+    expect(normalized.action_class).toBe('filesystem.read');
+    expect(normalized.hitl_mode).toBe('none');
+
+    const result = await runPipeline(
+      {
+        action_class: normalized.action_class,
+        target: normalized.target,
+        payload_hash: 'hash-fgt-75',
+        hitl_mode: normalized.hitl_mode,
+        rule_context: { agentId: 'agent-1', channel: 'default' },
+      },
+      harness.stage1,
+      buildDefaultPermitStage2(),
+      emitter,
+    );
+
+    expect(result.decision.effect).toBe('permit');
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // filesystem.write extensions  (hitl: per_request)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  it('TC-FGT-76: copy_file → filesystem.write is permitted with approval', async () => {
+    const normalized = normalize_action('copy_file', { from: '/tmp/source.txt', to: '/workspace/dest.txt' });
+    expect(normalized.action_class).toBe('filesystem.write');
+    expect(normalized.hitl_mode).toBe('per_request');
+
+    const HASH = 'hash-fgt-76';
+    const token = harness.approveNext({
+      action_class: normalized.action_class,
+      target: normalized.target,
+      payload_hash: HASH,
+    });
+
+    const result = await runPipeline(
+      {
+        action_class: normalized.action_class,
+        target: normalized.target,
+        payload_hash: HASH,
+        hitl_mode: normalized.hitl_mode,
+        approval_id: token,
+        rule_context: { agentId: 'agent-1', channel: 'default' },
+      },
+      harness.stage1,
+      buildDefaultPermitStage2(),
+      emitter,
+    );
+
+    expect(result.decision.effect).toBe('permit');
+  });
+
+  it('TC-FGT-77: make_dir → filesystem.write is permitted with approval', async () => {
+    const normalized = normalize_action('make_dir', { path: '/workspace/new-dir' });
+    expect(normalized.action_class).toBe('filesystem.write');
+    expect(normalized.hitl_mode).toBe('per_request');
+
+    const HASH = 'hash-fgt-77';
+    const token = harness.approveNext({
+      action_class: normalized.action_class,
+      target: normalized.target,
+      payload_hash: HASH,
+    });
+
+    const result = await runPipeline(
+      {
+        action_class: normalized.action_class,
+        target: normalized.target,
+        payload_hash: HASH,
+        hitl_mode: normalized.hitl_mode,
+        approval_id: token,
+        rule_context: { agentId: 'agent-1', channel: 'default' },
+      },
+      harness.stage1,
+      buildDefaultPermitStage2(),
+      emitter,
+    );
+
+    expect(result.decision.effect).toBe('permit');
+  });
+
+  it('TC-FGT-78: move_file → filesystem.write is permitted with approval', async () => {
+    const normalized = normalize_action('move_file', { from: '/tmp/old.txt', to: '/workspace/new.txt' });
+    expect(normalized.action_class).toBe('filesystem.write');
+    expect(normalized.hitl_mode).toBe('per_request');
+
+    const HASH = 'hash-fgt-78';
+    const token = harness.approveNext({
+      action_class: normalized.action_class,
+      target: normalized.target,
+      payload_hash: HASH,
+    });
+
+    const result = await runPipeline(
+      {
+        action_class: normalized.action_class,
+        target: normalized.target,
+        payload_hash: HASH,
+        hitl_mode: normalized.hitl_mode,
+        approval_id: token,
+        rule_context: { agentId: 'agent-1', channel: 'default' },
+      },
+      harness.stage1,
+      buildDefaultPermitStage2(),
+      emitter,
+    );
+
+    expect(result.decision.effect).toBe('permit');
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // system.read  (hitl: none)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  it('TC-FGT-79: get_env_var → system.read is permitted', async () => {
+    const normalized = normalize_action('get_env_var', { variable_name: 'NODE_ENV' });
+    expect(normalized.action_class).toBe('system.read');
+    expect(normalized.hitl_mode).toBe('none');
+
+    const result = await runPipeline(
+      {
+        action_class: normalized.action_class,
+        target: normalized.target,
+        payload_hash: 'hash-fgt-79',
+        hitl_mode: normalized.hitl_mode,
+        rule_context: { agentId: 'agent-1', channel: 'default' },
+      },
+      harness.stage1,
+      buildDefaultPermitStage2(),
+      emitter,
+    );
+
+    expect(result.decision.effect).toBe('permit');
+  });
+
+  it('TC-FGT-80: get_system_info → system.read is permitted', async () => {
+    const normalized = normalize_action('get_system_info', {});
+    expect(normalized.action_class).toBe('system.read');
+    expect(normalized.hitl_mode).toBe('none');
+
+    const result = await runPipeline(
+      {
+        action_class: normalized.action_class,
+        target: normalized.target,
+        payload_hash: 'hash-fgt-80',
+        hitl_mode: normalized.hitl_mode,
+        rule_context: { agentId: 'agent-1', channel: 'default' },
+      },
+      harness.stage1,
+      buildDefaultPermitStage2(),
+      emitter,
+    );
+
+    expect(result.decision.effect).toBe('permit');
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // vcs.write extensions  (hitl: per_request)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  it('TC-FGT-81: git_merge → vcs.write is permitted with approval', async () => {
+    const normalized = normalize_action('git_merge', { branch: 'feature/new-feature' });
+    expect(normalized.action_class).toBe('vcs.write');
+    expect(normalized.hitl_mode).toBe('per_request');
+
+    const HASH = 'hash-fgt-81';
+    const token = harness.approveNext({
+      action_class: normalized.action_class,
+      target: normalized.target,
+      payload_hash: HASH,
+    });
+
+    const result = await runPipeline(
+      {
+        action_class: normalized.action_class,
+        target: normalized.target,
+        payload_hash: HASH,
+        hitl_mode: normalized.hitl_mode,
+        approval_id: token,
+        rule_context: { agentId: 'agent-1', channel: 'default' },
+      },
+      harness.stage1,
+      buildDefaultPermitStage2(),
+      emitter,
+    );
+
+    expect(result.decision.effect).toBe('permit');
+  });
+
+  it('TC-FGT-82: git_reset → vcs.write is permitted with approval', async () => {
+    const normalized = normalize_action('git_reset', { commit: 'HEAD~1' });
+    expect(normalized.action_class).toBe('vcs.write');
+    expect(normalized.hitl_mode).toBe('per_request');
+
+    const HASH = 'hash-fgt-82';
+    const token = harness.approveNext({
+      action_class: normalized.action_class,
+      target: normalized.target,
+      payload_hash: HASH,
+    });
+
+    const result = await runPipeline(
+      {
+        action_class: normalized.action_class,
+        target: normalized.target,
+        payload_hash: HASH,
+        hitl_mode: normalized.hitl_mode,
+        approval_id: token,
+        rule_context: { agentId: 'agent-1', channel: 'default' },
+      },
+      harness.stage1,
+      buildDefaultPermitStage2(),
+      emitter,
+    );
+
+    expect(result.decision.effect).toBe('permit');
+  });
+
+  it('TC-FGT-83: git_branch → vcs.write is permitted with approval', async () => {
+    const normalized = normalize_action('git_branch', { name: 'feature/new-branch' });
+    expect(normalized.action_class).toBe('vcs.write');
+    expect(normalized.hitl_mode).toBe('per_request');
+
+    const HASH = 'hash-fgt-83';
+    const token = harness.approveNext({
+      action_class: normalized.action_class,
+      target: normalized.target,
+      payload_hash: HASH,
+    });
+
+    const result = await runPipeline(
+      {
+        action_class: normalized.action_class,
+        target: normalized.target,
+        payload_hash: HASH,
+        hitl_mode: normalized.hitl_mode,
+        approval_id: token,
+        rule_context: { agentId: 'agent-1', channel: 'default' },
+      },
+      harness.stage1,
+      buildDefaultPermitStage2(),
+      emitter,
+    );
+
+    expect(result.decision.effect).toBe('permit');
+  });
+
+  it('TC-FGT-84: git_checkout → vcs.write is permitted with approval', async () => {
+    const normalized = normalize_action('git_checkout', { ref: 'main' });
+    expect(normalized.action_class).toBe('vcs.write');
+    expect(normalized.hitl_mode).toBe('per_request');
+
+    const HASH = 'hash-fgt-84';
+    const token = harness.approveNext({
+      action_class: normalized.action_class,
+      target: normalized.target,
+      payload_hash: HASH,
+    });
+
+    const result = await runPipeline(
+      {
+        action_class: normalized.action_class,
+        target: normalized.target,
+        payload_hash: HASH,
+        hitl_mode: normalized.hitl_mode,
+        approval_id: token,
+        rule_context: { agentId: 'agent-1', channel: 'default' },
+      },
+      harness.stage1,
+      buildDefaultPermitStage2(),
+      emitter,
+    );
+
+    expect(result.decision.effect).toBe('permit');
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // build.lint extension  (hitl: none)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  it('TC-FGT-85: run_linter → build.lint is permitted', async () => {
+    const normalized = normalize_action('run_linter', { working_dir: '/workspace' });
+    expect(normalized.action_class).toBe('build.lint');
+    expect(normalized.hitl_mode).toBe('none');
+
+    const result = await runPipeline(
+      {
+        action_class: normalized.action_class,
+        target: normalized.target,
+        payload_hash: 'hash-fgt-85',
+        hitl_mode: normalized.hitl_mode,
+        rule_context: { agentId: 'agent-1', channel: 'default' },
+      },
+      harness.stage1,
+      buildDefaultPermitStage2(),
+      emitter,
+    );
+
+    expect(result.decision.effect).toBe('permit');
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // build.compile extension  (hitl: per_request)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  it('TC-FGT-86: npm_run_build → build.compile is permitted with approval', async () => {
+    const normalized = normalize_action('npm_run_build', { working_dir: '/workspace' });
+    expect(normalized.action_class).toBe('build.compile');
+    expect(normalized.hitl_mode).toBe('per_request');
+
+    const HASH = 'hash-fgt-86';
+    const token = harness.approveNext({
+      action_class: normalized.action_class,
+      target: normalized.target,
+      payload_hash: HASH,
+    });
+
+    const result = await runPipeline(
+      {
+        action_class: normalized.action_class,
+        target: normalized.target,
+        payload_hash: HASH,
+        hitl_mode: normalized.hitl_mode,
+        approval_id: token,
+        rule_context: { agentId: 'agent-1', channel: 'default' },
+      },
+      harness.stage1,
+      buildDefaultPermitStage2(),
+      emitter,
+    );
+
+    expect(result.decision.effect).toBe('permit');
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // archive.read  (hitl: none)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  it('TC-FGT-87: archive_list → archive.read is permitted', async () => {
+    const normalized = normalize_action('archive_list', { archive_path: '/tmp/backup.tar.gz' });
+    expect(normalized.action_class).toBe('archive.read');
+    expect(normalized.hitl_mode).toBe('none');
+
+    const result = await runPipeline(
+      {
+        action_class: normalized.action_class,
+        target: normalized.target,
+        payload_hash: 'hash-fgt-87',
+        hitl_mode: normalized.hitl_mode,
+        rule_context: { agentId: 'agent-1', channel: 'default' },
+      },
+      harness.stage1,
+      buildDefaultPermitStage2(),
+      emitter,
+    );
+
+    expect(result.decision.effect).toBe('permit');
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // archive.create  (hitl: per_request)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  it('TC-FGT-88: archive_create → archive.create is permitted with approval', async () => {
+    const normalized = normalize_action('archive_create', { output_path: '/tmp/backup.tar.gz', sources: ['/workspace'] });
+    expect(normalized.action_class).toBe('archive.create');
+    expect(normalized.hitl_mode).toBe('per_request');
+
+    const HASH = 'hash-fgt-88';
+    const token = harness.approveNext({
+      action_class: normalized.action_class,
+      target: normalized.target,
+      payload_hash: HASH,
+    });
+
+    const result = await runPipeline(
+      {
+        action_class: normalized.action_class,
+        target: normalized.target,
+        payload_hash: HASH,
+        hitl_mode: normalized.hitl_mode,
+        approval_id: token,
+        rule_context: { agentId: 'agent-1', channel: 'default' },
+      },
+      harness.stage1,
+      buildDefaultPermitStage2(),
+      emitter,
+    );
+
+    expect(result.decision.effect).toBe('permit');
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // archive.extract  (hitl: per_request)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  it('TC-FGT-89: archive_extract → archive.extract is permitted with approval', async () => {
+    const normalized = normalize_action('archive_extract', { archive_path: '/tmp/backup.tar.gz', destination: '/workspace/restored' });
+    expect(normalized.action_class).toBe('archive.extract');
+    expect(normalized.hitl_mode).toBe('per_request');
+
+    const HASH = 'hash-fgt-89';
     const token = harness.approveNext({
       action_class: normalized.action_class,
       target: normalized.target,
