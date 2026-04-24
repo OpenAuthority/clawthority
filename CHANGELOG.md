@@ -219,7 +219,7 @@ All 23 tools ship with TypeBox-validated manifests (schema, action class, risk t
 #### Test coverage
 
 - **`src/regression-bundle-hot-reload.e2e.ts`** — five cases (TC-RBH-01..05) asserting chokidar file-watch propagation within a 600 ms deadline (300 ms debounce + 300 ms tolerance): file write detection, active rule reflection, rapid-write coalescing, second-change propagation, and rule content parsing.
-- **`src/regression-rules-json-forbid.e2e.ts`** — regression suite for the priority-200 JSON-rules forbid scenario from 2026-04-23.
+- **`src/regression-rules-json-forbid.e2e.ts`** — five cases (TC-RRF-01..05) covering the 2026-04-23 regression where a `tool:read → forbid` rule at priority 200 defined via `CLAWTHORITY_RULES_FILE` (resource/match form) was not blocking in OPEN mode and not emitting a structured audit entry: OPEN-mode block by priority-200 `tool:read_file` forbid (TC-RRF-01), audit entry with `stage=json-rules` and `priority=200` (TC-RRF-02), priority ordering confirming the json-rules forbid wins over the implicit Cedar permit (TC-RRF-03), unconditional block with no HITL policy configured confirming priority ≥ 100 is not HITL-gatable (TC-RRF-04), and CLOSED-mode block (TC-RRF-05).
 
 ### ⚠️ Known gaps — deferred to v1.3
 
