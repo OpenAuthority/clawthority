@@ -268,6 +268,36 @@ For a full mitigation guide, see [Operator Security Guide — F-02](operator-sec
 
 ---
 
+## Known Limits
+
+### F-02: In-Memory Revocation
+
+HITL revocation state — the set of capability tokens that have been explicitly revoked before consumption — is held in memory only. When the gateway process restarts, all pending revocations are cleared.
+
+**What this means in practice:**
+
+If an operator grants a HITL approval and then revokes it before the agent uses the capability, but the gateway restarts before the agent presents the token, the revocation is lost. The capability token remains valid until its TTL expires. This affects the same in-memory store as token consumption tracking (see [F-02: In-Memory Token Consumption](#f-02-in-memory-token-consumption--production-considerations) above): a restart resets both the consumed-token set and the revocation set.
+
+**When this limitation matters:**
+
+| Scenario | Impact |
+|---|---|
+| Frequent restarts (rolling deploys, crash loops, container reschedules) | Revocations issued near a restart window may not take effect |
+| Long capability TTLs (>60 s) | Wider window for a revoked token to survive a restart |
+| Revocation used as a primary safety control for high-risk approvals | Revocation durability cannot be guaranteed with the file adapter |
+
+**Mitigations (file adapter):**
+
+- Keep the capability TTL short (30–60 seconds). A revoked token with a 30-second TTL expires quickly after a restart, limiting exposure.
+- Configure your process manager with a restart backoff of at least the configured TTL (e.g., `RestartSec=60s` in systemd).
+- Alert on unexpected process restarts that follow recent HITL approvals or revocations.
+
+**Persistent revocation:**
+
+When the Firma remote adapter ships, migrate to it for server-side revocation that survives gateway restarts. The Firma adapter persists revocations externally and validates them on every token presentation, eliminating this in-memory limitation. See [Operator Security Guide — F-02](operator-security-guide.md#f-02-in-memory-token-consumption--production-considerations) for the full mitigation guide.
+
+---
+
 ## Development Setup
 
 Use this setup when working on the plugin or dashboard locally.
