@@ -1237,10 +1237,33 @@ function isInstalled(): boolean {
   return existsSync(resolve(pluginRoot, "data", ".installed"));
 }
 
-const plugin: OpenclawPlugin = {
+const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void } = {
   name: "clawthority",
   // Single source of truth: package.json (read by getVersionInfo at activation).
   version: getVersionInfo().version,
+
+  /**
+   * register() — synchronous entry point required by OpenClaw's plugin loader.
+   *
+   * OpenClaw calls register() (not activate()) and requires it to be sync.
+   * We register hooks immediately here, then kick off async init (file loading,
+   * watchers, HITL, budget tracker) as a fire-and-forget Promise that logs
+   * errors but never throws. This guarantees before_tool_call fires even on
+   * the first tool call during startup, before async init completes — the
+   * Cedar engine is already populated at module load time with ACTIVE_RULES.
+   */
+  register(api: OpenclawPluginContext) {
+    // 1. Register hooks synchronously — the Cedar engine is already populated.
+    api.on("before_tool_call", beforeToolCallHandler, { name: "clawthority:before_tool_call" });
+    api.on("before_prompt_build", beforePromptBuildHandler, { name: "clawthority:before_prompt_build" });
+    api.on("before_model_resolve", beforeModelResolveHandler, { name: "clawthority:before_model_resolve" });
+
+    // 2. Async init — deferred, non-blocking. Call activate directly (not via
+    // `this`) to avoid losing context when OpenClaw invokes register().
+    void Promise.resolve(plugin.activate(api)).catch((err: unknown) => {
+      console.error("[plugin:clawthority] async activate() failed:", err);
+    });
+  },
 
   async activate(ctx: OpenclawPluginContext) {
     // ── Install lifecycle gate ────────────────────────────────────────────────
