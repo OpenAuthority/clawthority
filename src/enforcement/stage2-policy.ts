@@ -112,13 +112,24 @@ export function createEnforcementEngine(
 /** Priority threshold below which a forbid is treated as HITL-gated. */
 const HITL_PRIORITY_THRESHOLD = 100;
 
+/**
+ * Synthetic priority assigned to closed-mode implicit-deny forbids so the
+ * downstream HITL-gated check treats them as HITL-gateable (priority < 100).
+ * HITL is the operator's escape hatch for action classes that have no explicit
+ * permit rule — if no HITL policy matches, the forbid is still upheld.
+ */
+const IMPLICIT_DENY_PRIORITY = 0;
+
 function isHitlGatedDecision(result: EvaluationDecision): boolean {
-  const p = result.matchedRule?.priority;
+  // Closed-mode implicit deny (no matchedRule) is HITL-gated.
+  if (result.matchedRule === undefined) return true;
+  const p = result.matchedRule.priority;
   return p !== undefined && p < HITL_PRIORITY_THRESHOLD;
 }
 
 function toStagedForbid(result: EvaluationDecision, stage: string): CeeDecision {
-  const priority = result.matchedRule?.priority;
+  const priority = result.matchedRule?.priority
+    ?? (result.matchedRule === undefined ? IMPLICIT_DENY_PRIORITY : undefined);
   return {
     effect: 'forbid',
     reason: result.reason ?? 'forbid',
