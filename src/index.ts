@@ -154,6 +154,7 @@ import { runPipeline, isInstallPhase } from "./enforcement/pipeline.js";
 import type { PipelineContext, Stage1Fn, Stage2Fn, CeeDecision } from "./enforcement/pipeline.js";
 import { validateCapability } from "./enforcement/stage1-capability.js";
 import { FileAuthorityAdapter } from "./adapter/file-adapter.js";
+import type { WatchHandle } from "./adapter/types.js";
 
 /**
  * Resolved identity view used by audit and HITL call sites. Derived from
@@ -397,6 +398,12 @@ const jsonRulesEngineRef: { current: CedarPolicyEngine | null } = {
  * same data directory used by loadJsonRules(). null until activate() runs.
  */
 let adapterRef: FileAuthorityAdapter | null = null;
+
+/**
+ * WatchHandle returned by adapterRef.watchPolicyBundle(). Stored so it can
+ * be stopped in deactivate() to avoid leaked chokidar watchers.
+ */
+let adapterBundleWatchHandle: WatchHandle | null = null;
 
 /**
  * JSON rule record as written in data/rules.json.
@@ -1420,6 +1427,10 @@ const plugin: OpenclawPlugin = {
       const bundlePath = process.env['CLAWTHORITY_RULES_FILE']
         ?? (existsSync(bundleFilePath) ? bundleFilePath : rulesFilePath);
       adapterRef = new FileAuthorityAdapter({ bundlePath });
+      adapterBundleWatchHandle = await adapterRef.watchPolicyBundle((bundle) => {
+        console.log(`[plugin:clawthority] policy bundle hot-reload: version ${bundle.version}`);
+        void loadJsonRules();
+      });
     }
 
     // ── Diagnostic: log registered hooks and loaded rules ────────────────────
@@ -1572,6 +1583,12 @@ const plugin: OpenclawPlugin = {
     if (rulesWatcher !== null) {
       await rulesWatcher.stop();
       rulesWatcher = null;
+    }
+
+    // ── Bundle watcher cleanup ────────────────────────────────────────────
+    if (adapterBundleWatchHandle !== null) {
+      await adapterBundleWatchHandle.stop();
+      adapterBundleWatchHandle = null;
     }
     activated = false;
     console.log("[plugin:clawthority] deactivated");
