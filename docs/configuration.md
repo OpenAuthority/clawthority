@@ -71,10 +71,11 @@ The `data/` directory is the default location for:
 
 | File | Purpose | Override |
 |---|---|---|
-| `data/rules.json` | Authorization rules array | `RULES_FILE` env var |
+| `data/bundle.json` | Policy bundle (preferred format, v1.2.1+) | `CLAWTHORITY_RULES_FILE` env var |
+| `data/rules.json` | Authorization rules array (legacy format, fallback) | `CLAWTHORITY_RULES_FILE` env var |
 | `data/audit.jsonl` | JSONL audit log | `AUDIT_LOG_FILE` env var |
 
-The server creates `data/` automatically if it does not exist. Override both paths with absolute paths for production deployments where the plugin directory may be read-only.
+`data/bundle.json` takes precedence over `data/rules.json` when both are present. The server creates `data/` automatically if it does not exist. Override both paths with absolute paths for production deployments where the plugin directory may be read-only.
 
 ### Custom data directory example
 
@@ -139,9 +140,46 @@ Defines the configuration properties accepted by the plugin in `config.json`. Al
 
 ## Rules File
 
-Authorization rules are stored as a JSON array. The active file path is controlled by the `RULES_FILE` environment variable (default: `data/rules.json`).
+Authorization rules can be stored in either of two formats. The plugin reads `data/bundle.json` when present; otherwise it falls back to `data/rules.json`. Both files are hot-reloaded: changes are picked up within 300 ms without restarting OpenClaw.
 
-The rules file is hot-reloaded: changes are picked up within 300 ms without restarting OpenClaw.
+The active file path can be overridden with the `CLAWTHORITY_RULES_FILE` environment variable (bypasses the bundle.json / rules.json resolution).
+
+### Schema formats
+
+**`data/bundle.json` (preferred, v1.2.1+)**
+
+A versioned bundle object. `bundle.json` takes precedence over `rules.json` when both are present.
+
+```json
+{
+  "version": 2,
+  "rules": [ ... ],
+  "checksum": "<sha256-hex>"
+}
+```
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `version` | `integer` (≥1) | Yes | Monotonically increasing version number. The watcher rejects bundles whose version is not greater than the currently loaded version. |
+| `rules` | `object[]` | Yes | Array of rule objects (same schema as `rules.json` entries). |
+| `checksum` | `string` | Yes | SHA-256 hex digest of `JSON.stringify(rules)` for integrity verification. |
+
+**`data/rules.json` (legacy fallback)**
+
+A plain JSON array of rule objects. Used when `data/bundle.json` is absent.
+
+```json
+[ { "effect": "...", ... }, ... ]
+```
+
+### Transition path
+
+To migrate from `rules.json` to `bundle.json`:
+
+1. Create `data/bundle.json` with `version: 1` and copy your existing rules into the `rules` array.
+2. Compute `checksum` as `SHA-256(JSON.stringify(rules))` and set it in the bundle.
+3. Deploy — the plugin picks up `bundle.json` automatically on next hot-reload.
+4. Remove `data/rules.json` once `bundle.json` is confirmed active (optional; the file is ignored while `bundle.json` is present).
 
 ### Rule schema
 
@@ -173,6 +211,38 @@ When a rate limit is exceeded, the request is forbidden regardless of the rule's
 | `"*"` | Any resource name |
 | `"write_*"` | Any name starting with `write_` (prefix wildcard) |
 | `"/^(read\|list)_/"` | Any name matching the regular expression |
+
+### Unconditionally forbidden action classes
+
+Certain action classes are hardcoded as forbidden at priority 100 and **cannot be permitted via `data/rules.json`**. Attempting to add a `permit` rule for any of these classes causes `loadJsonRules()` to reject the file entirely with an error logged to console.
+
+| Action Class | Reason |
+|---|---|
+| `shell.exec` | Generic shell execution bypasses all command-level policy; one invocation can affect any resource the process can reach. |
+| `code.execute` | Arbitrary code execution bypasses parameter-level policy. |
+
+#### Migrating from `shell.exec` to fine-grained tools
+
+Replace generic shell invocations with purpose-built action classes that carry scoped permissions:
+
+| Was (`shell.exec`) | Use instead |
+|---|---|
+| Reading a file (`cat`, `head`, `less`) | `filesystem.read` |
+| Listing a directory (`ls`, `find`) | `filesystem.list` |
+| Writing or creating a file (`echo >`, `tee`) | `filesystem.write` |
+| Deleting a file (`rm`) | `filesystem.delete` |
+| Fetching a URL (`curl`, `wget`) | `web.fetch` |
+| Posting data to an endpoint | `web.post` |
+| Searching the web | `web.search` |
+
+Fine-grained tools are registered in `src/enforcement/normalize.ts` with their canonical action class, risk tier, and HITL mode. Use `action_class` rules in `data/rules.json` to gate them:
+
+```json
+[
+  { "effect": "forbid", "action_class": "filesystem.delete", "priority": 90, "reason": "Filesystem deletes require HITL approval" },
+  { "effect": "permit", "action_class": "filesystem.read",   "priority": 10, "reason": "Read-only operations permitted" }
+]
+```
 
 ### Example rules.json
 
@@ -581,10 +651,11 @@ environment variable > hitl-policy.yaml field > built-in default
 
 ### Install mode
 
-Controls the plugin's policy posture at activation.
+Controls the plugin's policy posture at activation and the install-phase bypass behaviour.
 
 | Variable | Default | Description |
 |---|---|---|
+| `OPENAUTH_FORCE_ACTIVE` | _(unset)_ | Set to `'1'` to suppress the install-phase enforcement bypass. Without this, enforcement is suspended while `npm_lifecycle_event` is one of `install`, `preinstall`, `postinstall`, or `prepare`. **Must be set to `'1'` in all production deployments.** See [Operator Security Guide — F-01](operator-security-guide.md#f-01-openauth_force_active-configuration). |
 | `CLAWTHORITY_MODE` | `open` | `open` — implicit permit with a critical-forbid safety net (six action classes: `shell.exec`, `code.execute`, `payment.initiate`, `credential.read`, `credential.write`, `unknown_sensitive_action`). `closed` — implicit deny, user adds explicit `permit` rules. Any other value logs a warning and falls back to `open`. Case- and whitespace-insensitive. Read once at module load — **restart the plugin to change modes.** |
 
 Mode only affects Stage 2 policy evaluation and which default rule set is loaded. Stage 1 (capability gate, protected paths, HITL binding) fails closed in both modes regardless.
@@ -882,6 +953,10 @@ policies:
 
 **Environment (production — stored in secret manager or `EnvironmentFile`)**
 ```bash
+# Security — required in production (F-01)
+OPENAUTH_FORCE_ACTIVE=1
+CLAWTHORITY_MODE=closed
+
 RULES_FILE=/var/clawthority/rules.json
 AUDIT_LOG_FILE=/var/log/clawthority/audit.jsonl
 PORT=7331

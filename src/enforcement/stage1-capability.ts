@@ -4,6 +4,20 @@ import type { ApprovalManager } from '../hitl/approval-manager.js';
 import type { Capability } from '../adapter/types.js';
 
 /**
+ * Determines the source trust level from the event source field.
+ *
+ * Mapping:
+ *   'user'               → 'user'      (direct user instruction)
+ *   'agent' | undefined  → 'agent'     (autonomous agent reasoning)
+ *   anything else        → 'untrusted' (external content: web, file, email, etc.)
+ */
+function determineSourceTrustLevel(source?: string): 'user' | 'agent' | 'untrusted' {
+  if (source === 'user') return 'user';
+  if (source === 'agent' || source === undefined) return 'agent';
+  return 'untrusted';
+}
+
+/**
  * Stage 1 capability gate.
  *
  * Validates a capability token against seven ordered security checks.
@@ -30,11 +44,14 @@ export async function validateCapability(
 ): Promise<CeeDecision> {
   try {
     // 0. Untrusted source + high/critical risk → deny regardless of HITL mode.
+    // Trust level is resolved from ctx.sourceTrustLevel when already computed,
+    // or derived from ctx.source when the caller passes the raw source string.
+    const effectiveTrustLevel = ctx.sourceTrustLevel ?? determineSourceTrustLevel(ctx.source);
     if (
-      ctx.sourceTrustLevel === 'untrusted' &&
+      effectiveTrustLevel === 'untrusted' &&
       (ctx.risk === 'high' || ctx.risk === 'critical')
     ) {
-      return { effect: 'forbid', reason: 'untrusted_source_high_risk', stage: 'stage1' };
+      return { effect: 'forbid', reason: 'untrusted_source_high_risk', stage: 'stage1-trust', rule: `trust:untrusted+${ctx.risk}` };
     }
 
     // 1. Low-risk bypass: hitl_mode none skips all capability checks.

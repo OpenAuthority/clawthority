@@ -7,12 +7,13 @@
  * Test IDs:
  *   TC-WFT-01: File creation operations
  *   TC-WFT-02: File overwrite operations
- *   TC-WFT-03: Error handling
+ *   TC-WFT-03: Error conditions (forbidden, not-a-file, fs-error)
+ *   TC-WFT-04: Result shape
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, readFileSync, mkdirSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { writeFile, WriteFileError } from './write-file.js';
 
@@ -145,9 +146,56 @@ describe('TC-WFT-02: file overwrite operations', () => {
   });
 });
 
-// ─── TC-WFT-03: Error handling ────────────────────────────────────────────────
+// ─── TC-WFT-03: Error conditions ─────────────────────────────────────────────
 
-describe('TC-WFT-03: error handling', () => {
+describe('TC-WFT-03: error conditions', () => {
+  it('throws WriteFileError with code forbidden for root path', () => {
+    expect(() => writeFile({ path: '/', content: 'data' })).toThrow(WriteFileError);
+    try {
+      writeFile({ path: '/', content: 'data' });
+    } catch (e) {
+      expect((e as WriteFileError).code).toBe('forbidden');
+    }
+  });
+
+  it('throws WriteFileError with code forbidden for /etc', () => {
+    expect(() => writeFile({ path: '/etc', content: 'data' })).toThrow(WriteFileError);
+    try {
+      writeFile({ path: '/etc', content: 'data' });
+    } catch (e) {
+      expect((e as WriteFileError).code).toBe('forbidden');
+    }
+  });
+
+  it('throws WriteFileError with code forbidden for /usr/bin', () => {
+    expect(() => writeFile({ path: '/usr/bin', content: 'data' })).toThrow(WriteFileError);
+    try {
+      writeFile({ path: '/usr/bin', content: 'data' });
+    } catch (e) {
+      expect((e as WriteFileError).code).toBe('forbidden');
+    }
+  });
+
+  it('forbidden error message includes the path', () => {
+    try {
+      writeFile({ path: '/etc', content: 'data' });
+    } catch (e) {
+      expect((e as WriteFileError).message).toContain('/etc');
+    }
+  });
+
+  it('forbidden check runs before filesystem access for protected paths', () => {
+    // /etc exists on disk but the forbidden check must reject it before any stat call
+    let err: WriteFileError | undefined;
+    try {
+      writeFile({ path: '/etc', content: 'data' });
+    } catch (e) {
+      err = e as WriteFileError;
+    }
+    expect(err).toBeInstanceOf(WriteFileError);
+    expect(err!.code).toBe('forbidden');
+  });
+
   it('throws WriteFileError with code not-a-file when path is a directory', () => {
     const tempDir = makeTempDir();
 
@@ -249,5 +297,51 @@ describe('TC-WFT-03: error handling', () => {
 
     expect(err).toBeInstanceOf(WriteFileError);
     expect(err!.code).toBe('fs-error');
+  });
+});
+
+// ─── TC-WFT-04: Result shape ──────────────────────────────────────────────────
+
+describe('TC-WFT-04: result shape', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = makeTempDir();
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('result has a path field', () => {
+    const filePath = join(dir, 'shape.txt');
+
+    const result = writeFile({ path: filePath, content: 'data' });
+
+    expect(result).toHaveProperty('path');
+  });
+
+  it('result path field is a string', () => {
+    const filePath = join(dir, 'type.txt');
+
+    const result = writeFile({ path: filePath, content: 'data' });
+
+    expect(typeof result.path).toBe('string');
+  });
+
+  it('result path is the resolved absolute path', () => {
+    const filePath = join(dir, 'resolved.txt');
+
+    const result = writeFile({ path: filePath, content: 'data' });
+
+    expect(result.path).toBe(resolve(filePath));
+  });
+
+  it('result path matches the file that was written', () => {
+    const filePath = join(dir, 'match.txt');
+
+    const result = writeFile({ path: filePath, content: 'content' });
+
+    expect(readFileSync(result.path, 'utf8')).toBe('content');
   });
 });

@@ -79,6 +79,18 @@ const DEFAULT_RULES: Rule[] = [
   },
 
   /**
+   * Forbid credential rotation pending HITL approval.
+   * Rotating a credential replaces a live secret; require explicit human approval.
+   */
+  {
+    action_class: 'credential.rotate',
+    effect: 'forbid',
+    priority: 90,
+    reason: 'Credential rotation requires human-in-the-loop approval',
+    tags: ['credential', 'hitl'],
+  },
+
+  /**
    * Forbid any outbound action whose payload contains card data, pending HITL approval.
    * Applies to all channels in the `external_send` intent group (email, Slack, webhook).
    * Blocks execution until a human operator explicitly approves the action.
@@ -171,6 +183,7 @@ const CRITICAL_ACTION_CLASSES = new Set<string>([
   'payment.initiate',
   'credential.read',
   'credential.write',
+  'credential.rotate',
 ]);
 
 /**

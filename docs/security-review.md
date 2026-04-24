@@ -15,8 +15,8 @@ This document records the security review of three areas in Clawthority: the two
 
 | Finding | Area | Severity | Status |
 |---|---|---|---|
-| F-01 | Enforcement gate — install phase bypass | Medium | Open |
-| F-02 | Enforcement gate — in-memory token consumption | Medium | Open |
+| F-01 | Enforcement gate — install phase bypass | Medium | Mitigated via documentation |
+| F-02 | Enforcement gate — in-memory token consumption | Medium | Documented limit; persistent revocation deferred |
 | F-03 | Enforcement gate — session-less capability reuse | Low | Accepted |
 | F-04 | Enforcement gate — error reason leakage | Low | Accepted |
 | F-05 | `unsafe_legacy` — pre-implementation requirements | High | Blocked (not implemented) |
@@ -83,7 +83,7 @@ Both stages catch all exceptions and return `forbid`, implementing fail-closed s
 
 **Severity:** Medium
 **File:** `src/enforcement/pipeline.ts:17–21`
-**Status:** Open
+**Status:** Mitigated via documentation
 
 **Description:**
 `isInstallPhase()` returns `true` when `npm_lifecycle_event` is one of `install`, `preinstall`, `postinstall`, or `prepare`. When true, the entire enforcement pipeline is bypassed with a `permit`. This is controlled by `OPENAUTH_FORCE_ACTIVE=1`.
@@ -101,13 +101,16 @@ An attacker who can inject or override the `npm_lifecycle_event` environment var
 2. Add an audit log warning (distinct from the normal `install_phase_bypass` permit) when this path is taken, to make bypass events visible in the audit trail.
 3. Consider whether the install phase bypass can be narrowed to specific action classes (e.g., only `package.management.*`) rather than blanket permit.
 
+**Mitigation applied:**
+Remediation item 1 is addressed. A "Production Deployment" section has been added to `docs/installation.md` documenting the `OPENAUTH_FORCE_ACTIVE=1` requirement with Docker and systemd configuration examples. Items 2 and 3 remain open for a future engineering pass.
+
 ---
 
 ### F-02 — In-Memory Token Consumption Tracking
 
 **Severity:** Medium
 **File:** `src/hitl/approval-manager.ts` (consumption store)
-**Status:** Open
+**Status:** Documented limit; persistent revocation deferred
 
 **Description:**
 The `ApprovalManager` tracks consumed capability tokens in memory. If the plugin process restarts, the consumed-token set is lost. An attacker who can force a process restart (e.g., via crash, SIGKILL, or container restart) immediately after a capability is issued — but before it is consumed — may be able to replay the capability token after the restart.
@@ -277,10 +280,12 @@ The following findings are classified as requiring resolution before the v1 rele
 
 | Finding | Description | Owner | Due |
 |---|---|---|---|
-| F-01 | Add `OPENAUTH_FORCE_ACTIVE=1` to production deployment docs; add audit log warning for install-phase bypass | Engineering | Before v1 |
-| F-02 | Document in-memory consumption limitation in `docs/installation.md`; production deployments must use persistent revocation via Firma remote adapter | Engineering | Before v1 |
+| F-01 | ~~Add `OPENAUTH_FORCE_ACTIVE=1` to production deployment docs~~ (done); ~~add to `docs/configuration.md` env-vars table and production example~~ (done); add audit log warning for install-phase bypass | Engineering | Partially resolved — deployment docs updated; audit log warning outstanding |
+| F-02 | ~~Document in-memory consumption limitation in `docs/installation.md`~~ (done); ~~document in-memory revocation limitation in `docs/installation.md` Known Limits section~~ (done); production deployments must migrate to Firma remote adapter for persistent revocation when adapter ships | Engineering | Deferred to Firma adapter |
 | F-05 (blocker) | `unsafe_legacy` must not be implemented without satisfying §4.3 requirements | Engineering | Before any `unsafe_legacy` PR |
 | F-06 (blocker) | CS-11 must not be implemented without satisfying §5.3 requirements | Engineering | Before any CS-11 PR |
+
+Ongoing security posture is reviewed quarterly via the G-06 process documented in `docs/operator-security-guide.md`.
 
 ---
 
@@ -306,3 +311,6 @@ The following steps are required to complete the external security review proces
 | Revision | Date | Author | Summary |
 |---|---|---|---|
 | rev 1 | April 2026 | Internal (pre-external-review) | Initial findings for enforcement gate; pre-implementation requirements for `unsafe_legacy` and CS-11 |
+| rev 2 | April 2026 | Engineering | F-01 mitigated via documentation: added "Production Deployment" section to `docs/installation.md` covering `OPENAUTH_FORCE_ACTIVE=1` for Docker and systemd |
+| rev 3 | April 2026 | Engineering | W8+W9 operator documentation (T92): created `docs/operator-security-guide.md` covering F-01 config, F-02 production guidance, `unsafe_admin_exec` operator procedures, and G-06 quarterly security audit process; added F-02 notice to `docs/installation.md`; added `OPENAUTH_FORCE_ACTIVE` to `docs/configuration.md` env-var table and production example; updated §6 remediation tracking |
+| rev 4 | April 2026 | Engineering | F-02 revocation documentation: added "Known Limits — F-02: In-Memory Revocation" section to `docs/installation.md` explaining that gateway restart clears pending revocations, when the limitation matters, mitigations for the file adapter, and the path to persistent revocation via the Firma remote adapter; updated F-02 status to "Documented limit; persistent revocation deferred" in §1 finding table and §3 finding body; updated §6 remediation tracking |

@@ -7,15 +7,20 @@
  * Action class: filesystem.delete
  */
 
-import { statSync, unlinkSync, rmdirSync } from 'node:fs';
+import { statSync, unlinkSync, rmdirSync, rmSync } from 'node:fs';
 import { resolve, normalize } from 'node:path';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 /** Input parameters for the delete_file tool. */
 export interface DeleteFileParams {
-  /** Path of the file or empty directory to delete. */
+  /** Path of the file or directory to delete. */
   path: string;
+  /**
+   * When `true`, recursively delete a non-empty directory and all its contents.
+   * Must be explicitly set to `true` to enable; omitting or `false` rejects non-empty directories.
+   */
+  recursive?: boolean;
 }
 
 /** Successful result from the delete_file tool. */
@@ -34,7 +39,7 @@ export interface DeleteFileResult {
  *
  * - `not-found`  — the path does not exist.
  * - `forbidden`  — the path is a protected critical system path.
- * - `not-empty`  — the path is a non-empty directory.
+ * - `not-empty`  — the path is a non-empty directory and `recursive` was not `true`.
  * - `fs-error`   — an unexpected filesystem error occurred during deletion.
  */
 export class DeleteFileError extends Error {
@@ -111,12 +116,12 @@ function isForbidden(resolvedPath: string): boolean {
  * Recursive deletion is not supported — non-empty directories will cause a
  * `not-empty` error to be thrown rather than silently deleting content.
  *
- * @param params                `{ path }` — path to the target to delete.
+ * @param params                `{ path, recursive? }` — path to the target to delete.
  * @returns                     `{ path }` — absolute path of the deleted target.
  *
  * @throws {DeleteFileError}    code `not-found`  when the path does not exist.
  * @throws {DeleteFileError}    code `forbidden`  when the path is a protected system path.
- * @throws {DeleteFileError}    code `not-empty`  when the path is a non-empty directory.
+ * @throws {DeleteFileError}    code `not-empty`  when the path is a non-empty directory and `recursive` is not `true`.
  * @throws {DeleteFileError}    code `fs-error`   for unexpected filesystem errors.
  */
 export function deleteFile(params: DeleteFileParams): DeleteFileResult {
@@ -150,21 +155,33 @@ export function deleteFile(params: DeleteFileParams): DeleteFileResult {
   }
 
   if (isDirectory) {
-    // Delete the empty directory.
-    try {
-      rmdirSync(resolvedPath);
-    } catch (err: unknown) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code === 'ENOTEMPTY' || code === 'EEXIST') {
+    if (params.recursive === true) {
+      // Recursive deletion — removes all contents.
+      try {
+        rmSync(resolvedPath, { recursive: true, force: false });
+      } catch {
         throw new DeleteFileError(
-          `Directory is not empty: ${resolvedPath}`,
-          'not-empty',
+          `Failed to recursively delete directory: ${resolvedPath}`,
+          'fs-error',
         );
       }
-      throw new DeleteFileError(
-        `Failed to delete directory: ${resolvedPath}`,
-        'fs-error',
-      );
+    } else {
+      // Non-recursive — only delete empty directories.
+      try {
+        rmdirSync(resolvedPath);
+      } catch (err: unknown) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === 'ENOTEMPTY' || code === 'EEXIST') {
+          throw new DeleteFileError(
+            `Directory is not empty: ${resolvedPath}`,
+            'not-empty',
+          );
+        }
+        throw new DeleteFileError(
+          `Failed to delete directory: ${resolvedPath}`,
+          'fs-error',
+        );
+      }
     }
   } else {
     // Delete the file.

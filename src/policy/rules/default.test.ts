@@ -14,10 +14,11 @@ const EXPECTED_CRITICAL_CLASSES: readonly string[] = [
   'payment.initiate',
   'credential.read',
   'credential.write',
+  'credential.rotate',
 ];
 
 describe('OPEN_MODE_RULES', () => {
-  it('contains exactly the five critical action classes', () => {
+  it('contains exactly the six critical action classes', () => {
     const classes = OPEN_MODE_RULES
       .map((r) => r.action_class)
       .filter((c): c is string => c !== undefined)

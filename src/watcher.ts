@@ -23,10 +23,19 @@ const KNOWN_RULE_FILES: Record<string, string> = {
   default: './policy/rules/default.js',
 };
 
-/** Resolve path to data/rules.json relative to the plugin root. */
+/** Resolve paths to data/bundle.json and data/rules.json relative to the plugin root. */
 const __srcDir = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = resolve(__srcDir, '..');
+const JSON_BUNDLE_FILE = resolve(PLUGIN_ROOT, 'data', 'bundle.json');
 const JSON_RULES_FILE = resolve(PLUGIN_ROOT, 'data', 'rules.json');
+
+/**
+ * Returns the active JSON rules file path.
+ * data/bundle.json takes precedence over data/rules.json when present.
+ */
+export function resolveActiveJsonRulesFile(): string {
+  return existsSync(JSON_BUNDLE_FILE) ? JSON_BUNDLE_FILE : JSON_RULES_FILE;
+}
 
 interface JsonRule {
   id?: string;
@@ -39,16 +48,35 @@ interface JsonRule {
 }
 
 /**
- * Loads rules from the UI-managed data/rules.json file and converts them
- * to Cedar Rule objects.
+ * Loads rules from the UI-managed data/bundle.json (preferred) or
+ * data/rules.json (fallback) file and converts them to Cedar Rule objects.
+ *
+ * Accepts both formats:
+ *  - bundle.json: `{ version, rules, checksum }` object — `rules` array is extracted.
+ *  - rules.json:  plain JSON array of rule objects.
  */
-function loadJsonRules(filePath: string = JSON_RULES_FILE): Rule[] {
+function loadJsonRules(filePath: string = resolveActiveJsonRulesFile()): Rule[] {
   try {
     if (!existsSync(filePath)) return [];
     const raw = readFileSync(filePath, 'utf-8');
     const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return (parsed as JsonRule[])
+
+    // Detect format: bundle.json has { version, rules } shape; rules.json is a plain array.
+    let rulesArray: unknown[];
+    if (Array.isArray(parsed)) {
+      rulesArray = parsed;
+    } else if (
+      parsed !== null &&
+      typeof parsed === 'object' &&
+      'rules' in (parsed as object) &&
+      Array.isArray((parsed as { rules: unknown }).rules)
+    ) {
+      rulesArray = (parsed as { rules: unknown[] }).rules;
+    } else {
+      return [];
+    }
+
+    return (rulesArray as JsonRule[])
       .filter((r) => r.effect && r.resource && r.match)
       .map((r) => {
         const rule: Rule = {
@@ -212,7 +240,7 @@ export function startRulesWatcher(
       const allRules = buildMergedFromCache();
       rebuildEngine(allRules);
       coverageMap?.reset();
-      logRules(jsonRules, 'UI (data/rules.json)');
+      logRules(jsonRules, 'UI (data/bundle.json | data/rules.json)');
       console.log(
         `[hot-reload] reloaded UI rules - ${allRules.length} rule${allRules.length !== 1 ? 's' : ''} total`,
       );
@@ -235,7 +263,7 @@ export function startRulesWatcher(
     debounceTimer = setTimeout(() => reload(filePath), debounceMs);
   });
 
-  // Watch data/rules.json for UI-managed rules
+  // Watch data/rules.json for UI-managed rules (legacy format fallback)
   let jsonDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   const jsonWatcher = chokidar.watch(JSON_RULES_FILE, {
     persistent: false,
@@ -251,6 +279,28 @@ export function startRulesWatcher(
     jsonDebounceTimer = setTimeout(reloadJsonRules, debounceMs);
   });
 
+  // Watch data/bundle.json — takes precedence over rules.json when present.
+  // Also handles 'unlink' so that deleting bundle.json falls back to rules.json.
+  let bundleDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  const bundleWatcher = chokidar.watch(JSON_BUNDLE_FILE, {
+    persistent: false,
+    ignoreInitial: true,
+  });
+
+  bundleWatcher.on('change', () => {
+    if (bundleDebounceTimer !== null) clearTimeout(bundleDebounceTimer);
+    bundleDebounceTimer = setTimeout(reloadJsonRules, debounceMs);
+  });
+  bundleWatcher.on('add', () => {
+    if (bundleDebounceTimer !== null) clearTimeout(bundleDebounceTimer);
+    bundleDebounceTimer = setTimeout(reloadJsonRules, debounceMs);
+  });
+  bundleWatcher.on('unlink', () => {
+    // bundle.json removed — fall back to rules.json automatically
+    if (bundleDebounceTimer !== null) clearTimeout(bundleDebounceTimer);
+    bundleDebounceTimer = setTimeout(reloadJsonRules, debounceMs);
+  });
+
   // Initial load of JSON rules — rebuild the engine so the ref is replaced with
   // a new instance that includes both JSON rules and any pre-compiled TypeScript
   // rules passed via `initialRules`.
@@ -261,11 +311,12 @@ export function startRulesWatcher(
       ? [...jsonRules, ...initialRules]
       : buildMergedFromCache();
     rebuildEngine(allRules);
-    logRules(jsonRules, 'UI (data/rules.json)');
+    logRules(jsonRules, 'UI (data/bundle.json | data/rules.json)');
   }
 
   console.log(`[hot-reload] watching ${watchPath} for rule changes`);
   console.log(`[hot-reload] watching ${JSON_RULES_FILE} for UI rule changes`);
+  console.log(`[hot-reload] watching ${JSON_BUNDLE_FILE} for bundle rule changes (takes precedence)`);
 
   return {
     async stop(): Promise<void> {
@@ -277,8 +328,13 @@ export function startRulesWatcher(
         clearTimeout(jsonDebounceTimer);
         jsonDebounceTimer = null;
       }
+      if (bundleDebounceTimer !== null) {
+        clearTimeout(bundleDebounceTimer);
+        bundleDebounceTimer = null;
+      }
       await tsWatcher.close();
       await jsonWatcher.close();
+      await bundleWatcher.close();
       console.log('[hot-reload] watchers stopped');
     },
   };

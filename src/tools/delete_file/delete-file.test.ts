@@ -8,6 +8,7 @@
  *   TC-DF-01: Successful delete operations
  *   TC-DF-02: Error handling (not-found, not-empty, forbidden)
  *   TC-DF-03: Result shape
+ *   TC-DF-04: Recursive deletion
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -263,6 +264,105 @@ describe('TC-DF-02: error handling', () => {
     }
 
     // Must be forbidden, not not-found or fs-error
+    expect(err!.code).toBe('forbidden');
+  });
+});
+
+// ─── TC-DF-04: Recursive deletion ────────────────────────────────────────────
+
+describe('TC-DF-04: recursive deletion', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = makeTempDir();
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('deletes a non-empty directory when recursive: true', () => {
+    const target = join(dir, 'non-empty-dir');
+    mkdirSync(target);
+    writeFileSync(join(target, 'child.txt'), 'content');
+
+    deleteFile({ path: target, recursive: true });
+
+    expect(existsSync(target)).toBe(false);
+  });
+
+  it('returns resolved absolute path of recursively deleted directory', () => {
+    const target = join(dir, 'non-empty-dir');
+    mkdirSync(target);
+    writeFileSync(join(target, 'child.txt'), 'content');
+
+    const result = deleteFile({ path: target, recursive: true });
+
+    expect(result.path).toBe(target);
+  });
+
+  it('deletes deeply nested directory tree when recursive: true', () => {
+    const target = join(dir, 'level1');
+    mkdirSync(join(target, 'level2', 'level3'), { recursive: true });
+    writeFileSync(join(target, 'level2', 'level3', 'deep.txt'), 'deep');
+    writeFileSync(join(target, 'level2', 'mid.txt'), 'mid');
+    writeFileSync(join(target, 'top.txt'), 'top');
+
+    deleteFile({ path: target, recursive: true });
+
+    expect(existsSync(target)).toBe(false);
+  });
+
+  it('deletes empty directory when recursive: true (still works)', () => {
+    const target = join(dir, 'empty-dir');
+    mkdirSync(target);
+
+    deleteFile({ path: target, recursive: true });
+
+    expect(existsSync(target)).toBe(false);
+  });
+
+  it('still throws not-empty when recursive is false', () => {
+    const target = join(dir, 'non-empty-dir');
+    mkdirSync(target);
+    writeFileSync(join(target, 'child.txt'), 'content');
+
+    let err: DeleteFileError | undefined;
+    try {
+      deleteFile({ path: target, recursive: false });
+    } catch (e) {
+      err = e as DeleteFileError;
+    }
+
+    expect(err).toBeInstanceOf(DeleteFileError);
+    expect(err!.code).toBe('not-empty');
+  });
+
+  it('still throws not-empty when recursive is omitted', () => {
+    const target = join(dir, 'non-empty-dir');
+    mkdirSync(target);
+    writeFileSync(join(target, 'child.txt'), 'content');
+
+    let err: DeleteFileError | undefined;
+    try {
+      deleteFile({ path: target });
+    } catch (e) {
+      err = e as DeleteFileError;
+    }
+
+    expect(err).toBeInstanceOf(DeleteFileError);
+    expect(err!.code).toBe('not-empty');
+  });
+
+  it('forbidden check still applies when recursive: true', () => {
+    let err: DeleteFileError | undefined;
+    try {
+      deleteFile({ path: '/etc', recursive: true });
+    } catch (e) {
+      err = e as DeleteFileError;
+    }
+
+    expect(err).toBeInstanceOf(DeleteFileError);
     expect(err!.code).toBe('forbidden');
   });
 });

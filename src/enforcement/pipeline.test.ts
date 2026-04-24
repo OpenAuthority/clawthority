@@ -337,5 +337,21 @@ describe('runPipeline', () => {
       expect(stage1).toHaveBeenCalledOnce();
       expect(stage2).toHaveBeenCalledOnce();
     });
+
+    // T21 — single bypass point: pipeline.ts is the sole location that calls
+    // isInstallPhase(); verify all four lifecycle events bypass via runPipeline
+    // with stage='pipeline', confirming no duplicate bypass exists elsewhere.
+    it.each(['preinstall', 'prepare'] as const)(
+      'runPipeline bypasses via pipeline stage for npm_lifecycle_event=%s',
+      async (event) => {
+        process.env.npm_lifecycle_event = event;
+        const result = await runPipeline(makeCtx(), stage1, stage2, emitter);
+        expect(result.decision.effect).toBe('permit');
+        expect(result.decision.reason).toBe('install_phase_bypass');
+        expect(result.decision.stage).toBe('pipeline');
+        expect(stage1).not.toHaveBeenCalled();
+        expect(stage2).not.toHaveBeenCalled();
+      },
+    );
   });
 });

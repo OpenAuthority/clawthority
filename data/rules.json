@@ -1,0 +1,214 @@
+[
+  {
+    "effect": "forbid",
+    "action_class": "shell.exec",
+    "priority": 100,
+    "reason": "shell.exec is unconditionally forbidden at priority 100 and cannot be overridden by any lower-priority permit. Replace shell.exec usage with fine-grained tools: filesystem.read, filesystem.write, filesystem.list, filesystem.delete, web.search, web.fetch, or web.post.",
+    "tags": ["system", "security", "audit"]
+  },
+
+  {
+    "effect": "forbid",
+    "resource": "tool",
+    "match": "unsafe_admin_exec",
+    "priority": 95,
+    "reason": "unsafe_admin_exec is a legacy privileged-execution wrapper whose action_class is shell.exec — already unconditionally forbidden at priority 100. This tool-level entry makes the restriction explicit and prevents accidental permit rules from lower-priority entries. Operators who need limited privileged execution must configure explicit HITL approval and restrict commands to a documented allowlist.",
+    "tags": ["system", "security", "audit", "legacy"]
+  },
+
+  {
+    "effect": "forbid",
+    "action_class": "credential.list",
+    "priority": 90,
+    "reason": "Enumerating credential keys exposes the full secret namespace and is treated with the same HITL-gated caution as credential.read, credential.write, and credential.rotate. Operators who need automated listing may lower the priority or narrow the scope using allowed_key_prefixes.",
+    "tags": ["credential", "hitl", "security"],
+    "allowed_key_prefixes": ["app/", "service/"]
+  },
+
+  {
+    "effect": "permit",
+    "action_class": "vcs.remote",
+    "priority": 60,
+    "reason": "VCS remote operations (git clone, git push) communicate with upstream repositories and carry network-side effects. Permitted by default; operators should restrict to internal or allowlisted remote URLs in high-security environments.",
+    "tags": ["vcs", "remote", "network"]
+  },
+
+  {
+    "effect": "permit",
+    "action_class": "communication.email",
+    "priority": 60,
+    "reason": "Outbound email is permitted by default. Operators SHOULD restrict to an approved sender domain and recipient list to prevent data exfiltration. Set allowed_recipient_domains to your organisation's domains and allowed_recipients to a fixed list for tighter control.",
+    "tags": ["communication", "email", "external"],
+    "allowed_recipient_domains": ["@example.com"],
+    "allowed_recipients": []
+  },
+
+  {
+    "effect": "permit",
+    "action_class": "package.install",
+    "priority": 50,
+    "reason": "Package installation (e.g. npm install) modifies the dependency tree and may fetch code from external registries. Permitted by default for development environments. In production or locked environments, consider restricting to a private registry or setting effect to forbid.",
+    "tags": ["package", "build", "network"]
+  },
+
+  {
+    "effect": "permit",
+    "action_class": "web.post",
+    "priority": 50,
+    "reason": "HTTP mutation methods (POST, PUT, PATCH, DELETE) send data to external services. Permitted by default. Operators should restrict to an approved URL allowlist using allowed_url_patterns to prevent data leakage to arbitrary endpoints.",
+    "tags": ["web", "http", "external", "network"],
+    "allowed_url_patterns": ["https://api.example.com/**"]
+  },
+
+  {
+    "effect": "permit",
+    "action_class": "communication.webhook",
+    "priority": 50,
+    "reason": "Outbound webhook calls deliver payloads to external HTTP endpoints. Permitted by default. Operators should restrict to approved webhook URLs using allowed_url_patterns to prevent exfiltration or SSRF.",
+    "tags": ["communication", "webhook", "external", "network"],
+    "allowed_url_patterns": ["https://hooks.example.com/**"]
+  },
+
+  {
+    "effect": "permit",
+    "action_class": "communication.slack",
+    "priority": 50,
+    "reason": "Slack messaging is permitted by default. Operators should restrict to approved channels using allowed_channels to limit blast radius and prevent data leakage across workspace channels.",
+    "tags": ["communication", "slack", "external"],
+    "allowed_channels": ["#general", "#notifications", "#alerts"]
+  },
+
+  {
+    "effect": "permit",
+    "action_class": "vcs.write",
+    "priority": 40,
+    "reason": "VCS write operations (git add, branch, checkout, commit, merge, reset) modify local repository state. Permitted by default. Remote-side effects are governed separately by the vcs.remote policy.",
+    "tags": ["vcs", "write"]
+  },
+
+  {
+    "effect": "permit",
+    "action_class": "filesystem.write",
+    "priority": 40,
+    "reason": "Filesystem write operations are permitted by default. Operators should restrict to project workspace paths using allowed_paths to prevent writes to sensitive system locations.",
+    "tags": ["filesystem", "write"],
+    "allowed_paths": ["/workspace/**", "/home/**", "/tmp/**"]
+  },
+
+  {
+    "effect": "permit",
+    "action_class": "web.fetch",
+    "priority": 40,
+    "reason": "HTTP GET and HEAD fetches are permitted by default. Operators should restrict to HTTPS-only and allowlisted domains using allowed_url_patterns to prevent SSRF against internal services.",
+    "tags": ["web", "http", "network"],
+    "allowed_url_patterns": ["https://**"]
+  },
+
+  {
+    "effect": "permit",
+    "action_class": "browser.scrape",
+    "priority": 40,
+    "reason": "Browser-based page scraping is permitted by default. Operators should restrict to HTTPS targets and allowlisted domains using allowed_url_patterns.",
+    "tags": ["web", "browser", "network"],
+    "allowed_url_patterns": ["https://**"]
+  },
+
+  {
+    "effect": "permit",
+    "action_class": "build.compile",
+    "priority": 40,
+    "reason": "Compilation tasks (e.g. npm run build) are permitted by default for development and CI environments. Operators can restrict to allowlisted build scripts if needed.",
+    "tags": ["build", "compile"]
+  },
+
+  {
+    "effect": "permit",
+    "action_class": "package.run",
+    "priority": 40,
+    "reason": "Package script execution (e.g. npm run <script>) is permitted by default. Operators should review the set of permitted script names in high-security environments.",
+    "tags": ["package", "build"]
+  },
+
+  {
+    "effect": "permit",
+    "action_class": "archive.create",
+    "priority": 40,
+    "reason": "Archive creation compresses files into a single artifact. Permitted by default. Operators should restrict source paths using allowed_paths to prevent bundling of sensitive files.",
+    "tags": ["archive", "write"],
+    "allowed_paths": ["/workspace/**"]
+  },
+
+  {
+    "effect": "permit",
+    "action_class": "archive.extract",
+    "priority": 40,
+    "reason": "Archive extraction writes files to the target directory. Permitted by default. Operators should restrict the destination path using allowed_paths to prevent path-traversal writes outside the workspace.",
+    "tags": ["archive", "write"],
+    "allowed_paths": ["/workspace/**", "/tmp/**"]
+  },
+
+  {
+    "effect": "permit",
+    "action_class": "web.search",
+    "priority": 30,
+    "reason": "Web search is read-only and carries no mutation risk. Permitted by default for all agents.",
+    "tags": ["web", "search", "read-only"]
+  },
+
+  {
+    "effect": "permit",
+    "action_class": "build.test",
+    "priority": 30,
+    "reason": "Running test suites is a safe, read-oriented operation that does not mutate external state. Permitted by default.",
+    "tags": ["build", "test"]
+  },
+
+  {
+    "effect": "permit",
+    "action_class": "vcs.read",
+    "priority": 20,
+    "reason": "VCS read operations (git diff, log, status) are non-mutating and safe by default.",
+    "tags": ["vcs", "read-only"]
+  },
+
+  {
+    "effect": "permit",
+    "action_class": "filesystem.list",
+    "priority": 20,
+    "reason": "Directory listing is a read-only operation and is permitted by default. Operators may restrict to specific paths using allowed_paths if directory enumeration of sensitive areas is a concern.",
+    "tags": ["filesystem", "read-only"],
+    "allowed_paths": ["/workspace/**", "/home/**"]
+  },
+
+  {
+    "effect": "permit",
+    "action_class": "system.read",
+    "priority": 20,
+    "reason": "System information reads (environment variables, system metadata) are non-mutating. Permitted by default. Note: environment variables may contain secrets — operators with strict secret hygiene should consider a narrower allowed_env_vars list.",
+    "tags": ["system", "read-only"]
+  },
+
+  {
+    "effect": "permit",
+    "action_class": "package.read",
+    "priority": 20,
+    "reason": "Package enumeration (e.g. pip list, npm list) is a read-only introspection operation with no external side effects.",
+    "tags": ["package", "read-only"]
+  },
+
+  {
+    "effect": "permit",
+    "action_class": "build.lint",
+    "priority": 20,
+    "reason": "Linting is a read-only static-analysis pass with no external side effects. Permitted for all agents.",
+    "tags": ["build", "lint", "read-only"]
+  },
+
+  {
+    "effect": "permit",
+    "action_class": "archive.read",
+    "priority": 20,
+    "reason": "Archive listing inspects an archive's table of contents without extracting files. Safe and read-only.",
+    "tags": ["archive", "read-only"]
+  }
+]

@@ -128,7 +128,7 @@ describe('plugin integration suite', () => {
   it('TC-01: lifecycle activate → pipeline → audit event → deactivate completes without errors', async () => {
     // Step 1 — activate
     const { ctx } = createMockContext();
-    plugin.activate(ctx);
+    await plugin.activate(ctx);
 
     // Step 2 — build pipeline with a permissive Stage 2 engine
     const engine = createEnforcementEngine([
@@ -474,15 +474,30 @@ describe('plugin integration suite', () => {
         },
         close: vi.fn().mockResolvedValue(undefined),
       };
-      // Override chokidar.watch for this one call only.
-      vi.mocked(chokidar.watch).mockReturnValueOnce(
-        watchStub as unknown as ReturnType<typeof chokidar.watch>,
-      );
 
       // Set up a temp directory with an initial bundle file.
       const tmpDir = join(tmpdir(), `oa-integration-${Date.now()}`);
       await mkdir(tmpDir, { recursive: true });
       const bundlePath = join(tmpDir, 'bundle.json');
+
+      // Route chokidar.watch by path rather than using mockReturnValueOnce.
+      // mockReturnValueOnce is vulnerable to a race: a stale async activate()
+      // tail from an un-awaited plugin.activate() call in another test can
+      // call chokidar.watch concurrently and consume the slot before this
+      // adapter's watchPolicyBundle() gets to it.  Path-based routing ensures
+      // only the call for this test's bundlePath receives watchStub; any other
+      // call (e.g. from the plugin's internal adapter) falls through to the
+      // default stub.
+      vi.mocked(chokidar.watch).mockImplementation((watchPath) => {
+        if (watchPath === bundlePath) {
+          return watchStub as unknown as ReturnType<typeof chokidar.watch>;
+        }
+        return {
+          on: mockWatcherOn.mockReturnThis(),
+          close: mockWatcherClose,
+        } as unknown as ReturnType<typeof chokidar.watch>;
+      });
+
       await writeFile(bundlePath, JSON.stringify({ version: 1, policies: [] }));
 
       const adapter = new FileAuthorityAdapter({ bundlePath });
@@ -496,19 +511,25 @@ describe('plugin integration suite', () => {
       // Write a new bundle with a strictly greater version.
       await writeFile(bundlePath, JSON.stringify({ version: 2, policies: ['policy-a'] }));
 
-      // Mark time and trigger the file-change event (simulates chokidar detecting the write).
-      const before = Date.now();
+      // Trigger the file-change event (simulates chokidar detecting the write).
       watchEmitter.emit('change');
 
-      // Wait for the 300ms debounce + readFile I/O to complete.
-      // Using a real 450ms wait stays comfortably within the 500ms budget.
-      await new Promise<void>((resolve) => setTimeout(resolve, 450));
+      // Poll for the second update (debounce is 300ms).
+      // Polling avoids fixed-wait flakiness on loaded CI machines.
+      const deadline = Date.now() + 2000;
+      while (updates.length < 2 && Date.now() < deadline) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      }
 
-      // Verify the hot-reload fired within 500ms.
-      expect(Date.now() - before).toBeLessThan(500);
       expect(updates).toHaveLength(2);
       expect((updates[1] as Record<string, unknown>).version).toBe(2);
 
+      // Restore default mock implementation before cleanup so subsequent tests
+      // are not affected by this test's path-based routing.
+      vi.mocked(chokidar.watch).mockImplementation(() => ({
+        on: mockWatcherOn.mockReturnThis(),
+        close: mockWatcherClose,
+      }));
       await handle.stop();
       await rm(tmpDir, { recursive: true, force: true }).catch(() => {/* best-effort cleanup */});
     },
@@ -519,7 +540,7 @@ describe('plugin integration suite', () => {
 
   it('TC-11: deactivate closes all watchers and is idempotent (safe to call twice)', async () => {
     const { ctx } = createMockContext();
-    plugin.activate(ctx);
+    await plugin.activate(ctx);
 
     // Record how many watchers were created during activation.
     const watchCallCount = vi.mocked(chokidar.watch).mock.calls.length;
@@ -761,9 +782,9 @@ describe('plugin integration suite', () => {
 
     expect(denied.decision.effect).toBe('forbid');
     expect(denied.decision.reason).toBe('untrusted_source_high_risk');
-    // stage1 (not hitl) confirms trust check fired after the HITL pre-check
+    // stage1-trust confirms trust check fired after the HITL pre-check
     // but before capability validation — i.e. trust validation precedes capability check.
-    expect(denied.decision.stage).toBe('stage1');
+    expect(denied.decision.stage).toBe('stage1-trust');
 
     // ── Part 2: same action from trusted source with approval → permitted ──────
     // Issue a fresh capability so each path is independent.

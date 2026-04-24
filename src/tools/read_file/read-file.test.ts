@@ -8,6 +8,7 @@
  *   TC-RFT-01: Successful read operations
  *   TC-RFT-02: Content fidelity operations
  *   TC-RFT-03: Error handling
+ *   TC-RFT-04: Path traversal protection
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -229,5 +230,92 @@ describe('TC-RFT-03: error handling', () => {
     }
 
     expect(err!.message).toContain(tempDir);
+  });
+});
+
+// ─── TC-RFT-04: Path traversal protection ────────────────────────────────────
+
+describe('TC-RFT-04: path traversal protection', () => {
+  it('throws ReadFileError with code forbidden for root path', () => {
+    let err: ReadFileError | undefined;
+    try {
+      readFile({ path: '/' });
+    } catch (e) {
+      err = e as ReadFileError;
+    }
+
+    expect(err).toBeInstanceOf(ReadFileError);
+    expect(err!.code).toBe('forbidden');
+  });
+
+  it('throws ReadFileError with code forbidden for /etc', () => {
+    let err: ReadFileError | undefined;
+    try {
+      readFile({ path: '/etc' });
+    } catch (e) {
+      err = e as ReadFileError;
+    }
+
+    expect(err).toBeInstanceOf(ReadFileError);
+    expect(err!.code).toBe('forbidden');
+  });
+
+  it('throws ReadFileError with code forbidden for /usr/bin', () => {
+    let err: ReadFileError | undefined;
+    try {
+      readFile({ path: '/usr/bin' });
+    } catch (e) {
+      err = e as ReadFileError;
+    }
+
+    expect(err).toBeInstanceOf(ReadFileError);
+    expect(err!.code).toBe('forbidden');
+  });
+
+  it('forbidden error message includes the path', () => {
+    let err: ReadFileError | undefined;
+    try {
+      readFile({ path: '/etc' });
+    } catch (e) {
+      err = e as ReadFileError;
+    }
+
+    expect(err!.message).toContain('/etc');
+  });
+
+  it('forbidden check runs before filesystem access for protected paths', () => {
+    let err: ReadFileError | undefined;
+    try {
+      readFile({ path: '/etc' });
+    } catch (e) {
+      err = e as ReadFileError;
+    }
+
+    // Must be forbidden, not not-found or fs-error
+    expect(err!.code).toBe('forbidden');
+  });
+
+  it('resolves path traversal sequences before checking forbidden paths', () => {
+    // /etc/.. resolves to / which is forbidden
+    let err: ReadFileError | undefined;
+    try {
+      readFile({ path: '/etc/..' });
+    } catch (e) {
+      err = e as ReadFileError;
+    }
+
+    expect(err).toBeInstanceOf(ReadFileError);
+    expect(err!.code).toBe('forbidden');
+  });
+
+  it('thrown ReadFileError has name "ReadFileError" for forbidden paths', () => {
+    let err: ReadFileError | undefined;
+    try {
+      readFile({ path: '/' });
+    } catch (e) {
+      err = e as ReadFileError;
+    }
+
+    expect(err!.name).toBe('ReadFileError');
   });
 });

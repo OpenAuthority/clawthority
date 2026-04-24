@@ -26,6 +26,7 @@ export const writeFileManifest: ToolManifest = {
         description: 'UTF-8 text content to write to the file.',
       },
     },
+    required: ['path', 'content'],
     additionalProperties: false,
   },
   result: {

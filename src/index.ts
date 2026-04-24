@@ -143,13 +143,19 @@ import { SlackInteractionServer, sendSlackApprovalRequest, sendSlackConfirmation
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { resolve, dirname, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BUILD_VERSION, BUILD_COMMIT, BUILD_DIRTY, BUILD_AT } from "./build-info.js";
 import { normalize_action, sortedJsonStringify, getRegistryEntry } from "./enforcement/normalize.js";
-import { buildEnvelope } from "./envelope.js";
 import { defaultAgentIdentityRegistry } from "./identity.js";
 import { BudgetTracker, createBudgetTracker } from "./budget/tracker.js";
+import { EventEmitter } from "node:events";
+import { runPipeline, isInstallPhase } from "./enforcement/pipeline.js";
+import type { PipelineContext, Stage1Fn, Stage2Fn, CeeDecision } from "./enforcement/pipeline.js";
+import { validateCapability } from "./enforcement/stage1-capability.js";
+import { createCombinedStage2 } from "./enforcement/stage2-policy.js";
+import { FileAuthorityAdapter } from "./adapter/file-adapter.js";
+import type { WatchHandle } from "./adapter/types.js";
 
 /**
  * Resolved identity view used by audit and HITL call sites. Derived from
@@ -389,6 +395,18 @@ const jsonRulesEngineRef: { current: CedarPolicyEngine | null } = {
 };
 
 /**
+ * File-based authority adapter instance, created during activate() with the
+ * same data directory used by loadJsonRules(). null until activate() runs.
+ */
+let adapterRef: FileAuthorityAdapter | null = null;
+
+/**
+ * WatchHandle returned by adapterRef.watchPolicyBundle(). Stored so it can
+ * be stopped in deactivate() to avoid leaked chokidar watchers.
+ */
+let adapterBundleWatchHandle: WatchHandle | null = null;
+
+/**
  * JSON rule record as written in data/rules.json.
  *
  * Three matching forms are supported (one per rule):
@@ -445,11 +463,15 @@ interface JsonRuleRecord {
 async function loadJsonRules(): Promise<void> {
   try {
     const moduleDir = dirname(fileURLToPath(import.meta.url));
-    // data/rules.json sits two levels up from dist/ (project root/data/).
-    // `CLAWTHORITY_RULES_FILE` overrides this for non-standard install
-    // layouts and for tests that need to inject a fixture.
+    // data/bundle.json (preferred) or data/rules.json (fallback) sit two levels
+    // up from dist/ (project root/data/).  bundle.json takes precedence when
+    // present; this mirrors the watcher resolveActiveJsonRulesFile() logic.
+    // `CLAWTHORITY_RULES_FILE` overrides both for non-standard install layouts
+    // and for tests that need to inject a fixture.
+    const bundleFilePath = resolve(moduleDir, "../../data/bundle.json");
+    const rulesFilePath = resolve(moduleDir, "../../data/rules.json");
     const rulesPath = process.env['CLAWTHORITY_RULES_FILE']
-      ?? resolve(moduleDir, "../../data/rules.json");
+      ?? (existsSync(bundleFilePath) ? bundleFilePath : rulesFilePath);
 
     let raw: string;
     try {
@@ -457,15 +479,44 @@ async function loadJsonRules(): Promise<void> {
     } catch (readErr: unknown) {
       const code = (readErr as NodeJS.ErrnoException).code;
       if (code === "ENOENT") {
-        console.log("[plugin:clawthority] no data/rules.json found — skipping JSON rule load");
+        console.log("[plugin:clawthority] no data/bundle.json or data/rules.json found — skipping JSON rule load");
         return;
       }
       throw readErr;
     }
 
-    const records: JsonRuleRecord[] = JSON.parse(raw);
-    if (!Array.isArray(records)) {
-      throw new TypeError("data/rules.json must be a JSON array of rule objects");
+    const parsed: unknown = JSON.parse(raw);
+
+    // Accept both formats:
+    //   bundle.json → { version, rules, checksum } object; extract rules array.
+    //   rules.json  → plain JSON array of rule objects.
+    let records: JsonRuleRecord[];
+    if (Array.isArray(parsed)) {
+      records = parsed as JsonRuleRecord[];
+    } else if (
+      parsed !== null &&
+      typeof parsed === 'object' &&
+      'rules' in (parsed as object) &&
+      Array.isArray((parsed as { rules: unknown }).rules)
+    ) {
+      records = (parsed as { rules: JsonRuleRecord[] }).rules;
+    } else {
+      throw new TypeError("Rules file must be a JSON array or a bundle object with a 'rules' array");
+    }
+
+    // Reject any permit rule targeting shell.exec — this class is
+    // unconditionally forbidden at priority 100 and cannot be overridden
+    // via data/rules.json. Any such entry indicates a misconfiguration.
+    const shellExecPermitIdx = records.findIndex(
+      (rec) => rec.effect === 'permit' && rec.action_class === 'shell.exec'
+    );
+    if (shellExecPermitIdx !== -1) {
+      throw new TypeError(
+        `data/rules.json rule[${shellExecPermitIdx}]: shell.exec cannot be permitted — ` +
+        'it is unconditionally forbidden at priority 100. ' +
+        'Replace shell.exec usage with fine-grained tools: filesystem.read, filesystem.write, ' +
+        'filesystem.list, web.search, web.fetch, or web.post.'
+      );
     }
 
     const cedarRules: Rule[] = records.map((rec, i) => {
@@ -541,9 +592,10 @@ async function loadJsonRules(): Promise<void> {
     engine.addRules(cedarRules);
     jsonRulesEngineRef.current = engine;
 
-    console.log(`[plugin:clawthority] loaded ${cedarRules.length} rule(s) from data/rules.json`);
+    const activeFile = basename(rulesPath);
+    console.log(`[plugin:clawthority] loaded ${cedarRules.length} rule(s) from data/${activeFile}`);
   } catch (err) {
-    console.error("[plugin:clawthority] failed to load data/rules.json — JSON rules will not be enforced:", err);
+    console.error("[plugin:clawthority] failed to load rules file — JSON rules will not be enforced:", err);
   }
 }
 
@@ -555,6 +607,9 @@ let hitlWatcher: HitlWatcherHandle | null = null;
 let telegramListener: TelegramListener | null = null;
 let slackInteractionServer: SlackInteractionServer | null = null;
 const approvalManager = new ApprovalManager();
+
+/** @deprecated Use per-call EventEmitter inside beforeToolCallHandler instead. */
+const pipelineEmitter = new EventEmitter();
 
 /** Maps HITL token → Slack message timestamp for chat.update on decision. */
 const slackMessageTimestamps = new Map<string, string>();
@@ -805,20 +860,6 @@ async function logHitlDecision(
 }
 
 /**
- * Determines the source trust level from the event source field.
- *
- * Mapping:
- *   'user'               → 'user'      (direct user instruction)
- *   'agent' | undefined  → 'agent'     (autonomous agent reasoning)
- *   anything else        → 'untrusted' (external content: web, file, email, etc.)
- */
-function determineSourceTrustLevel(source?: string): 'user' | 'agent' | 'untrusted' {
-  if (source === 'user') return 'user';
-  if (source === 'agent' || source === undefined) return 'agent';
-  return 'untrusted';
-}
-
-/**
  * Priority at or above which a Cedar `forbid` rule is treated as an
  * unconditional block. Rules below this threshold that carry an explicit
  * priority are treated as "HITL-gated forbids" — they block unless an HITL
@@ -865,11 +906,9 @@ const beforeToolCallHandler: BeforeToolCallHandler = async ({ toolName, params, 
     identity.channel,
   );
 
-  // ── 0. Source trust level determination ───────────────────────────────────
   const normalizedParams = (params !== null && typeof params === 'object' && !Array.isArray(params))
     ? (params as Record<string, unknown>)
     : {};
-  const sourceTrustLevel = determineSourceTrustLevel(source);
 
   // ── 0a. Tool registry gate — pre-normalization check ─────────────────────
   // Check whether the tool is present in the @openclaw/action-registry alias
@@ -894,28 +933,13 @@ const beforeToolCallHandler: BeforeToolCallHandler = async ({ toolName, params, 
   }
 
   const normalizedAction = normalize_action(toolName, normalizedParams);
-  console.log(`[clawthority] │ [trust] source=${source ?? "undefined"} → trustLevel=${sourceTrustLevel}  actionClass=${normalizedAction.action_class}  risk=${normalizedAction.risk}`);
+  console.log(`[clawthority] │ [trust] source=${source ?? "undefined"}  actionClass=${normalizedAction.action_class}  risk=${normalizedAction.risk}`);
 
   // Rules 4–8 (command-regex reclassification) were retired in commit 403cb72.
   // The `NormalizedAction.reclassification` field no longer exists; the
   // telemetry hook is dead code and has been removed.
 
-  // Build envelope to propagate trust context for audit and pipeline tracing.
-  const _envelope = buildEnvelope(
-    {
-      action_class: normalizedAction.action_class,
-      target: normalizedAction.target,
-      summary: `tool call: ${toolName}`,
-      payload_hash: createHash('sha256').update(sortedJsonStringify(normalizedParams)).digest('hex'),
-      parameters: normalizedParams,
-    },
-    null,
-    sourceTrustLevel,
-    ctx.agentId ?? 'unknown',
-    '',
-    0,
-    '',
-  );
+  const payloadHash = createHash('sha256').update(sortedJsonStringify(normalizedParams)).digest('hex');
 
   // Common audit-entry scaffolding — every block path fills these fields in
   // addition to its stage-specific details.
@@ -928,271 +952,142 @@ const beforeToolCallHandler: BeforeToolCallHandler = async ({ toolName, params, 
     mode: MODE,
   } as const;
 
-  // ── Stage 1: trust level gate ─────────────────────────────────────────────
-  // Untrusted sources (external content: web, file, email, etc.) are blocked
-  // from triggering high/critical-risk actions.
-  if (sourceTrustLevel === 'untrusted' && (normalizedAction.risk === 'high' || normalizedAction.risk === 'critical')) {
-    const blockReason = 'untrusted_source_high_risk';
-    console.log(`[clawthority] │ DECISION: ✕ BLOCKED (stage1/untrusted_source_high_risk) — actionClass=${normalizedAction.action_class} risk=${normalizedAction.risk}`);
-    console.log(`[clawthority] └──────────────────────────────────────────────────────`);
-    await logPolicyDecision({
+  // ── Build PipelineContext ─────────────────────────────────────────────────
+  // hitl_mode is set to 'none' so runPipeline's built-in HITL pre-check is
+  // bypassed; the existing HITL resolution stage below handles approval dispatch.
+  const pipelineCtx: PipelineContext = {
+    action_class: normalizedAction.action_class,
+    target: normalizedAction.target,
+    payload_hash: payloadHash,
+    hitl_mode: 'none',
+    rule_context: ruleContext,
+    risk: normalizedAction.risk,
+    ...(source !== undefined && { source }),
+    ...(normalizedAction.intent_group !== undefined && { intent_group: normalizedAction.intent_group }),
+  };
+
+  // Stage 1: capability gate — validates source trust level and risk via
+  // validateCapability (check 0: untrusted+high/critical → forbid; check 1:
+  // hitl_mode none → permit bypass so capability token checks are skipped).
+  const stage1: Stage1Fn = (pCtx) => validateCapability(pCtx, approvalManager, () => undefined);
+
+  // Stage 2: policy evaluation — delegates to createCombinedStage2 which
+  // consolidates the Cedar TS engine, the JSON rules engine, and intent-group
+  // evaluation into a single Stage2Fn. HITL-gated forbids (priority < 100)
+  // are returned as forbid decisions with their priority preserved so the
+  // post-pipeline handler can route them through HITL resolution.
+  const stage2 = createCombinedStage2(cedarEngineRef.current, jsonRulesEngineRef.current, toolName);
+
+  // ── Route all tool calls through runPipeline ─────────────────────────────
+  // A per-call EventEmitter is used instead of a module-level emitter to
+  // prevent cross-call listener interference under concurrent invocations.
+  // HITL-gated forbids (priority < 100) are NOT logged here; they are logged
+  // by the HITL resolution stage below once the final disposition is known.
+  const callEmitter = new EventEmitter();
+  callEmitter.once('executionEvent', ({ decision }: { decision: CeeDecision }) => {
+    // Permits are intentionally not logged (see logPolicyDecision comment above).
+    // pipeline_error fails closed without an audit entry — the error is already
+    // visible on stderr and a logged forbid with no rule context would be noise.
+    if (decision.effect !== 'forbid' || decision.reason === 'pipeline_error') return;
+    // HITL-gated forbids (priority < 100) are logged by HITL resolution below.
+    if (decision.priority !== undefined && decision.priority < UNCONDITIONAL_FORBID_PRIORITY) return;
+    const entry: Omit<PolicyDecisionEntry, 'ts' | 'type'> = {
       effect: 'forbid',
-      stage: 'stage1-trust',
       resource: 'tool',
       match: toolName,
-      reason: blockReason,
-      rule: `trust:${sourceTrustLevel}+${normalizedAction.risk}`,
+      reason: decision.reason,
       ...auditBase,
-    });
-    return { block: true, blockReason };
-  }
+    };
+    const policyStage = decision.stage as PolicyDecisionEntry['stage'];
+    if (policyStage !== undefined) entry.stage = policyStage;
+    if (decision.rule !== undefined) entry.rule = decision.rule;
+    if (decision.priority !== undefined) entry.priority = decision.priority;
+    void logPolicyDecision(entry);
+  });
+  const { decision: pipelineDecision } = await runPipeline(pipelineCtx, stage1, stage2, callEmitter);
 
-  // Rules with priority < UNCONDITIONAL_FORBID_PRIORITY are HITL-gated:
-  // their forbid defers to a matching HITL policy. If one matches and the
-  // operator approves, the tool call proceeds. If no policy matches or
-  // approval fails, the original forbid is upheld. Tracked here so we can
-  // resolve the final decision after running the HITL stage.
-  let pendingHitlGatedBlockReason: string | null = null;
-  let pendingHitlGatedSource: 'cedar' | 'json-rules' | null = null;
-  let pendingHitlGatedRule: Rule | undefined;
+  // Record tool coverage after pipeline completes.
+  coverageMap.record('tool', toolName, pipelineDecision.effect === 'permit' ? 'permit' : 'forbid');
 
-  // ── 1. Cedar engine (TypeScript rules, hot-reloaded) ──────────────────────
-  // Queries by the normalised action_class so the action_class-based rules
-  // in defaultRules / OPEN_MODE_RULES actually fire. The base engine's
-  // evaluateByActionClass() checks action_class forbids first, then
-  // delegates to .evaluate(resource, target, ctx) via the action-class →
-  // resource prefix map — so any resource/match rules continue to match as
-  // before, and the configured defaultEffect still applies when nothing
-  // matches.
-  try {
-    const decision = cedarEngineRef.current.evaluateByActionClass(
-      normalizedAction.action_class,
-      normalizedAction.target,
-      ruleContext,
-    );
-    console.log(`[clawthority] │ [cedar] matched: ${formatMatchedRule(decision.matchedRule)}`);
-    if (decision.matchedRule?.reason) console.log(`[clawthority] │ [cedar] reason: ${decision.matchedRule.reason}`);
-    if (decision.rateLimit) console.log(`[clawthority] │ [cedar] rate-limit: ${decision.rateLimit.currentCount}/${decision.rateLimit.maxCalls} per ${decision.rateLimit.windowSeconds}s${decision.rateLimit.limited ? " [EXCEEDED]" : ""}`);
-    // Phase 2: record in coverage map (rate-limited is a specialised forbid)
-    // Coverage is keyed by (resource, name) for dashboard continuity; a tool
-    // call is still the unit of interest regardless of which rule kind matched.
-    const covState = decision.rateLimit?.limited ? 'rate-limited' : decision.effect === 'permit' ? 'permit' : 'forbid';
-    coverageMap.record('tool', toolName, covState, decision.matchedRule);
-    if (decision.effect === "forbid") {
-      const blockReason = decision.reason ?? "Tool call denied by Cedar policy";
-      const priority = decision.matchedRule?.priority;
-      const ruleTag = formatRuleTag(decision.matchedRule);
-      // Closed-mode implicit deny (no matchedRule) is treated as HITL-gated:
-      // HITL is the operator's escape hatch for action classes without an
-      // explicit permit. If no HITL policy matches, the HITL stage still
-      // upholds the forbid, so closed-mode safety is preserved.
-      const isImplicitDeny = decision.matchedRule === undefined;
-      if (isHitlGatedForbid(decision.matchedRule) || isImplicitDeny) {
-        if (isImplicitDeny) {
-          console.log(`[clawthority] │ [cedar] ⏸ implicit-deny (closed mode, no matching rule) — will defer to HITL policy`);
-        } else {
-          console.log(`[clawthority] │ [cedar] ⏸ HITL-gated forbid (priority=${priority} rule=${ruleTag}) — will defer to HITL policy`);
-        }
-        pendingHitlGatedBlockReason = blockReason;
-        pendingHitlGatedSource = 'cedar';
-        pendingHitlGatedRule = decision.matchedRule;
-      } else {
-        console.log(`[clawthority] │ DECISION: ✕ BLOCKED (cedar/${decision.effect} priority=${priority ?? '?'} rule=${ruleTag}) — ${blockReason}`);
-        console.log(`[clawthority] └──────────────────────────────────────────────────────`);
-        await logPolicyDecision({
-          effect: 'forbid',
-          stage: 'cedar',
-          resource: 'tool',
-          match: toolName,
-          reason: blockReason,
-          rule: ruleTag,
-          ...(priority !== undefined && { priority }),
-          ...auditBase,
-        });
-        return { block: true, blockReason };
-      }
-    } else {
-      console.log(`[clawthority] │ [cedar] ✓ passed`);
+  if (pipelineDecision.effect === 'forbid') {
+    if (pipelineDecision.reason === 'untrusted_source_high_risk') {
+      const blockReason = 'untrusted_source_high_risk';
+      console.log(`[clawthority] │ DECISION: ✕ BLOCKED (stage1/untrusted_source_high_risk) — actionClass=${normalizedAction.action_class} risk=${normalizedAction.risk}`);
+      console.log(`[clawthority] └──────────────────────────────────────────────────────`);
+      // Audit entry written by the callEmitter listener above.
+      return { block: true, blockReason };
     }
-  } catch (err) {
-    console.error(`[clawthority] │ [cedar] ✕ ERROR — fail closed`, err);
-    console.log(`[clawthority] └──────────────────────────────────────────────────────`);
-    await logPolicyDecision({
-      effect: 'forbid',
-      stage: 'cedar',
-      resource: 'tool',
-      match: toolName,
-      reason: 'Cedar policy evaluation error — fail closed',
-      rule: '<error>',
-      ...auditBase,
-    });
-    return { block: true, blockReason: "Cedar policy evaluation error — fail closed" };
-  }
 
-  // ── 2. JSON Cedar engine (data/rules.json, loaded at startup) ─────────────
-  if (jsonRulesEngineRef.current !== null) {
-    try {
-      const jsonDecision = jsonRulesEngineRef.current.evaluate("tool", toolName, ruleContext);
-      console.log(`[clawthority] │ [json-rules] matched: ${formatMatchedRule(jsonDecision.matchedRule)}`);
-      if (jsonDecision.matchedRule?.reason) console.log(`[clawthority] │ [json-rules] reason: ${jsonDecision.matchedRule.reason}`);
-      if (jsonDecision.effect === "forbid") {
-        const blockReason = jsonDecision.reason ?? "Tool call denied by JSON rule";
-        const priority = jsonDecision.matchedRule?.priority;
-        const ruleTag = formatRuleTag(jsonDecision.matchedRule);
-        if (isHitlGatedForbid(jsonDecision.matchedRule)) {
-          // A HITL-gated Cedar forbid seen earlier already staked a claim —
-          // keep its reason so the most specific / first-matched rule wins
-          // in logs. Either way, the HITL stage resolves the final decision.
-          if (pendingHitlGatedBlockReason === null) {
-            pendingHitlGatedBlockReason = blockReason;
-            pendingHitlGatedSource = 'json-rules';
-            pendingHitlGatedRule = jsonDecision.matchedRule;
-          }
-          console.log(`[clawthority] │ [json-rules] ⏸ HITL-gated forbid (priority=${priority} rule=${ruleTag}) — will defer to HITL policy`);
+    // ── HITL-gated forbid (priority < 100) ───────────────────────────────
+    // The pipeline returned a forbid with a sub-100 priority. Try to release
+    // it via a matching HITL policy; otherwise uphold the forbid.
+    const isHitlGated =
+      pipelineDecision.priority !== undefined &&
+      pipelineDecision.priority < UNCONDITIONAL_FORBID_PRIORITY;
+
+    if (isHitlGated) {
+      try {
+        const hitlConfig = hitlConfigRef.current;
+        const hitlResult = hitlConfig !== null
+          ? checkAction(hitlConfig, normalizedAction.action_class)
+          : { requiresApproval: false };
+
+        if (hitlResult.requiresApproval && hitlResult.matchedPolicy) {
+          const policy = hitlResult.matchedPolicy;
+          console.log(`[clawthority] │ [hitl] releasing ${pipelineDecision.stage ?? 'unknown'} HITL-gated forbid via policy "${policy.name}" (${policy.approval.channel})`);
+          const hitlChannelResult = await dispatchHitlChannel(policy, toolName, identity);
+          if (hitlChannelResult) return hitlChannelResult;
+          // Approved: fall through to the pre-existing HITL check and then ALLOWED.
         } else {
-          console.log(`[clawthority] │ DECISION: ✕ BLOCKED (json-rules/${jsonDecision.effect} priority=${priority ?? '?'} rule=${ruleTag}) — ${blockReason}`);
+          const priority = pipelineDecision.priority;
+          const ruleTag = pipelineDecision.rule;
+          const source = pipelineDecision.stage ?? 'unknown';
+          console.log(`[clawthority] │ DECISION: ✕ BLOCKED (${source}/forbid priority=${priority ?? '?'}; no HITL policy matches) — ${pipelineDecision.reason}`);
           console.log(`[clawthority] └──────────────────────────────────────────────────────`);
           await logPolicyDecision({
             effect: 'forbid',
-            stage: 'json-rules',
+            stage: 'hitl-gated',
             resource: 'tool',
             match: toolName,
-            reason: blockReason,
-            rule: ruleTag,
+            reason: pipelineDecision.reason,
+            ...(ruleTag !== undefined && { rule: ruleTag }),
             ...(priority !== undefined && { priority }),
             ...auditBase,
           });
-          return { block: true, blockReason };
+          return { block: true, blockReason: pipelineDecision.reason };
         }
-      } else {
-        console.log(`[clawthority] │ [json-rules] ✓ passed`);
-      }
-    } catch (err) {
-      console.error(`[clawthority] │ [json-rules] ✕ ERROR — fail closed`, err);
-      console.log(`[clawthority] └──────────────────────────────────────────────────────`);
-      await logPolicyDecision({
-        effect: 'forbid',
-        stage: 'json-rules',
-        resource: 'tool',
-        match: toolName,
-        reason: 'JSON rule evaluation error — fail closed',
-        rule: '<error>',
-        ...auditBase,
-      });
-      return { block: true, blockReason: "JSON rule evaluation error — fail closed" };
-    }
-  }
-
-  // ── 2b. Intent-group evaluation ───────────────────────────────────────────
-  // Intent groups tag clusters of action classes that share a threat model
-  // regardless of transport (e.g. `data_exfiltration` applies to web.fetch,
-  // any Rule 7-classified upload, etc.). When the normalised action carries
-  // an intent_group, scan rules that target it across BOTH engines — the
-  // TS-default engine and data/rules.json. A forbid in either participates
-  // in the same HITL-gated / unconditional split as action-class forbids,
-  // so operators can add a priority-90 intent_group rule to gate a whole
-  // category of outbound data movement through human approval. The first
-  // engine returning a forbid wins; ties don't occur because each engine
-  // only holds its own rules.
-  if (
-    normalizedAction.intent_group !== undefined &&
-    pendingHitlGatedBlockReason === null
-  ) {
-    try {
-      const intentEngines: Array<{ engine: CedarPolicyEngine | null; source: 'cedar' | 'json-rules' }> = [
-        { engine: cedarEngineRef.current, source: 'cedar' },
-        { engine: jsonRulesEngineRef.current, source: 'json-rules' },
-      ];
-      let intentBlockHandled = false;
-      for (const { engine, source: intentSource } of intentEngines) {
-        if (engine === null) continue;
-        const intentDecision = engine.evaluateByIntentGroup(
-          normalizedAction.intent_group,
-          ruleContext,
-        );
-        if (intentDecision.effect !== 'forbid' || intentDecision.matchedRule === undefined) continue;
-        const blockReason = intentDecision.reason ?? `Intent '${normalizedAction.intent_group}' denied by policy`;
-        const priority = intentDecision.matchedRule.priority;
-        const ruleTag = `intent:${normalizedAction.intent_group}`;
-        console.log(`[clawthority] │ [intent/${intentSource}] matched ${ruleTag}`);
-        if (intentDecision.matchedRule.reason) console.log(`[clawthority] │ [intent/${intentSource}] reason: ${intentDecision.matchedRule.reason}`);
-        if (isHitlGatedForbid(intentDecision.matchedRule)) {
-          console.log(`[clawthority] │ [intent/${intentSource}] ⏸ HITL-gated forbid (priority=${priority} rule=${ruleTag}) — will defer to HITL policy`);
-          pendingHitlGatedBlockReason = blockReason;
-          pendingHitlGatedSource = intentSource;
-          pendingHitlGatedRule = intentDecision.matchedRule;
-        } else {
-          console.log(`[clawthority] │ DECISION: ✕ BLOCKED (intent/${intentSource} forbid priority=${priority ?? '?'} rule=${ruleTag}) — ${blockReason}`);
-          console.log(`[clawthority] └──────────────────────────────────────────────────────`);
-          await logPolicyDecision({
-            effect: 'forbid',
-            stage: intentSource,
-            resource: 'tool',
-            match: toolName,
-            reason: blockReason,
-            rule: ruleTag,
-            ...(priority !== undefined && { priority }),
-            ...auditBase,
-          });
-          return { block: true, blockReason };
-        }
-        intentBlockHandled = true;
-        break; // first forbid wins; don't keep scanning
-      }
-      void intentBlockHandled;
-    } catch (err) {
-      console.error(`[clawthority] │ [intent] ✕ ERROR — fail closed`, err);
-      console.log(`[clawthority] └──────────────────────────────────────────────────────`);
-      await logPolicyDecision({
-        effect: 'forbid',
-        stage: 'cedar',
-        resource: 'tool',
-        match: toolName,
-        reason: 'Intent-group evaluation error — fail closed',
-        rule: '<error>',
-        ...auditBase,
-      });
-      return { block: true, blockReason: 'Intent-group evaluation error — fail closed' };
-    }
-  }
-
-  // ── 3. HITL resolution ────────────────────────────────────────────────────
-  // Runs in two situations:
-  //   (a) a HITL-gated Cedar/JSON forbid is pending — need operator approval
-  //       to release it; otherwise uphold the forbid.
-  //   (b) no forbid is pending but a HITL policy matches the action_class —
-  //       the "approve to proceed" flow that existed before this refactor.
-  try {
-    const hitlConfig = hitlConfigRef.current;
-    const hitlResult = hitlConfig !== null
-      ? checkAction(hitlConfig, normalizedAction.action_class)
-      : { requiresApproval: false };
-
-    if (pendingHitlGatedBlockReason !== null) {
-      if (hitlResult.requiresApproval && hitlResult.matchedPolicy) {
-        const policy = hitlResult.matchedPolicy;
-        console.log(`[clawthority] │ [hitl] releasing ${pendingHitlGatedSource} HITL-gated forbid via policy "${policy.name}" (${policy.approval.channel})`);
-        const hitlChannelResult = await dispatchHitlChannel(policy, toolName, identity);
-        if (hitlChannelResult) return hitlChannelResult;
-        // Approved: fall through to ALLOWED below. The HITL-gated forbid is released.
-      } else {
-        const ruleTag = formatRuleTag(pendingHitlGatedRule);
-        const priority = pendingHitlGatedRule?.priority;
-        console.log(`[clawthority] │ DECISION: ✕ BLOCKED (${pendingHitlGatedSource}/forbid priority=${priority ?? '?'} rule=${ruleTag}; no HITL policy matches) — ${pendingHitlGatedBlockReason}`);
+      } catch (err) {
+        console.error(`[clawthority] │ [hitl] ✕ ERROR — fail closed`, err);
         console.log(`[clawthority] └──────────────────────────────────────────────────────`);
         await logPolicyDecision({
           effect: 'forbid',
           stage: 'hitl-gated',
           resource: 'tool',
           match: toolName,
-          reason: pendingHitlGatedBlockReason,
-          rule: ruleTag,
-          ...(priority !== undefined && { priority }),
+          reason: 'HITL evaluation error — fail closed',
+          rule: '<error>',
           ...auditBase,
         });
-        return { block: true, blockReason: pendingHitlGatedBlockReason };
+        return { block: true, blockReason: 'HITL evaluation error — fail closed' };
       }
-    } else if (hitlResult.requiresApproval && hitlResult.matchedPolicy) {
+    } else {
+      // Unconditional forbid (stage1 trust gate, pipeline_error, priority ≥ 100,
+      // or no priority). callEmitter already wrote the JSONL audit entry.
+      return { block: true, blockReason: pipelineDecision.reason };
+    }
+  }
+
+  // ── 3. HITL resolution — pre-existing HITL policy check ──────────────────
+  // Runs when the pipeline permitted the action but a HITL policy requires
+  // explicit operator approval before execution (the "approve to proceed" flow).
+  // Also runs when a HITL-gated forbid was released above (fell through).
+  try {
+    const hitlConfig = hitlConfigRef.current;
+    const hitlResult = hitlConfig !== null
+      ? checkAction(hitlConfig, normalizedAction.action_class)
+      : { requiresApproval: false };
+
+    if (hitlResult.requiresApproval && hitlResult.matchedPolicy) {
       const policy = hitlResult.matchedPolicy;
       console.log(`[clawthority] │ [hitl] matched policy "${policy.name}" — requesting approval via ${policy.approval.channel}`);
       const hitlChannelResult = await dispatchHitlChannel(policy, toolName, identity);
@@ -1334,9 +1229,9 @@ let rulesWatcher: WatcherHandle | null = null;
  */
 function isInstalled(): boolean {
   if (process.env.OPENAUTH_FORCE_ACTIVE === "1") return true;
-  // Defer during npm install lifecycle phases (preinstall, install, postinstall, prepare).
-  const lifecycleEvent = process.env.npm_lifecycle_event ?? "";
-  if (["install", "preinstall", "postinstall", "prepare"].includes(lifecycleEvent)) return false;
+  // Defer during npm install lifecycle phases — delegate to the single bypass
+  // point in pipeline.ts rather than duplicating the detection logic here.
+  if (isInstallPhase()) return false;
   const moduleDir = dirname(fileURLToPath(import.meta.url));
   const pluginRoot = resolve(moduleDir, "..");
   return existsSync(resolve(pluginRoot, "data", ".installed"));
@@ -1404,6 +1299,22 @@ const plugin: OpenclawPlugin = {
       await loadJsonRules();
     } catch (err) {
       console.error("[plugin:clawthority] unexpected error in loadJsonRules:", err);
+    }
+
+    // Instantiate the file-based authority adapter using the same rules file
+    // path as loadJsonRules() so both subsystems read from the same source.
+    // bundle.json takes precedence over rules.json when present.
+    {
+      const moduleDir = dirname(fileURLToPath(import.meta.url));
+      const bundleFilePath = resolve(moduleDir, "../../data/bundle.json");
+      const rulesFilePath = resolve(moduleDir, "../../data/rules.json");
+      const bundlePath = process.env['CLAWTHORITY_RULES_FILE']
+        ?? (existsSync(bundleFilePath) ? bundleFilePath : rulesFilePath);
+      adapterRef = new FileAuthorityAdapter({ bundlePath });
+      adapterBundleWatchHandle = await adapterRef.watchPolicyBundle((bundle) => {
+        console.log(`[plugin:clawthority] policy bundle hot-reload: version ${bundle.version}`);
+        void loadJsonRules();
+      });
     }
 
     // ── Diagnostic: log registered hooks and loaded rules ────────────────────
@@ -1557,6 +1468,13 @@ const plugin: OpenclawPlugin = {
       await rulesWatcher.stop();
       rulesWatcher = null;
     }
+
+    // ── Bundle watcher cleanup ────────────────────────────────────────────
+    if (adapterBundleWatchHandle !== null) {
+      await adapterBundleWatchHandle.stop();
+      adapterBundleWatchHandle = null;
+    }
+    adapterRef = null;
     activated = false;
     console.log("[plugin:clawthority] deactivated");
   },

@@ -74,7 +74,8 @@ describe('validateCapability', () => {
     const result = await validateCapability(ctx, makeApprovalManager(), () => undefined);
     expect(result.effect).toBe('forbid');
     expect(result.reason).toBe('untrusted_source_high_risk');
-    expect(result.stage).toBe('stage1');
+    expect(result.stage).toBe('stage1-trust');
+    expect(result.rule).toBe('trust:untrusted+high');
   });
 
   it('forbids when source is untrusted and risk is critical', async () => {
@@ -82,7 +83,8 @@ describe('validateCapability', () => {
     const result = await validateCapability(ctx, makeApprovalManager(), () => undefined);
     expect(result.effect).toBe('forbid');
     expect(result.reason).toBe('untrusted_source_high_risk');
-    expect(result.stage).toBe('stage1');
+    expect(result.stage).toBe('stage1-trust');
+    expect(result.rule).toBe('trust:untrusted+critical');
   });
 
   it('permits when source is untrusted but risk is low', async () => {
@@ -154,6 +156,36 @@ describe('validateCapability', () => {
   it('forbids when payload hash binding does not match (SHA-256)', async () => {
     const cap = makeCapability({ binding: 'deadbeef-wrong-binding' });
     const ctx = makeCtx();
+    const result = await validateCapability(ctx, makeApprovalManager(), () => cap);
+    expect(result.effect).toBe('forbid');
+    expect(result.reason).toBe('payload binding mismatch');
+    expect(result.stage).toBe('stage1');
+  });
+
+  // ── Capability replay protection ─────────────────────────────────────────
+
+  it('forbids when approval_id is reused with different tool parameters (capability replay via SHA-256 binding)', async () => {
+    // Compute real SHA-256 payload hashes for two distinct parameter sets.
+    const payloadHashP1 = createHash('sha256')
+      .update(JSON.stringify({ path: '/data/config.json' }))
+      .digest('hex');
+    const payloadHashP2 = createHash('sha256')
+      .update(JSON.stringify({ path: '/data/secret.json' }))
+      .digest('hex');
+
+    // P1 and P2 must produce distinct hashes — replay is only meaningful if the
+    // hashes differ, confirming the SHA-256 binding actually changes.
+    expect(payloadHashP1).not.toBe(payloadHashP2);
+
+    // Capability was issued for P1; binding = SHA-256(action_class|target|payloadHashP1).
+    const cap = makeCapability({
+      binding: computeBinding('filesystem.read', '/tmp/test.txt', payloadHashP1),
+    });
+
+    // Replay attempt: same approval_id presented with P2's payload hash — the
+    // Stage 1 gate must recompute the binding and detect the mismatch.
+    const ctx = makeCtx({ payload_hash: payloadHashP2 });
+
     const result = await validateCapability(ctx, makeApprovalManager(), () => cap);
     expect(result.effect).toBe('forbid');
     expect(result.reason).toBe('payload binding mismatch');

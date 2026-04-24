@@ -18,7 +18,12 @@ export const deleteFileManifest: ToolManifest = {
     properties: {
       path: {
         type: 'string',
-        description: 'Path of the file or empty directory to delete.',
+        description: 'Path of the file or directory to delete.',
+      },
+      recursive: {
+        type: 'boolean',
+        description:
+          'When true, recursively delete a non-empty directory and all its contents. Must be explicitly set to true to enable recursive deletion; omitting or setting false rejects non-empty directories.',
       },
     },
     required: ['path'],

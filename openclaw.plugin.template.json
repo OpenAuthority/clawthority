@@ -2,6 +2,7 @@
   "id": "clawthority",
   "name": "clawthority",
   "displayName": "Clawthority",
+  "version": "1.2.1",
   "description": "Authorization policy engine for Clawthority — semantic authorization, action normalization, audit logging, and HITL approval",
   "author": "Clawthority",
   "license": "Apache-2.0",

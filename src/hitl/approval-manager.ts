@@ -101,9 +101,39 @@ export function generateToken(): string {
  * In `session_approval` mode the key is `session_id:action_class`, allowing
  * one human approval to cover all requests of the same action class within a
  * session.
+ *
+ * **F-02 — In-Memory Limitation:** Both the `pending` map and the `consumed`
+ * set are held entirely in memory. A process restart clears both structures.
+ * Any capability token that was issued (and possibly approved) immediately
+ * before a restart remains valid and replayable until its TTL expires, because
+ * the consumed-token set no longer records it. This is a known, accepted
+ * limitation of the file adapter.
+ *
+ * **Operational impact of restart:**
+ * - All pending (unresolved) approvals are lost — operators must re-approve.
+ * - All consumed tokens are forgotten — previously-used tokens become replayable
+ *   within their remaining TTL window.
+ * - All in-flight revocations are lost — a token explicitly revoked before the
+ *   restart is treated as unconsumed after the restart.
+ *
+ * **Mitigations (file adapter):** Keep the capability TTL short (30–60 s) and
+ * configure your process manager with a restart backoff of at least the TTL.
+ * See `docs/installation.md` § "Known Limits — F-02" for the full impact table
+ * and `docs/operator-security-guide.md` § "F-02" for operational procedures.
+ *
+ * **Forward path:** Migrate to the Firma remote adapter when it ships. The
+ * remote adapter persists both consumed-token records and revocations
+ * server-side, eliminating this in-memory limitation entirely.
  */
 export class ApprovalManager {
   private readonly pending = new Map<string, PendingApproval>();
+  /**
+   * Tracks tokens that have been consumed (approved, denied, expired, or
+   * cancelled). Checked by `isConsumed()` to prevent replay.
+   *
+   * **F-02:** This set is in-memory only. A process restart clears it,
+   * allowing previously-consumed tokens to be replayed within their TTL.
+   */
   private readonly consumed = new Set<string>();
 
   /**

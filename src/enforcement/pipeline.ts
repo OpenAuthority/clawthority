@@ -41,6 +41,8 @@ export interface PipelineContext {
   rule_context: RuleContext;
   /** Trust level of the source initiating this action ('user', 'agent', or 'untrusted'). */
   sourceTrustLevel?: string;
+  /** Raw source string from the hook event; used by Stage 1 to compute trust level when sourceTrustLevel is absent. */
+  source?: string;
   /** Effective risk level of the normalized action. */
   risk?: RiskLevel;
   /** Intent group of the normalized action, used for broad intent-based policy matching. */
@@ -55,6 +57,21 @@ export interface CeeDecision {
   reason: string;
   /** Identifier of the stage that produced this decision. */
   stage?: string;
+  /**
+   * Priority of the matched rule, if applicable.
+   *
+   * Populated by stage2 from `matchedRule.priority` to allow HITL-dispatch
+   * wrappers to distinguish HITL-gated forbids (priority < 100) from
+   * unconditional forbids (priority >= 100 or absent).
+   */
+  priority?: number;
+  /**
+   * Human-readable rule identifier forwarded from the stage that produced
+   * this decision (e.g. `cedar:deny_file_delete`, `trust:untrusted+high`,
+   * `intent:data_exfiltration`). Populated by stage closures so the audit
+   * event listener can log it without needing inline access to rule metadata.
+   */
+  rule?: string;
 }
 
 /** Stage 1: capability gate — validates an issued capability token. */

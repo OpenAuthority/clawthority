@@ -122,10 +122,10 @@ describe('startRulesWatcher', () => {
 
   // ── Watcher creation ────────────────────────────────────────────────────────
 
-  it('creates exactly two chokidar watchers', () => {
+  it('creates exactly three chokidar watchers', () => {
     startRulesWatcher(engineRef);
-    expect(mockWatch).toHaveBeenCalledTimes(2);
-    expect(createdWatchers).toHaveLength(2);
+    expect(mockWatch).toHaveBeenCalledTimes(3);
+    expect(createdWatchers).toHaveLength(3);
   });
 
   it('first watcher targets the policy/rules directory', () => {
@@ -140,7 +140,13 @@ describe('startRulesWatcher', () => {
     expect(secondPath).toMatch(/rules\.json$/);
   });
 
-  it('both watchers are configured with persistent:false and ignoreInitial:true', () => {
+  it('third watcher targets data/bundle.json', () => {
+    startRulesWatcher(engineRef);
+    const [thirdPath] = mockWatch.mock.calls[2] as [string];
+    expect(thirdPath).toMatch(/bundle\.json$/);
+  });
+
+  it('all watchers are configured with persistent:false and ignoreInitial:true', () => {
     startRulesWatcher(engineRef);
     for (const [, options] of mockWatch.mock.calls as [string, Record<string, unknown>][]) {
       expect(options.persistent).toBe(false);
@@ -165,14 +171,24 @@ describe('startRulesWatcher', () => {
     expect(registeredEvents).toContain('add');
   });
 
+  it('bundle watcher registers change, add, and unlink handlers', () => {
+    startRulesWatcher(engineRef);
+    const bundleWatcher = createdWatchers[2];
+    const registeredEvents = bundleWatcher.on.mock.calls.map((c: unknown[]) => c[0]);
+    expect(registeredEvents).toContain('change');
+    expect(registeredEvents).toContain('add');
+    expect(registeredEvents).toContain('unlink');
+  });
+
   // ── stop() ──────────────────────────────────────────────────────────────────
 
   describe('stop()', () => {
-    it('closes both watchers', async () => {
+    it('closes all watchers', async () => {
       const handle = startRulesWatcher(engineRef);
       await handle.stop();
       expect(createdWatchers[0].close).toHaveBeenCalled();
       expect(createdWatchers[1].close).toHaveBeenCalled();
+      expect(createdWatchers[2].close).toHaveBeenCalled();
     });
 
     it('returns a resolving Promise', async () => {
@@ -299,6 +315,40 @@ describe('startRulesWatcher', () => {
       const before = engineRef.current;
 
       onAdd();
+      vi.advanceTimersByTime(100);
+
+      expect(engineRef.current).not.toBe(before);
+    });
+  });
+
+  // ── Bundle watcher events ───────────────────────────────────────────────────
+
+  describe('bundle watcher change event', () => {
+    it('engine is rebuilt after the debounce window elapses', () => {
+      vi.useFakeTimers();
+      startRulesWatcher(engineRef, 100);
+
+      const bundleWatcher = createdWatchers[2];
+      const onChange = getHandler(bundleWatcher, 'change');
+      const before = engineRef.current;
+
+      onChange();
+      vi.advanceTimersByTime(100);
+
+      expect(engineRef.current).not.toBe(before);
+    });
+  });
+
+  describe('bundle watcher unlink event', () => {
+    it('engine is rebuilt when bundle.json is deleted (fallback to rules.json)', () => {
+      vi.useFakeTimers();
+      startRulesWatcher(engineRef, 100);
+
+      const bundleWatcher = createdWatchers[2];
+      const onUnlink = getHandler(bundleWatcher, 'unlink');
+      const before = engineRef.current;
+
+      onUnlink();
       vi.advanceTimersByTime(100);
 
       expect(engineRef.current).not.toBe(before);

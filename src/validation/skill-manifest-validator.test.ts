@@ -25,6 +25,7 @@ import {
 } from './skill-manifest-validator.js';
 import { REGISTRY } from '@openclaw/action-registry';
 import { gitAddManifest } from '../tools/git_add/manifest.js';
+import { gitCommitManifest } from '../tools/git_commit/manifest.js';
 import { gitLogManifest } from '../tools/git_log/manifest.js';
 import { gitDiffManifest } from '../tools/git_diff/manifest.js';
 import { gitStatusManifest } from '../tools/git_status/manifest.js';
@@ -33,6 +34,12 @@ import { editFileManifest } from '../tools/edit_file/manifest.js';
 import { readFileManifest } from '../tools/read_file/manifest.js';
 import { writeFileManifest } from '../tools/write_file/manifest.js';
 import { listDirManifest } from '../tools/list_dir/manifest.js';
+import { listDirectoryManifest } from '../tools/list_directory/manifest.js';
+import { deleteFileManifest } from '../tools/delete_file/manifest.js';
+import { createDirectoryManifest } from '../tools/create_directory/manifest.js';
+import { appendFileManifest } from '../tools/append_file/manifest.js';
+import { sendEmailManifest } from '../tools/send_email/manifest.js';
+import { httpGetManifest } from '../tools/http_get/manifest.js';
 
 // ─── Fixture helpers ──────────────────────────────────────────────────────────
 
@@ -578,6 +585,7 @@ describe('TC-SMV-Contract: first-party tool manifests validate against F-05 sche
 
   const firstPartyManifests = [
     { name: 'gitAddManifest', manifest: gitAddManifest },
+    { name: 'gitCommitManifest', manifest: gitCommitManifest },
     { name: 'gitLogManifest', manifest: gitLogManifest },
     { name: 'gitDiffManifest', manifest: gitDiffManifest },
     { name: 'gitStatusManifest', manifest: gitStatusManifest },
@@ -586,6 +594,12 @@ describe('TC-SMV-Contract: first-party tool manifests validate against F-05 sche
     { name: 'readFileManifest', manifest: readFileManifest },
     { name: 'writeFileManifest', manifest: writeFileManifest },
     { name: 'listDirManifest', manifest: listDirManifest },
+    { name: 'listDirectoryManifest', manifest: listDirectoryManifest },
+    { name: 'deleteFileManifest', manifest: deleteFileManifest },
+    { name: 'createDirectoryManifest', manifest: createDirectoryManifest },
+    { name: 'appendFileManifest', manifest: appendFileManifest },
+    { name: 'sendEmailManifest', manifest: sendEmailManifest },
+    { name: 'httpGetManifest', manifest: httpGetManifest },
   ];
 
   for (const { name, manifest } of firstPartyManifests) {

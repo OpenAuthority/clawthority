@@ -94,6 +94,19 @@ export interface ToolManifest {
    * Past this date, validation fails in CLOSED mode.
    */
   until?: string;
+  /**
+   * Marks this tool as a privileged admin execution tool that can invoke
+   * arbitrary shell commands. Must be `true` when present.
+   *
+   * Bypasses the E-03 `shell.exec` action_class restriction in the manifest
+   * validator. The validator emits prominent security warnings on every
+   * registration. E-01 and E-05 checks still apply.
+   *
+   * At runtime the tool remains inert unless:
+   *   1. `CLAWTHORITY_ENABLE_UNSAFE_ADMIN_EXEC=1` is set in the environment.
+   *   2. An explicit permit rule exists in the policy engine.
+   */
+  unsafe_admin?: true;
 }
 
 /** Structured validation outcome from `validateToolManifest` and `SkillManifestValidator`. */
@@ -187,6 +200,12 @@ export function validateToolManifest(manifest: unknown): ManifestValidationResul
         errors.push(`until: "${until}" is not a valid YYYY-MM-DD date.`);
       }
     }
+  }
+
+  // ── unsafe_admin ──────────────────────────────────────────────────────────
+
+  if (m['unsafe_admin'] !== undefined && m['unsafe_admin'] !== true) {
+    errors.push('unsafe_admin: must be the boolean true when present.');
   }
 
   return { valid: errors.length === 0, errors };
@@ -326,6 +345,58 @@ export class SkillManifestValidator {
 
       // Deadline still active — bypass registry checks.
       return { valid: true, errors: [] };
+    }
+
+    // ── unsafe_admin bypass ───────────────────────────────────────────────────
+
+    if (m.unsafe_admin === true) {
+      console.warn(
+        `[OpenAuthority] SECURITY WARNING: Tool manifest for "${m.name}" declares unsafe_admin: true.`,
+      );
+      console.warn(
+        `[OpenAuthority] SECURITY WARNING: This tool can execute arbitrary commands. ` +
+          `Set CLAWTHORITY_ENABLE_UNSAFE_ADMIN_EXEC=1 only in explicitly authorized environments.`,
+      );
+      console.warn(
+        `[OpenAuthority] SECURITY WARNING: An explicit permit rule is required in the policy ` +
+          `engine before "${m.name}" will execute. The default posture is DENY.`,
+      );
+
+      // E-01: action_class must be registered (still required)
+      const adminEntry = REGISTRY.find((e) => e.action_class === m.action_class);
+      if (adminEntry === undefined) {
+        return {
+          valid: false,
+          errors: [`action_class: "${m.action_class}" is not a registered action class.`],
+        };
+      }
+
+      // E-03: shell.exec action_class is permitted for unsafe_admin tools (bypass).
+      // E-03: exec wrapper name check still applies.
+      if (EXEC_WRAPPER_TOOL_NAMES.has(m.name.toLowerCase())) {
+        return {
+          valid: false,
+          errors: [
+            `name: "${m.name}" is a reserved exec wrapper tool name and cannot be registered as a skill manifest.`,
+          ],
+        };
+      }
+
+      // E-05: risk_tier and default_hitl_mode must still align with registry defaults
+      const adminErrors: string[] = [];
+      if (m.risk_tier !== adminEntry.default_risk) {
+        adminErrors.push(
+          `risk_tier: "${m.risk_tier}" does not match the registry default ` +
+            `"${adminEntry.default_risk}" for action_class "${m.action_class}".`,
+        );
+      }
+      if (m.default_hitl_mode !== adminEntry.default_hitl_mode) {
+        adminErrors.push(
+          `default_hitl_mode: "${m.default_hitl_mode}" does not match the registry default ` +
+            `"${adminEntry.default_hitl_mode}" for action_class "${m.action_class}".`,
+        );
+      }
+      return { valid: adminErrors.length === 0, errors: adminErrors };
     }
 
     const errors: string[] = [];
