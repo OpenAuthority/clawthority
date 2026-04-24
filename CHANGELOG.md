@@ -22,6 +22,19 @@ Key behaviours:
 
 Gate order: URL scheme validation → HITL token check (pipeline) → network request → return.
 
+#### `http_put` — HTTP PUT request tool (T78)
+
+`http_put` sends an HTTP PUT request to a URL with an optional request body and maps to the `web.post` action class (`risk_tier: 'medium'`, `default_hitl_mode: 'per_request'`). PUT is treated the same as POST because it replaces remote state.
+
+Key behaviours:
+
+- Accepts `url` (required), `body` (optional string — serialise JSON before passing), and `headers` (optional key-value pairs).
+- Validates that the URL uses the `http://` or `https://` scheme before making any network request; throws `HttpPutError` with `code: 'invalid-url'` otherwise.
+- Returns `{ status_code, body }` — HTTP error responses (4xx, 5xx) are returned without throwing, since those represent a definitive server answer.
+- Throws `HttpPutError` (typed `code`: `invalid-url` | `network-error` | `timeout`) on transport failures; the 30 s timeout maps to `code: 'timeout'`.
+
+Gate order: URL scheme validation → HITL token check (pipeline) → network request → return.
+
 #### `http_patch` — HTTP PATCH request tool (HC-05)
 
 `http_patch` sends an HTTP PATCH request to a URL with an optional partial-update body and maps to the `web.post` action class (`risk_tier: 'medium'`, `default_hitl_mode: 'per_request'`). PATCH is treated the same as POST and PUT because it modifies remote state.
