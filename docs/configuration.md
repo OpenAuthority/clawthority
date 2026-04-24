@@ -15,7 +15,8 @@
 7. [Slack App Setup](#slack-app-setup)
 8. [Protected Paths](#protected-paths)
 9. [Audit Log](#audit-log)
-10. [Environment Variables](#environment-variables)
+10. [Budget Enforcement](#budget-tracking-and-enforcement)
+11. [Environment Variables](#environment-variables)
 11. [Engine Options](#engine-options)
 12. [Example Configurations](#example-configurations)
 13. [Resource Types and Channel Values](#resource-types-and-channel-values)
@@ -692,6 +693,42 @@ CLAWTHORITY_MODE=closed node dist/index.js
 | `SLACK_CHANNEL_ID` | — | Slack channel ID (not name). **Required** for Slack approvals. Takes precedence over `slack.channelId`. |
 | `SLACK_SIGNING_SECRET` | — | Slack Signing Secret for webhook verification. **Required** for Slack interaction server. Takes precedence over `slack.signingSecret`. |
 | `SLACK_INTERACTION_PORT` | `3201` | Port for the Slack webhook server. Takes precedence over `slack.interactionPort`. |
+
+### Budget tracking and enforcement
+
+| Variable | Default | Description |
+|---|---|---|
+| `OPENAUTH_BUDGET_HARD_LIMIT` | _(unset)_ | Set to `'1'` to enable hard budget enforcement. When unset, token and cost usage is tracked and logged but never blocks tool calls. |
+| `OPENAUTH_BUDGET_DAILY_LIMIT` | `100000` | Daily token limit. When `OPENAUTH_BUDGET_HARD_LIMIT=1`, tool calls are blocked once this threshold is reached. Resets at midnight UTC (tracker restarts). |
+| `OPENAUTH_BUDGET_DAILY_COST_LIMIT` | _(unset)_ | Daily cost limit in USD (e.g. `5.00`). When set and `OPENAUTH_BUDGET_HARD_LIMIT=1`, tool calls are also blocked when estimated daily spend exceeds this value. |
+| `OPENAUTH_BUDGET_LOG_FILE` | `data/budget.jsonl` | Path to the JSONL budget log file. |
+| `OPENAUTH_BUDGET_MODEL` | `claude-sonnet-4-6` | Default model identifier used for cost estimation when the model is not provided by the hook context. |
+| `OPENAUTH_BUDGET_WARN_AT` | `80000` | Token count at which a warning is emitted to the gateway log. Does not block. |
+
+#### How budget enforcement works
+
+On activation, the budget tracker reads today's entries from `data/budget.jsonl` and seeds in-memory token and cost totals. Every tool call appends a usage entry and increments the counters. Before policy evaluation, the tracker checks whether either limit is exceeded — if so, the tool call is blocked immediately with `daily_budget_exceeded`.
+
+Blocked calls are logged to stdout:
+```
+[clawthority] │ DECISION: ✕ BLOCKED (budget/daily_limit_exceeded) — 100042/100000 tokens, $3.0012/$3.00
+```
+
+The budget log is separate from the audit log. It records every tool call (permitted or blocked) with token estimates and cost, and is never rotated automatically.
+
+#### Example — enable hard enforcement
+
+```bash
+export OPENAUTH_BUDGET_HARD_LIMIT=1
+export OPENAUTH_BUDGET_DAILY_LIMIT=50000
+export OPENAUTH_BUDGET_DAILY_COST_LIMIT=2.50
+export OPENAUTH_BUDGET_WARN_AT=40000
+openclaw gateway restart
+```
+
+> **Note:** Token estimates are based on serialised parameter length (1 token ≈ 4 characters). This is a rough approximation — actual model token counts may differ. For strict cost enforcement, set `OPENAUTH_BUDGET_DAILY_COST_LIMIT` rather than relying on token counts alone.
+
+---
 
 ### Dashboard server
 

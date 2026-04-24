@@ -34,6 +34,7 @@ Agent tool call  ─►  Clawthority  ─►  Allow  │  Deny  │  Ask human  
 - [Action registry](#action-registry)
 - [Human-in-the-loop](#human-in-the-loop)
 - [Configuration](#configuration)
+- [Budget control](#budget-control)
 - [Documentation](#documentation)
 - [Development](#development)
 - [License](#license)
@@ -215,6 +216,25 @@ Runtime behaviour is configured through three surfaces:
 Structured decisions land in `data/audit.jsonl` - each block carries `stage`, `rule`, `priority`, and `mode` fields for post-mortem analysis.
 
 Full schema and environment-variable overrides: [docs/configuration.md](docs/configuration.md). Recovery runbook for lockouts: [docs/troubleshooting.md](docs/troubleshooting.md#total-lockout-recovery).
+
+---
+
+## Budget control
+
+Clawthority tracks token usage and estimated cost for every tool call, written to `data/budget.jsonl`. By default this is tracking only — no calls are blocked.
+
+To enforce hard limits:
+
+```bash
+export OPENAUTH_BUDGET_HARD_LIMIT=1        # enable enforcement
+export OPENAUTH_BUDGET_DAILY_LIMIT=50000   # block after 50k tokens/day
+export OPENAUTH_BUDGET_DAILY_COST_LIMIT=2.50  # or after $2.50/day
+openclaw gateway restart
+```
+
+When a limit is exceeded, every subsequent tool call is blocked with `daily_budget_exceeded` until the next day (midnight UTC) or a gateway restart.
+
+Full reference: [docs/configuration.md#budget-tracking-and-enforcement](docs/configuration.md#budget-tracking-and-enforcement).
 
 ---
 
