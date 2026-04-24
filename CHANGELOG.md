@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### `http_patch` — HTTP PATCH request tool (HC-05)
+
+`http_patch` sends an HTTP PATCH request to a URL with an optional partial-update body and maps to the `web.post` action class (`risk_tier: 'medium'`, `default_hitl_mode: 'per_request'`). PATCH is treated the same as POST and PUT because it modifies remote state.
+
+Key behaviours:
+
+- Accepts `url` (required), `body` (optional string — serialise JSON before passing), and `headers` (optional key-value pairs).
+- Validates that the URL uses the `http://` or `https://` scheme before making any network request; throws `HttpPatchError` with `code: 'invalid-url'` otherwise.
+- Returns `{ status_code, body }` — HTTP error responses (4xx, 5xx) are returned without throwing, since those represent a definitive server answer.
+- Throws `HttpPatchError` (typed `code`: `invalid-url` | `network-error` | `timeout`) on transport failures; the 30 s timeout maps to `code: 'timeout'`.
+
+Gate order: URL scheme validation → HITL token check (pipeline) → network request → return.
+
 #### `rotate_secret` — credential rotation tool (CS-03)
 
 `rotate_secret` generates a cryptographically-random 256-bit hex value for an existing secret and writes it to the configured backend store atomically. It maps to the `credential.rotate` action class (`risk_tier: 'critical'`, `default_hitl_mode: 'per_request'`).

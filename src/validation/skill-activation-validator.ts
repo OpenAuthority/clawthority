@@ -43,6 +43,7 @@ import { sendWebhookManifest } from '../tools/send_webhook/manifest.js';
 import { unsafeAdminExecManifest } from '../tools/unsafe_admin_exec/manifest.js';
 import { rotateSecretManifest } from '../tools/rotate_secret/manifest.js';
 import { webhookManifest } from '../tools/webhook/manifest.js';
+import { httpPatchManifest } from '../tools/http_patch/manifest.js';
 
 // ─── First-party manifest registry ───────────────────────────────────────────
 
@@ -79,6 +80,7 @@ export const FIRST_PARTY_MANIFESTS: readonly ToolManifest[] = [
   unsafeAdminExecManifest,
   rotateSecretManifest,
   webhookManifest,
+  httpPatchManifest,
 ];
 
 // ─── Activation validator ─────────────────────────────────────────────────────
