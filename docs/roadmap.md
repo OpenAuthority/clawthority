@@ -114,6 +114,9 @@ These features are built, tested, and working in the current codebase.
 - `CoverageMap` utility (`src/policy/coverage.ts`) integrated with the hot-reload watcher for future dashboard consumers
 
 ### ClawHub Skills
+
+Shipped in the companion [clawthority-skills](../../clawthority-skills) repository (tracked independently from the plugin):
+
 - `/token-budget` — token usage tracking, spend estimation, threshold alerts
 - `/whatdidyoudo` — action replay, plain-language tool call log
 - `/human-approval` — soft human-in-the-loop approval gate for interactive sessions
@@ -178,7 +181,7 @@ A future multi-tenant service for centralised policy management. Planned scope:
 Gated by the `control-plane-validator`.
 
 ### ClawHub Skill Publishing
-Publish the three skills (`token-budget`, `whatdidyoudo`, `human-approval`) to ClawHub as the official Clawthority skill pack. Each skill is a soft-enforcement layer that drives adoption of the plugin.
+Publish the three skills (`token-budget`, `whatdidyoudo`, `human-approval`) from the companion [clawthority-skills](../../clawthority-skills) repository to ClawHub as the official Clawthority skill pack. Each skill is a soft-enforcement layer that drives adoption of the plugin.
 
 ### Policy Language Evolution
 - Cedar policy file format (`.cedar` files) alongside TypeScript rules

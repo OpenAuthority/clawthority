@@ -21,7 +21,138 @@
       "before_tool_call",
       "before_prompt_build"
     ],
-    "installPath": "~/.openclaw/plugins/clawthority"
+    "installPath": "~/.openclaw/plugins/clawthority",
+    "postInstall": {
+      "script": "scripts/post-install.mjs",
+      "description": "Writes data/.installed as an activation marker. Does not run arbitrary commands, fetch remote resources, or touch files outside the plugin's own data/ directory."
+    },
+    "filesystem": {
+      "reads": [
+        "data/bundles/active/",
+        "data/bundles/proposals/",
+        "data/rules.json",
+        "hitl-policy.yaml",
+        "data/.installed"
+      ],
+      "writes": [
+        "data/.installed",
+        "data/audit.jsonl",
+        "data/budget.jsonl"
+      ]
+    },
+    "network": {
+      "outbound": [
+        "api.telegram.org",
+        "slack.com"
+      ],
+      "inbound": [
+        {
+          "port": "SLACK_INTERACTION_PORT (default 3201)",
+          "purpose": "Slack interactive webhook receiver; bound only when SLACK_BOT_TOKEN and SLACK_SIGNING_SECRET are set"
+        }
+      ]
+    }
+  },
+  "env": {
+    "CLAWTHORITY_MODE": {
+      "type": "string",
+      "enum": ["open", "closed"],
+      "required": false,
+      "default": "open",
+      "description": "Install mode. `open` = implicit permit + critical-forbid safety net; `closed` = implicit deny, explicit permits required. Read once at activation; restart to change."
+    },
+    "CLAWTHORITY_RULES_FILE": {
+      "type": "string",
+      "required": false,
+      "description": "Override path to the hot-reloaded rules file (defaults to data/rules.json under the plugin root)."
+    },
+    "OPENAUTHORITY_MODE": {
+      "type": "string",
+      "enum": ["OPEN", "CLOSED"],
+      "required": false,
+      "description": "Skill-manifest validator mode. `OPEN` demotes manifest validation failures to warnings; `CLOSED` treats them as errors."
+    },
+    "OPENAUTHORITY_ALLOW_UNSAFE_LEGACY": {
+      "type": "string",
+      "enum": ["0", "1"],
+      "required": false,
+      "default": "0",
+      "description": "Set to `1` to permit skills marked `unsafe_legacy` to activate even when their deadline is expired."
+    },
+    "OPENAUTH_FORCE_ACTIVE": {
+      "type": "string",
+      "enum": ["0", "1"],
+      "required": false,
+      "default": "0",
+      "description": "Development/test only. Set to `1` to force policy activation even when data/.installed is missing."
+    },
+    "OPENAUTH_BUDGET_LOG_FILE": {
+      "type": "string",
+      "required": false,
+      "description": "Override path to the budget JSONL file (defaults to data/budget.jsonl under the plugin root)."
+    },
+    "OPENAUTH_BUDGET_MODEL": {
+      "type": "string",
+      "required": false,
+      "default": "claude-sonnet-4-6",
+      "description": "Model identifier used for cost estimation in the budget tracker."
+    },
+    "OPENAUTH_BUDGET_DAILY_LIMIT": {
+      "type": "number",
+      "required": false,
+      "description": "Daily token limit. Overrides configSchema.budget.dailyTokenLimit when set."
+    },
+    "OPENAUTH_BUDGET_WARN_AT": {
+      "type": "number",
+      "required": false,
+      "description": "Token count at which the budget tracker emits a warning. Overrides configSchema.budget.warnAt when set."
+    },
+    "OPENAUTH_BUDGET_HARD_LIMIT": {
+      "type": "string",
+      "enum": ["0", "1"],
+      "required": false,
+      "default": "0",
+      "description": "Set to `1` to enforce hard budget limits (block subsequent tool calls once a daily limit is exceeded)."
+    },
+    "OPENAUTH_BUDGET_DAILY_COST_LIMIT": {
+      "type": "number",
+      "required": false,
+      "description": "Daily cost limit in USD. Active only when OPENAUTH_BUDGET_HARD_LIMIT=1."
+    },
+    "TELEGRAM_BOT_TOKEN": {
+      "type": "string",
+      "secret": true,
+      "required": false,
+      "description": "Telegram Bot API token used by the HITL Telegram channel. Required only when Telegram HITL is enabled."
+    },
+    "TELEGRAM_CHAT_ID": {
+      "type": "string",
+      "required": false,
+      "description": "Telegram chat or group ID that receives HITL approval prompts. Required only when Telegram HITL is enabled."
+    },
+    "SLACK_BOT_TOKEN": {
+      "type": "string",
+      "secret": true,
+      "required": false,
+      "description": "Slack Bot User OAuth Token (xoxb-...). Required only when Slack HITL is enabled."
+    },
+    "SLACK_CHANNEL_ID": {
+      "type": "string",
+      "required": false,
+      "description": "Slack channel ID (not name) that receives HITL approval prompts. Required only when Slack HITL is enabled."
+    },
+    "SLACK_SIGNING_SECRET": {
+      "type": "string",
+      "secret": true,
+      "required": false,
+      "description": "Slack Signing Secret used to verify inbound interactive webhooks. Required only when Slack HITL is enabled."
+    },
+    "SLACK_INTERACTION_PORT": {
+      "type": "number",
+      "required": false,
+      "default": 3201,
+      "description": "Port the Slack interactive webhook server binds to when Slack HITL is enabled."
+    }
   },
   "configSchema": {
     "type": "object",

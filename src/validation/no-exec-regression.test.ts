@@ -1,27 +1,29 @@
 /**
  * No-exec regression contract test.
  *
- * Prevents regression to generic shell.exec in first-party skills by scanning
- * all SKILL.md manifests and asserting none declare `action_class: shell.exec`
- * without a valid `unsafe_legacy` exception with an active (future) deadline.
+ * Prevents regression to generic shell.exec in the reference SKILL.md
+ * manifests under examples/skills/ by asserting none declare
+ * `action_class: shell.exec` without a valid `unsafe_legacy` exception with
+ * an active (future) deadline.
  *
  * Test IDs:
  *   TC-NER-01: Frontmatter extraction — parses YAML between --- delimiters
  *   TC-NER-02: Exec detection — flags shell.exec without unsafe_legacy
  *   TC-NER-03: unsafe_legacy validation — requires active (future) deadline
- *   TC-NER-04: Contract — all first-party skill manifests pass
+ *   TC-NER-04: Contract — all reference skill manifests pass
  */
 
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse as parseYaml } from 'yaml';
 
 // ─── Path resolution ───────────────────────────────────────────────────────────
 
 const _dirname = dirname(fileURLToPath(import.meta.url));
-const SKILLS_DIR = join(_dirname, '../../skills');
+const REPO_ROOT = join(_dirname, '../..');
+const SKILLS_DIR = join(REPO_ROOT, 'examples', 'skills');
 const MANIFEST_FILENAME = 'SKILL.md';
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -161,7 +163,7 @@ function scanSkillManifests(skillsDir: string): ExecCheckResult {
     const content = readFileSync(absPath, 'utf-8');
     const frontmatter = extractFrontmatter(content);
     if (frontmatter === null) continue;
-    const relPath = absPath.slice(absPath.indexOf('skills/'));
+    const relPath = relative(REPO_ROOT, absPath);
     violations.push(...checkManifest(frontmatter, relPath));
   }
 
@@ -348,15 +350,15 @@ describe('TC-NER-03: unsafe_legacy deadline validation', () => {
   });
 });
 
-// ─── TC-NER-04: Contract — first-party skills pass ────────────────────────────
+// ─── TC-NER-04: Contract — reference skill manifests pass ─────────────────────
 
-describe('TC-NER-04: first-party skill manifests contain no shell.exec violations', () => {
-  it('skills/ directory exists and contains at least one manifest', () => {
+describe('TC-NER-04: reference skill manifests contain no shell.exec violations', () => {
+  it('examples/skills/ directory exists and contains at least one manifest', () => {
     const manifests = findSkillManifests(SKILLS_DIR);
     expect(manifests.length).toBeGreaterThan(0);
   });
 
-  it('no first-party skill declares shell.exec without a valid unsafe_legacy exception', () => {
+  it('no reference skill declares shell.exec without a valid unsafe_legacy exception', () => {
     const result = scanSkillManifests(SKILLS_DIR);
     expect(result.valid, formatViolationsReport(result.violations)).toBe(true);
   });

@@ -7,7 +7,7 @@
  *   import { createSkillsRouter } from './ui/routes/skills.js';
  *
  *   const app = express();
- *   app.use('/api/skills', createSkillsRouter('/path/to/skills'));
+ *   app.use('/api/skills', createSkillsRouter('/path/to/examples/skills'));
  *
  * Endpoints:
  *   GET /unsafe-legacy

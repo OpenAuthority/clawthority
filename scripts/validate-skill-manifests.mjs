@@ -2,9 +2,9 @@
 /**
  * validate-skill-manifests.mjs
  *
- * CI validator for first-party skill manifests (SKILL.md files).
+ * CI validator for reference SKILL.md manifests under examples/skills/.
  *
- * Scans all skills/ subdirectories and enforces the rule:
+ * Scans all examples/skills/ subdirectories and enforces the rule:
  *   action_class: shell.exec MUST include an unsafe_legacy field with a future deadline.
  *
  * Exits with code 1 and prints a clear report if any violation is found.
@@ -14,14 +14,15 @@
  */
 
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse as parseYaml } from 'yaml';
 
 // ─── Path resolution ───────────────────────────────────────────────────────────
 
 const _dirname = dirname(fileURLToPath(import.meta.url));
-const SKILLS_DIR = join(_dirname, '../skills');
+const REPO_ROOT = join(_dirname, '..');
+const SKILLS_DIR = join(REPO_ROOT, 'examples', 'skills');
 const MANIFEST_FILENAME = 'SKILL.md';
 
 // ─── Manifest parsing helpers ──────────────────────────────────────────────────
@@ -140,7 +141,7 @@ function scanSkillManifests(skillsDir) {
     const content = readFileSync(absPath, 'utf-8');
     const frontmatter = extractFrontmatter(content);
     if (frontmatter === null) continue;
-    const relPath = absPath.slice(absPath.indexOf('skills/'));
+    const relPath = relative(REPO_ROOT, absPath);
     violations.push(...checkManifest(frontmatter, relPath));
   }
 
@@ -166,7 +167,7 @@ function formatViolationsReport(violations) {
 
 const result = scanSkillManifests(SKILLS_DIR);
 
-console.log(`Scanned ${result.total} skill manifest(s) in skills/`);
+console.log(`Scanned ${result.total} skill manifest(s) in examples/skills/`);
 
 if (result.valid) {
   console.log('All manifests passed validation.');

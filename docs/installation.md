@@ -10,28 +10,20 @@
 
 ## Plugin Installation
 
-### 1. Clone the repository
+### 1. Install from npm
 
 ```bash
-git clone https://github.com/OpenAuthority/clawthority ~/.openclaw/plugins/clawthority
+mkdir -p ~/.openclaw/plugins/clawthority
 cd ~/.openclaw/plugins/clawthority
+npm init -y >/dev/null
+npm install @clawthority/clawthority
 ```
 
-### 2. Install dependencies
+The published package contains only `dist/`, `openclaw.plugin.json`, and `scripts/post-install.mjs` — no source, tests, or examples. The `postinstall` hook runs `scripts/post-install.mjs`, which writes a `data/.installed` activation marker into the plugin directory and does nothing else (no shell-outs, no network, no writes outside the plugin root).
 
-```bash
-npm install
-```
+> If you want to build from source (for development or to audit the code), clone the repository to a working directory and run `npm install && npm run build`. Do not `git clone` into `~/.openclaw/plugins/` directly — that directory should contain the published artifact only.
 
-### 3. Build the plugin
-
-```bash
-npm run build
-```
-
-The compiled plugin is output to `dist/`.
-
-### 4. Register with OpenClaw
+### 2. Register with OpenClaw
 
 Add the plugin to your OpenClaw configuration file at `~/.openclaw/config.json`:
 
@@ -43,7 +35,7 @@ Add the plugin to your OpenClaw configuration file at `~/.openclaw/config.json`:
 
 OpenClaw will load `dist/index.js` as the plugin entry point on next start.
 
-### 5. Choose your install mode (optional)
+### 3. Choose your install mode (optional)
 
 Clawthority ships with two postures:
 
@@ -61,7 +53,7 @@ export CLAWTHORITY_MODE=closed
 
 Mode is read once at activation; restart the agent to change it. See [configuration.md — Install mode](configuration.md#install-mode) for the full rule-set breakdown per mode.
 
-### 6. Verify installation
+### 4. Verify installation
 
 Restart OpenClaw and check the logs for a line like:
 
