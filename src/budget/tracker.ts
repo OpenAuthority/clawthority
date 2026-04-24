@@ -263,5 +263,5 @@ export function createBudgetTracker(pluginRoot: string): BudgetTracker {
       ? parseFloat(process.env.OPENAUTH_BUDGET_DAILY_COST_LIMIT)
       : undefined;
 
-  return new BudgetTracker({ logFile, model, dailyTokenLimit, warnAt, hardLimitEnabled, dailyCostLimit });
+  return new BudgetTracker({ logFile, model, dailyTokenLimit, warnAt, hardLimitEnabled, ...(dailyCostLimit !== undefined ? { dailyCostLimit } : {}) });
 }
