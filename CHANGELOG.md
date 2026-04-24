@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### `http_delete` — HTTP DELETE request tool (HC-04)
+
+`http_delete` sends an HTTP DELETE request to a URL and maps to the `web.post` action class (`risk_tier: 'medium'`, `default_hitl_mode: 'per_request'`). DELETE is grouped with other state-mutating HTTP verbs under `web.post`.
+
+Key behaviours:
+
+- Accepts `url` (required) and `headers` (optional key-value pairs). DELETE requests carry no body.
+- Validates that the URL uses the `http://` or `https://` scheme before making any network request; throws `HttpDeleteError` with `code: 'invalid-url'` otherwise.
+- Returns `{ status_code, body }` — HTTP error responses (4xx, 5xx) are returned without throwing, since those represent a definitive server answer.
+- Throws `HttpDeleteError` (typed `code`: `invalid-url` | `network-error`) on transport failures.
+
+Gate order: URL scheme validation → HITL token check (pipeline) → network request → return.
+
 #### `http_patch` — HTTP PATCH request tool (HC-05)
 
 `http_patch` sends an HTTP PATCH request to a URL with an optional partial-update body and maps to the `web.post` action class (`risk_tier: 'medium'`, `default_hitl_mode: 'per_request'`). PATCH is treated the same as POST and PUT because it modifies remote state.
