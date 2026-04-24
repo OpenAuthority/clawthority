@@ -63,10 +63,15 @@ describe('TC-SAV-02: validateSkillManifestsForActivation passes for all valid fi
     expect(() => validateSkillManifestsForActivation(false)).not.toThrow();
   });
 
-  it('does not emit any console.warn when all manifests are valid', () => {
+  it('does not emit any manifest validation failure warnings when all manifests are valid', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     validateSkillManifestsForActivation(false);
-    expect(warn).not.toHaveBeenCalled();
+    // unsafe_admin: true manifests always emit security notices; filter those
+    // out and assert no validation failure warnings were emitted.
+    const failureWarnings = warn.mock.calls
+      .map((args) => String(args[0]))
+      .filter((msg) => msg.includes('Manifest validation warning:'));
+    expect(failureWarnings).toHaveLength(0);
   });
 });
 

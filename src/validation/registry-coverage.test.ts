@@ -51,34 +51,15 @@ interface ManifestInfo {
  *
  * Roadmap exemptions (remove once the corresponding tool lands under
  * src/tools/<name>/manifest.ts). This test is forward-looking: it prevents
- * a NEW registry entry from being added without a tool. The current gaps
- * pre-date the introduction of this test and are tracked as roadmap items.
+ * a NEW registry entry from being added without a tool.
  */
 const COVERAGE_EXEMPT = new Set<string>([
   ActionClass.UnknownSensitiveAction,
   ActionClass.ShellExec,
   // Roadmap — awaiting first-party tool implementation:
-  ActionClass.FilesystemDelete,
-  ActionClass.WebSearch,
-  ActionClass.WebFetch,
-  ActionClass.BrowserScrape,
-  ActionClass.WebPost,
-  ActionClass.CommunicationEmail,
-  ActionClass.CommunicationSlack,
-  ActionClass.CommunicationWebhook,
   ActionClass.MemoryRead,
   ActionClass.MemoryWrite,
-  ActionClass.CredentialRead,
-  ActionClass.CredentialWrite,
-  ActionClass.CodeExecute,
   ActionClass.PaymentInitiate,
-  ActionClass.VcsRemote,
-  ActionClass.PackageInstall,
-  ActionClass.PackageRun,
-  ActionClass.PackageRead,
-  ActionClass.BuildCompile,
-  ActionClass.BuildTest,
-  ActionClass.BuildLint,
 ]);
 
 // ─── Scanning helpers ──────────────────────────────────────────────────────────
