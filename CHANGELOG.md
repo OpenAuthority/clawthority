@@ -78,6 +78,19 @@ Key behaviours:
 
 Gate order: URL scheme validation → content-type validation → HITL token check (pipeline) → network request → return.
 
+#### `read_secret` — credential read tool (T75)
+
+`read_secret` retrieves a secret value from a configured backend store and maps to the `credential.read` action class (`risk_tier: 'high'`, `default_hitl_mode: 'per_request'`). Supported built-in backends: `env` (reads from `process.env`) and `file` (delegates to `FileCredentialVault`).
+
+Security invariants:
+
+- The retrieved value is **never** written to the audit log — only the key name, store identifier, and value length appear in log entries.
+- An absent or empty allowlist causes all key access to be denied (controlled by `CLAWTHORITY_SECRET_ALLOWLIST` env var or the `allowlist` option). Fail-closed by default.
+- The HITL capability token is consumed **before** the value is returned so it cannot be replayed even if the process is killed during the read.
+- Backends are injected via options, enabling tests to supply lightweight in-memory stubs (`MemorySecretBackend`) without touching `process.env` or external services.
+
+Gate order: allowlist check → HITL token presence → replay protection → backend read → return.
+
 #### `rotate_secret` — credential rotation tool (CS-03)
 
 `rotate_secret` generates a cryptographically-random 256-bit hex value for an existing secret and writes it to the configured backend store atomically. It maps to the `credential.rotate` action class (`risk_tier: 'critical'`, `default_hitl_mode: 'per_request'`).
