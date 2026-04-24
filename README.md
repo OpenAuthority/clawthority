@@ -78,19 +78,25 @@ Skill-based safety (instruct the model to "please check first") fails the moment
 
 ## Quickstart
 
-Install as an OpenClaw plugin:
+Install from npm into the OpenClaw plugins directory:
 
 ```bash
-git clone https://github.com/OpenAuthority/clawthority ~/.openclaw/plugins/clawthority
+mkdir -p ~/.openclaw/plugins/clawthority
 cd ~/.openclaw/plugins/clawthority
-npm install && npm run build
+npm init -y >/dev/null
+npm install @clawthority/clawthority
 ```
+
+Installing the package runs `scripts/post-install.mjs`, which writes a `data/.installed` marker under the plugin root. The marker gates policy activation — see `isInstalled()` in `src/index.ts`. No other files outside the plugin directory are touched.
 
 Register in `~/.openclaw/config.json`:
 
 ```json
 { "plugins": ["clawthority"] }
 ```
+
+> [!NOTE]
+> The three companion soft-enforcement skills (`human-approval`, `token-budget`, `whatdidyoudo`) live in a separate `clawthority-skills` repository. They are optional and independent of the plugin.
 
 By default Clawthority runs in **`open` mode** - implicit permit, with a critical-forbid safety net (`shell.exec`, `code.execute`, `payment.initiate`, `credential.read`, `credential.write`, `unknown_sensitive_action`). To run in **`closed` mode** (implicit deny, explicit permits required) set the env var before launching your agent:
 
