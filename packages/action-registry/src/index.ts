@@ -265,8 +265,6 @@ export const REGISTRY: readonly ActionRegistryEntry[] = [
     default_risk: 'high',
     default_hitl_mode: 'per_request',
     aliases: [
-      'exec',
-      'process',
       'bash',
       'shell_exec',
       'run_command',
