@@ -1,6 +1,6 @@
 {
   "name": "@clawthority/clawthority",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "description": "Authorization policy engine plugin for Clawthority",
   "type": "module",
   "main": "dist/index.js",
