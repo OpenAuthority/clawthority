@@ -1026,6 +1026,22 @@ const beforeToolCallHandler: BeforeToolCallHandler = async ({ toolName, params, 
   // Record tool coverage after pipeline completes.
   coverageMap.record('tool', toolName, pipelineDecision.effect === 'permit' ? 'permit' : 'forbid');
 
+  // When the forbid was issued against the catch-all unknown_sensitive_action
+  // bucket, prepend the original tool name to the reason so operators can
+  // tell which call triggered the forbid. Without this, the user-facing
+  // blockReason and audit reason field name only the bucket
+  // ("Unknown sensitive actions are unconditionally forbidden"), forcing
+  // operators to cross-reference the audit's actionClass+toolName fields to
+  // figure out what was actually blocked.
+  if (
+    pipelineDecision.effect === 'forbid' &&
+    normalizedAction.action_class === 'unknown_sensitive_action' &&
+    pipelineDecision.reason !== undefined &&
+    !pipelineDecision.reason.startsWith(`tool '${toolName}'`)
+  ) {
+    pipelineDecision.reason = `tool '${toolName}' is not registered: ${pipelineDecision.reason}`;
+  }
+
   if (pipelineDecision.effect === 'forbid') {
     if (pipelineDecision.reason === 'untrusted_source_high_risk') {
       const blockReason = 'untrusted_source_high_risk';
