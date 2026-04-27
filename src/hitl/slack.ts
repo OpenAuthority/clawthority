@@ -244,10 +244,28 @@ export class SlackInteractionServer {
       });
 
       this.server.listen(this.port, () => {
-        console.log(`[hitl-slack] interaction server listening on port ${this.port}`);
+        console.log(`[hitl-slack] interaction server listening on port ${this.address().port}`);
         resolve();
       });
     });
+  }
+
+  /**
+   * Returns the address the underlying HTTP server is bound to.
+   * Use this when constructing the server with port 0 (OS-assigned port)
+   * to discover the actual port chosen by the kernel.
+   *
+   * @throws if called before {@link start} has resolved.
+   */
+  address(): { port: number } {
+    if (!this.server) {
+      throw new Error('SlackInteractionServer.address(): server not started');
+    }
+    const addr = this.server.address();
+    if (addr === null || typeof addr === 'string') {
+      throw new Error('SlackInteractionServer.address(): no port info available');
+    }
+    return { port: addr.port };
   }
 
   stop(): Promise<void> {

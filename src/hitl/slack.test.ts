@@ -226,10 +226,13 @@ describe('SlackInteractionServer', () => {
 
   beforeEach(async () => {
     onAction = vi.fn();
-    // Use a random high port to avoid conflicts
-    port = 30000 + Math.floor(Math.random() * 10000);
-    server = new SlackInteractionServer(port, signingSecret, onAction);
+    // Bind to port 0 — let the OS pick a free port. Required because vitest
+    // runs test files in parallel workers; a hardcoded or randomly-chosen
+    // port hits EADDRINUSE often enough to break CI flakily. The actual
+    // bound port is read back via server.address() after start() resolves.
+    server = new SlackInteractionServer(0, signingSecret, onAction);
     await server.start();
+    port = server.address().port;
   });
 
   afterEach(async () => {
