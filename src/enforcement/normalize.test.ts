@@ -70,6 +70,8 @@ describe('registry coverage — each action class resolves from at least one ali
     ['http_post',        'web.post'],
     ['scrape_page',      'browser.scrape'],
     ['bash',             'shell.exec'],
+    ['exec',             'shell.exec'],
+    ['process',          'shell.exec'],
     ['send_email',       'communication.email'],
     ['send_slack',       'communication.slack'],
     ['call_webhook',     'communication.webhook'],
