@@ -46,7 +46,8 @@
     "validate-auto-permits": "node scripts/auto-permits.mjs validate",
     "test-auto-permit": "node scripts/auto-permits.mjs test",
     "remove-auto-permit": "node scripts/auto-permits.mjs remove",
-    "revoke-auto-permit": "node scripts/auto-permits.mjs revoke"
+    "revoke-auto-permit": "node scripts/auto-permits.mjs revoke",
+    "ci": "npm run test:coverage && npm run test:e2e:coverage && npm run validate:spec && npm run validate:manifests"
   },
   "dependencies": {
     "@openclaw/action-registry": "*",
