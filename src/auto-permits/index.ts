@@ -20,3 +20,15 @@ export type {
   DerivedPattern,
   PatternValidationResult,
 } from './pattern-derivation.js';
+
+export {
+  AutoPermitStorageModeSchema,
+  DEFAULT_AUTO_PERMIT_STORE_PATH,
+  RULES_FILE_PATH,
+  resolveAutoPermitStoreConfig,
+} from './config.js';
+
+export type {
+  AutoPermitStorageMode,
+  ResolvedAutoPermitStoreConfig,
+} from './config.js';

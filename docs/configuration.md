@@ -75,6 +75,7 @@ The `data/` directory is the default location for:
 | `data/bundle.json` | Policy bundle (preferred format, v1.2.1+) | `CLAWTHORITY_RULES_FILE` env var |
 | `data/rules.json` | Authorization rules array (legacy format, fallback) | `CLAWTHORITY_RULES_FILE` env var |
 | `data/audit.jsonl` | JSONL audit log | `AUDIT_LOG_FILE` env var |
+| `data/auto-permits.json` | Auto-generated permit records (default separate file) | `CLAWTHORITY_AUTO_PERMIT_STORE` env var |
 
 `data/bundle.json` takes precedence over `data/rules.json` when both are present. The server creates `data/` automatically if it does not exist. Override both paths with absolute paths for production deployments where the plugin directory may be read-only.
 
@@ -678,6 +679,12 @@ node dist/index.js
 # Locked-down production
 CLAWTHORITY_MODE=closed node dist/index.js
 ```
+
+### Auto-permit store
+
+| Variable | Default | Description |
+|---|---|---|
+| `CLAWTHORITY_AUTO_PERMIT_STORE` | `data/auto-permits.json` | Path to the file where auto-generated permit records are stored. Defaults to a dedicated `data/auto-permits.json` file (**separate** mode) so auto-permits remain distinct from hand-authored rules and are easy to review or revoke individually. Set to `data/rules.json` to enable **single-file** mode, which appends auto-permit records to the main rules file alongside operator-authored rules. Any other absolute or relative path is used as a custom separate store. Read once at module load — **restart the plugin to change.** |
 
 ### HITL — Telegram
 

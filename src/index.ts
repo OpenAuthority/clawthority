@@ -14,6 +14,18 @@ export {
 } from "./identity.js";
 export type { RegisteredAgent, IdentityVerificationResult } from "./identity.js";
 
+// ─── Auto-permits subsystem re-exports ───────────────────────────────────────
+export {
+  AutoPermitStorageModeSchema,
+  DEFAULT_AUTO_PERMIT_STORE_PATH,
+  RULES_FILE_PATH,
+  resolveAutoPermitStoreConfig,
+} from "./auto-permits/index.js";
+export type {
+  AutoPermitStorageMode,
+  ResolvedAutoPermitStoreConfig,
+} from "./auto-permits/index.js";
+
 // ─── Cedar-style engine re-exports ───────────────────────────────────────────
 export { PolicyEngine as CedarPolicyEngine } from "./policy/engine.js";
 export type { EvaluationDecision, EvaluationEffect } from "./policy/engine.js";
