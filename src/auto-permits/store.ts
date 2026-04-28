@@ -12,8 +12,8 @@ import { createHash } from 'node:crypto';
 import { readFile, writeFile, rename, chmod, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import chokidar from 'chokidar';
-import { isAutoPermit } from '../models/auto-permit.js';
 import type { AutoPermit } from '../models/auto-permit.js';
+import { validateAutoPermitContent } from './validation.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -40,7 +40,7 @@ function sha256(data: string): string {
 export interface LoadResult {
   /** Validated auto-permit records parsed from the file. */
   rules: AutoPermit[];
-  /** Number of records that failed `isAutoPermit` validation and were skipped. */
+  /** Number of records that failed schema validation and were skipped. */
   skipped: number;
   /** Absolute path of the store file that was (attempted to be) read. */
   path: string;
@@ -63,6 +63,29 @@ export interface LoadResult {
    * the file uses the versioned `{ version, rules, checksum }` bundle format.
    */
   checksum?: string;
+
+  /**
+   * All validation error messages collected during loading.
+   *
+   * Includes:
+   * - Envelope-level TypeBox errors (when the top-level structure is invalid).
+   * - Per-entry TypeBox errors (for each rule entry that failed schema validation).
+   * - A checksum mismatch message (when the stored checksum does not match the
+   *   computed SHA-256 of the rules array).
+   * - A JSON parse error message (when the file content is not valid JSON).
+   *
+   * Empty when the file does not exist (ENOENT) or when all content is valid.
+   * Callers should log these at `warn` level.
+   */
+  validationErrors: string[];
+
+  /**
+   * Human-readable description of the JSON parse failure, if any.
+   *
+   * `undefined` when the file content was valid JSON (or the file did not
+   * exist).  When set, `validationErrors` will also contain this message.
+   */
+  parseError?: string;
 }
 
 /**
@@ -98,7 +121,7 @@ export async function loadAutoPermitRulesFromFile(storePath: string): Promise<Lo
     raw = await readFile(storePath, 'utf-8');
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      return { rules: [], skipped: 0, path: storePath, found: false, version: 0 };
+      return { rules: [], skipped: 0, path: storePath, found: false, version: 0, validationErrors: [] };
     }
     throw err;
   }
@@ -106,32 +129,41 @@ export async function loadAutoPermitRulesFromFile(storePath: string): Promise<Lo
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
-  } catch {
-    return { rules: [], skipped: 0, path: storePath, found: true, version: 0 };
+  } catch (err) {
+    const parseError = `[auto-permits] ${storePath}: invalid JSON — ${String(err)}`;
+    return {
+      rules: [],
+      skipped: 0,
+      path: storePath,
+      found: true,
+      version: 0,
+      validationErrors: [parseError],
+      parseError,
+    };
   }
 
-  // Legacy format: plain JSON array of AutoPermit records (version 0).
-  if (Array.isArray(parsed)) {
-    const rules = parsed.filter(isAutoPermit);
-    const skipped = parsed.length - rules.length;
-    return { rules, skipped, path: storePath, found: true, version: 0 };
-  }
+  const validation = validateAutoPermitContent(parsed);
 
-  // Versioned format: { version: number, rules: AutoPermit[], checksum?: string }
-  if (
-    typeof parsed === 'object' &&
-    parsed !== null &&
-    typeof (parsed as { version?: unknown }).version === 'number' &&
-    Array.isArray((parsed as { rules?: unknown }).rules)
-  ) {
-    const obj = parsed as { version: number; rules: unknown[]; checksum?: unknown };
-    const rules = obj.rules.filter(isAutoPermit);
-    const skipped = obj.rules.length - rules.length;
-    const checksum = typeof obj.checksum === 'string' ? obj.checksum : undefined;
-    return { rules, skipped, path: storePath, found: true, version: obj.version, checksum };
-  }
+  // Collect all validation error messages for callers to log.
+  const validationErrors: string[] = [
+    ...validation.envelopeErrors.map((e) => `[auto-permits] ${storePath} envelope: ${e}`),
+    ...validation.entryErrors.flatMap(({ index, errors }) =>
+      errors.map((e) => `[auto-permits] ${storePath} rules[${index}]: ${e}`),
+    ),
+    ...(validation.checksumMismatch
+      ? [`[auto-permits] ${storePath}: checksum mismatch — file may have been modified externally`]
+      : []),
+  ];
 
-  return { rules: [], skipped: 0, path: storePath, found: true, version: 0 };
+  return {
+    rules: validation.rules,
+    skipped: validation.skipped,
+    path: storePath,
+    found: true,
+    version: validation.version,
+    ...(validation.checksum !== undefined ? { checksum: validation.checksum } : {}),
+    validationErrors,
+  };
 }
 
 // ── saveAutoPermitRules ───────────────────────────────────────────────────────

@@ -655,6 +655,9 @@ async function loadJsonRules(): Promise<void> {
               `[plugin:clawthority] auto-permits.json: ${apResult.skipped} invalid record(s) skipped`,
             );
           }
+          for (const err of apResult.validationErrors) {
+            console.warn(err);
+          }
           let merged = 0;
           for (const permit of apResult.rules) {
             const compiled = compilePatternRegex(permit.pattern);
@@ -720,6 +723,9 @@ async function loadAutoPermitRules(): Promise<void> {
       console.warn(
         `[plugin:clawthority] auto-permit store: ${result.skipped} invalid record(s) skipped (schema mismatch)`,
       );
+    }
+    for (const err of result.validationErrors) {
+      console.warn(err);
     }
 
     if (!result.found) {

@@ -53,3 +53,15 @@ export type {
   AutoPermitWatchHandle,
   WatchAutoPermitStoreOpts,
 } from './store.js';
+
+export {
+  AutoPermitLoadError,
+  AutoPermitFileSchema,
+  validateAutoPermitContent,
+} from './validation.js';
+
+export type {
+  AutoPermitFile,
+  AutoPermitEntryError,
+  AutoPermitFileValidationResult,
+} from './validation.js';

@@ -1,4 +1,4 @@
-// ─── Auto-permit store — unit tests (T28) ────────────────────────────────────
+// ─── Auto-permit store — unit tests (T28 / T48) ──────────────────────────────
 //
 // TC-APS-01  loadAutoPermitRulesFromFile: ENOENT → found: false, empty rules
 // TC-APS-02  loadAutoPermitRulesFromFile: valid file returns all valid rules
@@ -18,6 +18,13 @@
 // TC-APS-16  saveAutoPermitRules: checksum equals SHA-256(JSON.stringify(rules))
 // TC-APS-17  loadAutoPermitRulesFromFile: extracts checksum from versioned envelope
 // TC-APS-18  loadAutoPermitRulesFromFile: checksum is undefined for legacy flat-array
+// TC-APS-19  loadAutoPermitRulesFromFile: invalid JSON → validationErrors contains parse error, parseError set
+// TC-APS-20  loadAutoPermitRulesFromFile: invalid envelope schema → validationErrors contains envelope errors
+// TC-APS-21  loadAutoPermitRulesFromFile: invalid individual entry → validationErrors contains entry error
+// TC-APS-22  loadAutoPermitRulesFromFile: valid versioned file → validationErrors is empty
+// TC-APS-23  loadAutoPermitRulesFromFile: ENOENT → validationErrors is empty
+// TC-APS-24  loadAutoPermitRulesFromFile: legacy flat-array with valid rules → validationErrors is empty
+// TC-APS-25  loadAutoPermitRulesFromFile: checksum mismatch → validationErrors contains mismatch message
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
@@ -195,6 +202,79 @@ describe('loadAutoPermitRulesFromFile', () => {
     const err = Object.assign(new Error('EACCES'), { code: 'EACCES' });
     mockReadFile.mockRejectedValue(err);
     await expect(loadAutoPermitRulesFromFile(STORE_PATH)).rejects.toThrow('EACCES');
+  });
+
+  // TC-APS-19
+  it('returns validationErrors with parse error message and parseError field when JSON is invalid', async () => {
+    mockReadFile.mockResolvedValue('{ not valid json }');
+    const result = await loadAutoPermitRulesFromFile(STORE_PATH);
+    expect(result.found).toBe(true);
+    expect(result.rules).toEqual([]);
+    expect(result.validationErrors).toHaveLength(1);
+    expect(result.validationErrors[0]).toContain('invalid JSON');
+    expect(result.parseError).toBeDefined();
+    expect(result.parseError).toContain('invalid JSON');
+  });
+
+  // TC-APS-20
+  it('returns validationErrors with envelope errors when the file has an invalid envelope schema', async () => {
+    mockReadFile.mockResolvedValue(JSON.stringify({ notAnEnvelope: true }));
+    const result = await loadAutoPermitRulesFromFile(STORE_PATH);
+    expect(result.found).toBe(true);
+    expect(result.rules).toEqual([]);
+    expect(result.validationErrors.length).toBeGreaterThan(0);
+    expect(result.validationErrors.some((e) => e.includes('envelope'))).toBe(true);
+    expect(result.parseError).toBeUndefined();
+  });
+
+  // TC-APS-21
+  it('returns validationErrors with entry-level error when a rule entry is invalid', async () => {
+    const invalid = { pattern: 999, method: 'bad' };
+    mockReadFile.mockResolvedValue(JSON.stringify({ version: 1, rules: [invalid] }));
+    const result = await loadAutoPermitRulesFromFile(STORE_PATH);
+    expect(result.rules).toEqual([]);
+    expect(result.skipped).toBe(1);
+    expect(result.validationErrors.length).toBeGreaterThan(0);
+    expect(result.validationErrors.some((e) => e.includes('rules[0]'))).toBe(true);
+  });
+
+  // TC-APS-22
+  it('returns validationErrors:[] for a valid versioned file', async () => {
+    const rule = makeRule({ pattern: 'git commit *' });
+    mockReadFile.mockResolvedValue(JSON.stringify({ version: 1, rules: [rule] }));
+    const result = await loadAutoPermitRulesFromFile(STORE_PATH);
+    expect(result.validationErrors).toEqual([]);
+    expect(result.parseError).toBeUndefined();
+  });
+
+  // TC-APS-23
+  it('returns validationErrors:[] when the file does not exist (ENOENT)', async () => {
+    const err = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+    mockReadFile.mockRejectedValue(err);
+    const result = await loadAutoPermitRulesFromFile(STORE_PATH);
+    expect(result.found).toBe(false);
+    expect(result.validationErrors).toEqual([]);
+  });
+
+  // TC-APS-24
+  it('returns validationErrors:[] for a legacy flat-array with valid rules', async () => {
+    const rule = makeRule({ pattern: 'npm run build' });
+    mockReadFile.mockResolvedValue(JSON.stringify([rule]));
+    const result = await loadAutoPermitRulesFromFile(STORE_PATH);
+    expect(result.validationErrors).toEqual([]);
+    expect(result.version).toBe(0);
+  });
+
+  // TC-APS-25
+  it('returns validationErrors with checksum mismatch message when checksum does not match', async () => {
+    const rule = makeRule({ pattern: 'git push *' });
+    mockReadFile.mockResolvedValue(
+      JSON.stringify({ version: 1, rules: [rule], checksum: 'wrongchecksum' }),
+    );
+    const result = await loadAutoPermitRulesFromFile(STORE_PATH);
+    // Rules are still loaded despite the mismatch.
+    expect(result.rules).toHaveLength(1);
+    expect(result.validationErrors.some((e) => e.includes('checksum mismatch'))).toBe(true);
   });
 });
 
