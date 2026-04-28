@@ -401,6 +401,8 @@ export const REGISTRY: readonly ActionRegistryEntry[] = [
       'javascript',
       'node_exec',
       'code_runner',
+      'docker_run',
+      'docker_exec',
     ],
   },
   {

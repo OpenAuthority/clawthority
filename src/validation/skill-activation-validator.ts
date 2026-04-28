@@ -67,7 +67,11 @@ import { unsafeAdminExecManifest } from '../tools/unsafe_admin_exec/manifest.js'
 import { npmInstallManifest } from '../tools/npm_install/manifest.js';
 import { npmRunManifest } from '../tools/npm_run/manifest.js';
 import { npmRunBuildManifest } from '../tools/npm_run_build/manifest.js';
+import { pipInstallManifest } from '../tools/pip_install/manifest.js';
 import { pipListManifest } from '../tools/pip_list/manifest.js';
+import { pytestManifest } from '../tools/pytest/manifest.js';
+import { dockerRunManifest } from '../tools/docker_run/manifest.js';
+import { makeRunManifest } from '../tools/make_run/manifest.js';
 import { runCodeManifest } from '../tools/run_code/manifest.js';
 import { runLinterManifest } from '../tools/run_linter/manifest.js';
 import { runTestsManifest } from '../tools/run_tests/manifest.js';
@@ -141,7 +145,11 @@ export const FIRST_PARTY_MANIFESTS: readonly ToolManifest[] = [
   npmInstallManifest,
   npmRunManifest,
   npmRunBuildManifest,
+  pipInstallManifest,
   pipListManifest,
+  pytestManifest,
+  dockerRunManifest,
+  makeRunManifest,
   runCodeManifest,
   runLinterManifest,
   runTestsManifest,
