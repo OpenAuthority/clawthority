@@ -70,6 +70,8 @@ export const ActionClass = {
   PaymentInitiate: 'payment.initiate',
   SystemRead: 'system.read',
   SystemService: 'system.service',
+  PermissionsModify: 'permissions.modify',
+  PermissionsElevate: 'permissions.elevate',
   VcsRead: 'vcs.read',
   VcsWrite: 'vcs.write',
   VcsRemote: 'vcs.remote',
@@ -88,7 +90,7 @@ export const ActionClass = {
 export type ActionClassValue = (typeof ActionClass)[keyof typeof ActionClass];
 
 // ---------------------------------------------------------------------------
-// Registry — 33 entries, aliases stored lowercase
+// Registry — 35 entries, aliases stored lowercase
 // ---------------------------------------------------------------------------
 
 export const REGISTRY: readonly ActionRegistryEntry[] = [
@@ -460,6 +462,28 @@ export const REGISTRY: readonly ActionRegistryEntry[] = [
       'init',
       'reboot',
       'shutdown',
+    ],
+  },
+  {
+    action_class: ActionClass.PermissionsModify,
+    default_risk: 'high',
+    default_hitl_mode: 'per_request',
+    aliases: [
+      'chmod',
+      'chown',
+      'chgrp',
+      'umask',
+    ],
+  },
+  {
+    action_class: ActionClass.PermissionsElevate,
+    default_risk: 'critical',
+    default_hitl_mode: 'per_request',
+    aliases: [
+      'sudo',
+      'su',
+      'doas',
+      'passwd',
     ],
   },
   {

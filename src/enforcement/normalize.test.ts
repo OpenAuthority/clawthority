@@ -81,6 +81,8 @@ describe('registry coverage — each action class resolves from at least one ali
     ['pay',              'payment.initiate'],
     ['get_system_info',  'system.read'],
     ['systemctl',        'system.service'],
+    ['chmod',            'permissions.modify'],
+    ['sudo',             'permissions.elevate'],
     ['git_log',          'vcs.read'],
     ['git_add',          'vcs.write'],
     ['git_clone',        'vcs.remote'],
@@ -323,6 +325,82 @@ describe('system.service aliases and defaults', () => {
 
   it('no intent_group on system.service', () => {
     const result = normalize_action('systemctl', {});
+    expect(result.intent_group).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// permissions.modify action class — aliases, risk, HITL
+// ---------------------------------------------------------------------------
+
+describe('permissions.modify aliases and defaults', () => {
+  it('chmod → permissions.modify with high risk and per_request HITL', () => {
+    const result = normalize_action('chmod', {});
+    expect(result.action_class).toBe('permissions.modify');
+    expect(result.risk).toBe('high');
+    expect(result.hitl_mode).toBe('per_request');
+  });
+
+  it('chown → permissions.modify', () => {
+    const result = normalize_action('chown', {});
+    expect(result.action_class).toBe('permissions.modify');
+  });
+
+  it('chgrp → permissions.modify', () => {
+    const result = normalize_action('chgrp', {});
+    expect(result.action_class).toBe('permissions.modify');
+  });
+
+  it('umask → permissions.modify', () => {
+    const result = normalize_action('umask', {});
+    expect(result.action_class).toBe('permissions.modify');
+  });
+
+  it('CHMOD (uppercase) → permissions.modify via case-insensitive alias lookup', () => {
+    const result = normalize_action('CHMOD', {});
+    expect(result.action_class).toBe('permissions.modify');
+  });
+
+  it('no intent_group on permissions.modify', () => {
+    const result = normalize_action('chmod', {});
+    expect(result.intent_group).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// permissions.elevate action class — aliases, risk, HITL
+// ---------------------------------------------------------------------------
+
+describe('permissions.elevate aliases and defaults', () => {
+  it('sudo → permissions.elevate with critical risk and per_request HITL', () => {
+    const result = normalize_action('sudo', {});
+    expect(result.action_class).toBe('permissions.elevate');
+    expect(result.risk).toBe('critical');
+    expect(result.hitl_mode).toBe('per_request');
+  });
+
+  it('su → permissions.elevate', () => {
+    const result = normalize_action('su', {});
+    expect(result.action_class).toBe('permissions.elevate');
+  });
+
+  it('doas → permissions.elevate', () => {
+    const result = normalize_action('doas', {});
+    expect(result.action_class).toBe('permissions.elevate');
+  });
+
+  it('passwd → permissions.elevate', () => {
+    const result = normalize_action('passwd', {});
+    expect(result.action_class).toBe('permissions.elevate');
+  });
+
+  it('SUDO (uppercase) → permissions.elevate via case-insensitive alias lookup', () => {
+    const result = normalize_action('SUDO', {});
+    expect(result.action_class).toBe('permissions.elevate');
+  });
+
+  it('no intent_group on permissions.elevate', () => {
+    const result = normalize_action('sudo', {});
     expect(result.intent_group).toBeUndefined();
   });
 });

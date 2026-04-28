@@ -17,6 +17,8 @@
  *   TC-CE-72 – TC-CE-75 : prettier patterns
  *   TC-CE-100 – TC-CE-121: service / host-lifecycle patterns
  *                          (systemctl, service, reboot, shutdown, init)
+ *   TC-CE-122 – TC-CE-138: permissions patterns
+ *                          (chown, umask, sudo, su, passwd)
  */
 
 import { describe, it, expect } from 'vitest';
@@ -1420,5 +1422,216 @@ describe('TC-CE-121: init — single-user (S) and unknown runlevels', () => {
     const result = explain('init 3');
     expect(result.summary).toMatch(/runlevel 3/i);
     expect(hasWarningMatching(result.warnings, /host|disruption/i)).toBe(false);
+  });
+});
+
+// ── TC-CE-122 – TC-CE-138 : permissions ──────────────────────────────────────
+
+describe('TC-CE-122: chown — names owner and path in summary', () => {
+  it('summarises a basic chown invocation', () => {
+    const result = explain('chown alice /tmp/data');
+    expect(result.summary).toMatch(/owner/i);
+    expect(result.summary).toContain('alice');
+    expect(result.summary).toContain('/tmp/data');
+  });
+});
+
+describe('TC-CE-123: chown -R / --recursive — recursive flag in summary', () => {
+  it('mentions recursion when -R is used', () => {
+    const result = explain('chown -R alice /var/www');
+    expect(result.summary).toMatch(/recursive/i);
+  });
+
+  it('mentions recursion when --recursive is used', () => {
+    const result = explain('chown --recursive bob /opt/app');
+    expect(result.summary).toMatch(/recursive/i);
+  });
+});
+
+describe('TC-CE-124: chown — system-path warning', () => {
+  it('warns when targeting / itself', () => {
+    const result = explain('chown -R alice /');
+    expect(hasWarningMatching(result.warnings, /lock out|system services/i)).toBe(true);
+  });
+
+  it('warns when targeting /etc', () => {
+    const result = explain('chown alice /etc/passwd');
+    expect(hasWarningMatching(result.warnings, /lock out|system services/i)).toBe(true);
+  });
+
+  it('warns when targeting /usr', () => {
+    const result = explain('chown -R alice /usr/local');
+    expect(hasWarningMatching(result.warnings, /lock out|system services/i)).toBe(true);
+  });
+
+  it('does not warn for an ordinary user-owned path', () => {
+    const result = explain('chown alice /home/alice/notes');
+    expect(hasWarningMatching(result.warnings, /lock out|system services/i)).toBe(false);
+  });
+});
+
+describe('TC-CE-125: chown — root-ownership warning', () => {
+  it('warns when transferring ownership to root', () => {
+    const result = explain('chown root /tmp/data');
+    expect(hasWarningMatching(result.warnings, /root ownership|editable only by root/i)).toBe(true);
+  });
+
+  it('warns when transferring ownership to root:root', () => {
+    const result = explain('chown root:root /tmp/data');
+    expect(hasWarningMatching(result.warnings, /root ownership|editable only by root/i)).toBe(true);
+  });
+});
+
+describe('TC-CE-126: umask — bare invocation queries the current mask', () => {
+  it('summarises as "shows the current umask" with no warnings', () => {
+    const result = explain('umask');
+    expect(result.summary).toMatch(/current umask/i);
+    expect(result.warnings).toHaveLength(0);
+  });
+});
+
+describe('TC-CE-127: umask — sets the umask and includes the value in summary', () => {
+  it('echoes the new mask in the summary', () => {
+    const result = explain('umask 022');
+    expect(result.summary).toContain('022');
+  });
+
+  it('warns about world-writable defaults when umask is 000', () => {
+    const result = explain('umask 000');
+    expect(hasWarningMatching(result.warnings, /world-writable/i)).toBe(true);
+  });
+
+  it('does not warn for a sensible umask like 022', () => {
+    const result = explain('umask 022');
+    expect(hasWarningMatching(result.warnings, /world-writable/i)).toBe(false);
+  });
+});
+
+describe('TC-CE-128: sudo — runs wrapped command as a different user', () => {
+  it('summarises `sudo apt update` as running the wrapped command', () => {
+    const result = explain('sudo apt update');
+    expect(result.summary).toContain('apt update');
+    expect(result.summary).toMatch(/root/i);
+  });
+
+  it('always warns about privilege elevation', () => {
+    const result = explain('sudo systemctl restart nginx');
+    expect(hasWarningMatching(result.warnings, /privilege elevation|wrapped command runs/i)).toBe(true);
+  });
+});
+
+describe('TC-CE-129: sudo — explicit -u target user', () => {
+  it('reports the target user in the summary when -u is used', () => {
+    const result = explain('sudo -u postgres pg_dump mydb');
+    expect(result.summary).toContain('postgres');
+    expect(result.summary).toContain('pg_dump');
+  });
+
+  it('does not raise the root warning when -u is not root', () => {
+    const result = explain('sudo -u backup tar czf /backup.tgz /data');
+    expect(hasWarningMatching(result.warnings, /full administrative access/i)).toBe(false);
+  });
+
+  it('still warns about privilege elevation even when target is non-root', () => {
+    const result = explain('sudo -u backup ls /root');
+    expect(hasWarningMatching(result.warnings, /privilege elevation/i)).toBe(true);
+  });
+});
+
+describe('TC-CE-130: sudo — bare sudo without a wrapped command', () => {
+  it('falls back to "Switches privilege" summary when no command is given', () => {
+    const result = explain('sudo');
+    expect(result.summary).toMatch(/switches privilege|root/i);
+  });
+});
+
+describe('TC-CE-131: sudo — root-target warning', () => {
+  it('warns about full administrative access when target is root (default)', () => {
+    const result = explain('sudo systemctl reboot');
+    expect(hasWarningMatching(result.warnings, /full administrative access/i)).toBe(true);
+  });
+});
+
+describe('TC-CE-132: su — bare invocation switches to root', () => {
+  it('summarises `su` as switching to root', () => {
+    const result = explain('su');
+    expect(result.summary).toMatch(/switches user to root|opens a login shell as root/i);
+  });
+
+  it('always warns about privilege elevation', () => {
+    const result = explain('su');
+    expect(hasWarningMatching(result.warnings, /privilege elevation|opens a shell/i)).toBe(true);
+  });
+});
+
+describe('TC-CE-133: su — login-shell modes (-, -l, --login)', () => {
+  it('treats `su -` as a login-shell switch', () => {
+    const result = explain('su -');
+    expect(result.summary).toMatch(/login shell/i);
+  });
+
+  it('treats `su -l` as a login-shell switch', () => {
+    const result = explain('su -l');
+    expect(result.summary).toMatch(/login shell/i);
+  });
+
+  it('treats `su --login` as a login-shell switch', () => {
+    const result = explain('su --login');
+    expect(result.summary).toMatch(/login shell/i);
+  });
+});
+
+describe('TC-CE-134: su user — switches to a named non-root user', () => {
+  it('names the target user in the summary', () => {
+    const result = explain('su alice');
+    expect(result.summary).toContain('alice');
+  });
+
+  it('does not raise the root warning when target is non-root', () => {
+    const result = explain('su alice');
+    expect(hasWarningMatching(result.warnings, /full administrative access/i)).toBe(false);
+  });
+});
+
+describe('TC-CE-135: su -c — runs a wrapped command as the target user', () => {
+  it('reports the wrapped command in the summary', () => {
+    const result = explain('su -c whoami');
+    expect(result.summary).toContain('whoami');
+  });
+});
+
+describe('TC-CE-136: passwd — bare invocation changes the current user’s password', () => {
+  it('summarises a bare passwd invocation', () => {
+    const result = explain('passwd');
+    expect(result.summary).toMatch(/password/i);
+  });
+
+  it('always warns about credential change', () => {
+    const result = explain('passwd');
+    expect(hasWarningMatching(result.warnings, /credential|authentication/i)).toBe(true);
+  });
+});
+
+describe('TC-CE-137: passwd <user> — names the affected account', () => {
+  it('echoes the target user in the summary', () => {
+    const result = explain('passwd alice');
+    expect(result.summary).toContain('alice');
+  });
+
+  it('does not raise the root-coordination warning for a non-root target', () => {
+    const result = explain('passwd alice');
+    expect(hasWarningMatching(result.warnings, /coordinate with operators/i)).toBe(false);
+  });
+});
+
+describe('TC-CE-138: passwd root — coordination warning', () => {
+  it('warns about coordinating before changing the root password', () => {
+    const result = explain('passwd root');
+    expect(hasWarningMatching(result.warnings, /coordinate with operators/i)).toBe(true);
+  });
+
+  it('warns about coordination on bare `passwd` (current user could be root)', () => {
+    const result = explain('passwd');
+    expect(hasWarningMatching(result.warnings, /coordinate with operators/i)).toBe(true);
   });
 });

@@ -523,6 +523,126 @@ function chmodExplain(args: string[]): ExplainResult {
   return { summary, effects: ['Modifies file access permissions'], warnings };
 }
 
+function chownExplain(args: string[]): ExplainResult {
+  const isRecursive = args.some(t => t === '-R' || t === '--recursive');
+  const pos = positionalArgs(args);
+  const ownerSpec = pos[0] ?? '<owner>';
+  const path = pos[1] ?? '<path>';
+  const warnings: string[] = [];
+  if (path === '/' || path.startsWith('/etc') || path.startsWith('/usr')) {
+    warnings.push(`Modifying ownership under ${path} can lock out system services`);
+  }
+  if (ownerSpec === 'root' || ownerSpec.startsWith('root:')) {
+    warnings.push('Granting root ownership — file becomes editable only by root');
+  }
+  return {
+    summary: isRecursive
+      ? `Recursively changes ownership of ${path} to ${ownerSpec}`
+      : `Changes ownership of ${path} to ${ownerSpec}`,
+    effects: ['Modifies file ownership (user/group)'],
+    warnings,
+  };
+}
+
+function umaskExplain(args: string[]): ExplainResult {
+  const mask = args[0];
+  if (mask === undefined) {
+    return {
+      summary: 'Shows the current umask',
+      effects: [],
+      warnings: [],
+    };
+  }
+  const warnings: string[] = [];
+  if (mask === '000') {
+    warnings.push('umask 000 makes all newly-created files world-writable by default');
+  }
+  return {
+    summary: `Sets the umask to ${mask}`,
+    effects: ['Changes default permission mask for new files'],
+    warnings,
+  };
+}
+
+function sudoExplain(args: string[]): ExplainResult {
+  // `sudo -u user cmd args...` or `sudo cmd args...`
+  let i = 0;
+  let targetUser = 'root';
+  // Skip flags before the wrapped command. -u takes an argument.
+  while (i < args.length && args[i]!.startsWith('-')) {
+    if (args[i] === '-u' || args[i] === '--user') {
+      const next = args[i + 1];
+      if (next !== undefined) {
+        targetUser = next;
+        i += 2;
+        continue;
+      }
+    }
+    i += 1;
+  }
+  const wrappedCmd = args.slice(i).join(' ').trim();
+  const warnings = ['Privilege elevation — wrapped command runs as a different user'];
+  if (targetUser === 'root') {
+    warnings.push('Target user is root — full administrative access');
+  }
+  return {
+    summary: wrappedCmd.length > 0
+      ? `Runs '${wrappedCmd}' as ${targetUser}`
+      : `Switches privilege to ${targetUser}`,
+    effects: ['Elevates privilege for the wrapped command'],
+    warnings,
+  };
+}
+
+function suExplain(args: string[]): ExplainResult {
+  // `su -` (login shell as root), `su user`, `su - user`, `su -c 'cmd' user`
+  const flags = args.filter(a => a.startsWith('-') && a !== '-');
+  const isLoginShell = args.includes('-') || flags.includes('-l') || flags.includes('--login');
+  const cIdx = args.findIndex(a => a === '-c' || a === '--command');
+  const wrappedCmd = cIdx >= 0 ? args[cIdx + 1] : undefined;
+  // When -c is absent we must NOT exclude index 0 (which would falsely match
+  // `cIdx + 1` when cIdx is -1).
+  const cmdArgIdx = cIdx >= 0 ? cIdx + 1 : -1;
+  const positional = args.filter((a, idx) => !a.startsWith('-') && a !== '-' && idx !== cmdArgIdx);
+  const targetUser = positional[0] ?? 'root';
+
+  const warnings = ['Privilege elevation — opens a shell as a different user'];
+  if (targetUser === 'root') {
+    warnings.push('Target user is root — full administrative access');
+  }
+
+  let summary: string;
+  if (wrappedCmd !== undefined) {
+    summary = `Runs '${wrappedCmd}' as ${targetUser}`;
+  } else if (isLoginShell) {
+    summary = `Opens a login shell as ${targetUser}`;
+  } else {
+    summary = `Switches user to ${targetUser}`;
+  }
+
+  return {
+    summary,
+    effects: ['Switches the current user / opens a privileged shell'],
+    warnings,
+  };
+}
+
+function passwdExplain(args: string[]): ExplainResult {
+  const pos = positionalArgs(args);
+  const target = pos[0];
+  const warnings = ['Credential change — affects authentication'];
+  if (target === 'root' || target === undefined) {
+    warnings.push('Changing the root password — coordinate with operators before proceeding');
+  }
+  return {
+    summary: target !== undefined
+      ? `Changes the password for ${target}`
+      : 'Changes the current user’s password',
+    effects: ['Writes to /etc/shadow (or equivalent credential store)'],
+    warnings,
+  };
+}
+
 function mkdirExplain(args: string[]): ExplainResult {
   const pos = positionalArgs(args);
   const path = pos[0] ?? '<directory>';
@@ -869,6 +989,13 @@ const rules: CommandRule[] = [
   { match: /^reboot\b/,          explain: rebootExplain },
   { match: /^shutdown\b/,        explain: shutdownExplain },
   { match: /^init\b/,            explain: initExplain },
+  // Permissions — modify (file ownership / mode / umask)
+  { match: /^chown\b/,           explain: chownExplain },
+  { match: /^umask\b/,           explain: umaskExplain },
+  // Permissions — elevate (privilege change)
+  { match: /^sudo\b/,            explain: sudoExplain },
+  { match: /^su\b/,              explain: suExplain },
+  { match: /^passwd\b/,          explain: passwdExplain },
 ];
 
 // ── Public API ─────────────────────────────────────────────────────────────────

@@ -64,6 +64,14 @@ const COVERAGE_EXEMPT = new Set<string>([
   // v1.3.1 ships only the registry alias + explainer pattern (Layers 1+2);
   // typed tool wrappers land in v1.3.2 once HITL volume is measured.
   ActionClass.SystemService,
+  // v1.3.2: typed tools for chmod/chown/chgrp/umask. Same v1.3.1 / v1.3.2
+  // split as system.service.
+  ActionClass.PermissionsModify,
+  // v1.3.2: permissions.elevate (sudo / su / doas / passwd) is intentionally
+  // *not* getting a typed-tool wrapper — see docs/release-plans/v1.3.2.md
+  // §2.2. The v1.3.2 plan ships a default-forbid policy rule on this class
+  // instead. Operators who need privilege elevation use unsafe_admin_exec.
+  ActionClass.PermissionsElevate,
 ]);
 
 // ─── Scanning helpers ──────────────────────────────────────────────────────────
