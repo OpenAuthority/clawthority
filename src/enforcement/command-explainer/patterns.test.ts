@@ -9,6 +9,12 @@
  *   TC-CE-26 – TC-CE-30 : docker run patterns         (T18)
  *   TC-CE-31 – TC-CE-33 : docker build patterns       (T18)
  *   TC-CE-34 – TC-CE-37 : docker exec patterns        (T18)
+ *   TC-CE-56 – TC-CE-58 : make patterns
+ *   TC-CE-59 – TC-CE-62 : cargo patterns
+ *   TC-CE-63 – TC-CE-66 : go patterns
+ *   TC-CE-67 – TC-CE-68 : git branch/remote detection
+ *   TC-CE-69 – TC-CE-71 : eslint patterns
+ *   TC-CE-72 – TC-CE-75 : prettier patterns
  */
 
 import { describe, it, expect } from 'vitest';
@@ -587,5 +593,237 @@ describe('TC-CE-55: timeout protection — long inputs complete quickly', () => 
     const elapsed = Date.now() - start;
     expect(elapsed).toBeLessThan(200);
     expect(result).toHaveProperty('summary');
+  });
+});
+
+// ── TC-CE-56 – TC-CE-58 : make ────────────────────────────────────────────────
+
+describe('TC-CE-56: make — default target summary', () => {
+  it('produces a summary mentioning make when no target is given', () => {
+    const result = explain('make');
+    expect(result.summary).toMatch(/make/i);
+  });
+
+  it('mentions the default target', () => {
+    const result = explain('make');
+    expect(result.summary).toMatch(/default/i);
+  });
+});
+
+describe('TC-CE-57: make <target> — includes target name in summary', () => {
+  it('includes the target name in the summary', () => {
+    const result = explain('make build');
+    expect(result.summary).toMatch(/build/);
+  });
+
+  it('includes a named target for make clean', () => {
+    const result = explain('make clean');
+    expect(result.summary).toMatch(/clean/);
+  });
+});
+
+describe('TC-CE-58: make — effects mention Makefile', () => {
+  it('includes a Makefile effect', () => {
+    const result = explain('make test');
+    expect(hasEffectMatching(result.effects, /makefile/i)).toBe(true);
+  });
+});
+
+// ── TC-CE-59 – TC-CE-62 : cargo ──────────────────────────────────────────────
+
+describe('TC-CE-59: cargo build — compilation summary', () => {
+  it('produces a summary mentioning compilation', () => {
+    const result = explain('cargo build');
+    expect(result.summary).toMatch(/compil/i);
+  });
+});
+
+describe('TC-CE-60: cargo build — workspace artifact effect', () => {
+  it('includes an effect mentioning target/', () => {
+    const result = explain('cargo build');
+    expect(hasEffectMatching(result.effects, /target\//)).toBe(true);
+  });
+
+  it('mentions workspace members when --workspace flag is present', () => {
+    const result = explain('cargo build --workspace');
+    expect(result.summary).toMatch(/workspace/i);
+  });
+});
+
+describe('TC-CE-61: cargo test — test run summary', () => {
+  it('produces a summary mentioning tests', () => {
+    const result = explain('cargo test');
+    expect(result.summary).toMatch(/test/i);
+  });
+
+  it('includes the test filter in the summary when provided', () => {
+    const result = explain('cargo test my_module');
+    expect(result.summary).toMatch(/my_module/);
+  });
+});
+
+describe('TC-CE-62: cargo unknown subcommand — generic summary', () => {
+  it('returns a summary containing "cargo" for an unrecognised subcommand', () => {
+    const result = explain('cargo fmt');
+    expect(result.summary).toMatch(/cargo/i);
+  });
+});
+
+// ── TC-CE-63 – TC-CE-66 : go ──────────────────────────────────────────────────
+
+describe('TC-CE-63: go build — compilation summary', () => {
+  it('produces a summary mentioning compilation', () => {
+    const result = explain('go build');
+    expect(result.summary).toMatch(/compil/i);
+  });
+
+  it('includes an effect mentioning compiled binary', () => {
+    const result = explain('go build');
+    expect(hasEffectMatching(result.effects, /binary|compil/i)).toBe(true);
+  });
+});
+
+describe('TC-CE-64: go test — test run summary', () => {
+  it('produces a summary mentioning tests', () => {
+    const result = explain('go test');
+    expect(result.summary).toMatch(/test/i);
+  });
+});
+
+describe('TC-CE-65: go build <pkg> — includes package path in summary', () => {
+  it('includes the package path in the summary', () => {
+    const result = explain('go build ./cmd/server');
+    expect(result.summary).toMatch(/\.\/cmd\/server/);
+  });
+
+  it('includes ./... in the summary when passed', () => {
+    const result = explain('go test ./...');
+    expect(result.summary).toMatch(/\.\/\.\.\./);
+  });
+});
+
+describe('TC-CE-66: go unknown subcommand — generic summary', () => {
+  it('returns a summary containing "go" for an unrecognised subcommand', () => {
+    const result = explain('go vet ./...');
+    expect(result.summary).toMatch(/go/i);
+  });
+});
+
+// ── TC-CE-67 – TC-CE-68 : git branch/remote detection ────────────────────────
+
+describe('TC-CE-67: git push — includes remote and branch in summary', () => {
+  it('includes the remote name in the summary', () => {
+    const result = explain('git push origin main');
+    expect(result.summary).toMatch(/origin/);
+  });
+
+  it('includes the branch name in the summary', () => {
+    const result = explain('git push origin feature/my-branch');
+    expect(result.summary).toMatch(/feature\/my-branch/);
+  });
+
+  it('force-push warning still present when branch is specified', () => {
+    const result = explain('git push --force origin main');
+    expect(hasWarningMatching(result.warnings, /force/i)).toBe(true);
+  });
+});
+
+describe('TC-CE-68: git pull — includes remote and branch in summary', () => {
+  it('includes the remote name in the summary', () => {
+    const result = explain('git pull upstream main');
+    expect(result.summary).toMatch(/upstream/);
+  });
+
+  it('includes the branch name in the summary', () => {
+    const result = explain('git pull origin release/1.0');
+    expect(result.summary).toMatch(/release\/1\.0/);
+  });
+});
+
+// ── TC-CE-69 – TC-CE-71 : eslint ─────────────────────────────────────────────
+
+describe('TC-CE-69: eslint — lint summary', () => {
+  it('produces a summary mentioning linting', () => {
+    const result = explain('eslint .');
+    expect(result.summary).toMatch(/lint/i);
+  });
+
+  it('includes the target path in the summary', () => {
+    const result = explain('eslint src/');
+    expect(result.summary).toMatch(/src\//);
+  });
+});
+
+describe('TC-CE-70: eslint --fix — mentions auto-fix and has file modification effect', () => {
+  it('mentions auto-fix in the summary', () => {
+    const result = explain('eslint --fix src/');
+    expect(result.summary).toMatch(/fix/i);
+  });
+
+  it('includes a file-modification effect', () => {
+    const result = explain('eslint --fix .');
+    expect(hasEffectMatching(result.effects, /modif|source file/i)).toBe(true);
+  });
+
+  it('has no file-modification effect without --fix', () => {
+    const result = explain('eslint src/');
+    expect(result.effects).toHaveLength(0);
+  });
+});
+
+describe('TC-CE-71: eslint — no warnings emitted', () => {
+  it('produces no warnings for a standard lint run', () => {
+    const result = explain('eslint --ext .ts src/');
+    expect(result.warnings).toHaveLength(0);
+  });
+});
+
+// ── TC-CE-72 – TC-CE-75 : prettier ───────────────────────────────────────────
+
+describe('TC-CE-72: prettier — summary mentions Prettier', () => {
+  it('produces a summary mentioning Prettier', () => {
+    const result = explain('prettier src/');
+    expect(result.summary).toMatch(/prettier/i);
+  });
+
+  it('includes the target path in the summary', () => {
+    const result = explain('prettier src/index.ts');
+    expect(result.summary).toMatch(/src\/index\.ts/);
+  });
+});
+
+describe('TC-CE-73: prettier --write — mentions formatting and has file modification effect', () => {
+  it('mentions formatting in the summary', () => {
+    const result = explain('prettier --write src/');
+    expect(result.summary).toMatch(/format/i);
+  });
+
+  it('includes a file-modification effect', () => {
+    const result = explain('prettier --write .');
+    expect(hasEffectMatching(result.effects, /modif|source file/i)).toBe(true);
+  });
+
+  it('has no file-modification effect without --write', () => {
+    const result = explain('prettier src/');
+    expect(result.effects).toHaveLength(0);
+  });
+});
+
+describe('TC-CE-74: prettier --check — mentions check or format in summary', () => {
+  it('produces a summary mentioning check or format', () => {
+    const result = explain('prettier --check src/');
+    expect(result.summary).toMatch(/check|format/i);
+  });
+
+  it('has no file-modification effect in check mode', () => {
+    const result = explain('prettier --check .');
+    expect(result.effects).toHaveLength(0);
+  });
+});
+
+describe('TC-CE-75: prettier — no warnings emitted', () => {
+  it('produces no warnings for a standard prettier run', () => {
+    const result = explain('prettier --write src/');
+    expect(result.warnings).toHaveLength(0);
   });
 });

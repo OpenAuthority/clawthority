@@ -68,16 +68,39 @@ function gitCommit(args: string[]): ExplainResult {
 }
 
 function gitPush(args: string[]): ExplainResult {
-  const flags = args.slice(1);
+  const rest = args.slice(1);
   const warnings: string[] = [];
-  if (flags.includes('--force') || flags.includes('-f')) {
+  if (rest.includes('--force') || rest.includes('-f')) {
     warnings.push('Force push rewrites remote history');
   }
+  const pos = positionalArgs(rest);
+  const remote = pos[0];
+  const branch = pos[1];
+  let summary = 'Pushes local commits to the remote repository';
+  if (remote && branch) {
+    summary = `Pushes local commits to ${remote}/${branch}`;
+  } else if (remote) {
+    summary = `Pushes local commits to ${remote}`;
+  }
   return {
-    summary: 'Pushes local commits to the remote repository',
+    summary,
     effects: ['Modifies remote branch'],
     warnings,
   };
+}
+
+function gitPull(args: string[]): ExplainResult {
+  const rest = args.slice(1);
+  const pos = positionalArgs(rest);
+  const remote = pos[0];
+  const branch = pos[1];
+  let summary = 'Fetches and merges changes from the remote repository';
+  if (remote && branch) {
+    summary = `Fetches and merges changes from ${remote}/${branch}`;
+  } else if (remote) {
+    summary = `Fetches and merges changes from ${remote}`;
+  }
+  return { summary, effects: ['Modifies local branch'], warnings: [] };
 }
 
 function gitClone(args: string[]): ExplainResult {
@@ -120,7 +143,7 @@ function gitExplain(args: string[]): ExplainResult {
   switch (sub) {
     case 'commit':   return gitCommit(args);
     case 'push':     return gitPush(args);
-    case 'pull':     return { summary: 'Fetches and merges changes from the remote repository', effects: ['Modifies local branch'], warnings: [] };
+    case 'pull':     return gitPull(args);
     case 'clone':    return gitClone(args);
     case 'status':   return { summary: 'Shows the working tree status', effects: [], warnings: [] };
     case 'diff':     return { summary: 'Shows changes between commits, branches, or the working tree', effects: [], warnings: [] };
@@ -325,6 +348,121 @@ function dockerExplain(args: string[]): ExplainResult {
   }
 }
 
+// ── make detectors ─────────────────────────────────────────────────────────────
+
+function makeExplain(args: string[]): ExplainResult {
+  const target = positionalArgs(args)[0];
+  const summary = target
+    ? `Runs the '${target}' make target`
+    : 'Runs the default make target';
+  return {
+    summary,
+    effects: ['Executes commands defined in the Makefile'],
+    warnings: [],
+  };
+}
+
+// ── cargo detectors ────────────────────────────────────────────────────────────
+
+function cargoBuild(args: string[]): ExplainResult {
+  const rest = args.slice(1);
+  const isWorkspace = rest.includes('--workspace') || rest.includes('--all');
+  return {
+    summary: isWorkspace
+      ? 'Compiles all Rust workspace members'
+      : 'Compiles the Rust project',
+    effects: ['Writes compiled artifacts to target/'],
+    warnings: [],
+  };
+}
+
+function cargoTest(args: string[]): ExplainResult {
+  const rest = args.slice(1);
+  const filter = positionalArgs(rest)[0];
+  const summary = filter
+    ? `Compiles and runs Rust tests matching '${filter}'`
+    : 'Compiles and runs the Rust test suite';
+  return {
+    summary,
+    effects: ['Writes test artifacts to target/'],
+    warnings: [],
+  };
+}
+
+function cargoExplain(args: string[]): ExplainResult {
+  const sub = args[0];
+  switch (sub) {
+    case 'build': return cargoBuild(args);
+    case 'test':  return cargoTest(args);
+    default:      return { summary: `Runs cargo ${sub ?? ''}`.trim(), effects: [], warnings: [] };
+  }
+}
+
+// ── go detectors ───────────────────────────────────────────────────────────────
+
+function goBuild(args: string[]): ExplainResult {
+  const rest = args.slice(1);
+  const pkg = positionalArgs(rest)[0];
+  const summary = pkg
+    ? `Compiles Go packages in ${pkg}`
+    : 'Compiles Go packages in the current module';
+  return {
+    summary,
+    effects: ['Writes compiled binary to the working directory'],
+    warnings: [],
+  };
+}
+
+function goTest(args: string[]): ExplainResult {
+  const rest = args.slice(1);
+  const pkg = positionalArgs(rest)[0];
+  const summary = pkg
+    ? `Runs Go tests in ${pkg}`
+    : 'Runs the Go test suite';
+  return { summary, effects: [], warnings: [] };
+}
+
+function goExplain(args: string[]): ExplainResult {
+  const sub = args[0];
+  switch (sub) {
+    case 'build': return goBuild(args);
+    case 'test':  return goTest(args);
+    default:      return { summary: `Runs go ${sub ?? ''}`.trim(), effects: [], warnings: [] };
+  }
+}
+
+// ── eslint detectors ───────────────────────────────────────────────────────────
+
+function eslintExplain(args: string[]): ExplainResult {
+  const fixMode = args.includes('--fix');
+  const paths = positionalArgs(args);
+  const target = paths.length > 0 ? paths.join(', ') : 'the project';
+  const summary = fixMode
+    ? `Lints and auto-fixes code in ${target}`
+    : `Lints code in ${target}`;
+  const effects: string[] = fixMode ? ['Modifies source files in place'] : [];
+  return { summary, effects, warnings: [] };
+}
+
+// ── prettier detectors ─────────────────────────────────────────────────────────
+
+function prettierExplain(args: string[]): ExplainResult {
+  const writeMode = args.includes('--write');
+  const checkMode = args.includes('--check');
+  const paths = positionalArgs(args);
+  const target = paths.length > 0 ? paths.join(', ') : 'the project';
+  let summary: string;
+  if (writeMode) {
+    summary = `Formats source files in ${target}`;
+  } else if (checkMode) {
+    summary = `Checks formatting of files in ${target}`;
+  } else {
+    summary = `Runs Prettier on ${target}`;
+  }
+  const effects: string[] = writeMode ? ['Modifies source files in place'] : [];
+  return { summary, effects, warnings: [] };
+}
+
 // ── Rule table ─────────────────────────────────────────────────────────────────
 
 interface CommandRule {
@@ -335,11 +473,16 @@ interface CommandRule {
 }
 
 const rules: CommandRule[] = [
-  { match: /^git\b/,        explain: gitExplain },
-  { match: /^npm\b/,        explain: npmExplain },
+  { match: /^git\b/,             explain: gitExplain },
+  { match: /^npm\b/,             explain: npmExplain },
   { match: /^pip3?\s+install\b/, explain: pipInstall },
-  { match: /^pytest\b/,     explain: (args) => pytestExplain(args) },
-  { match: /^docker\b/,     explain: dockerExplain },
+  { match: /^pytest\b/,          explain: (args) => pytestExplain(args) },
+  { match: /^docker\b/,          explain: dockerExplain },
+  { match: /^make\b/,            explain: makeExplain },
+  { match: /^cargo\b/,           explain: cargoExplain },
+  { match: /^go\b/,              explain: goExplain },
+  { match: /^eslint\b/,          explain: eslintExplain },
+  { match: /^prettier\b/,        explain: prettierExplain },
 ];
 
 // ── Public API ─────────────────────────────────────────────────────────────────
