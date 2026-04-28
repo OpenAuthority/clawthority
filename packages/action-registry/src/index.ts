@@ -69,6 +69,7 @@ export const ActionClass = {
   CodeExecute: 'code.execute',
   PaymentInitiate: 'payment.initiate',
   SystemRead: 'system.read',
+  SystemService: 'system.service',
   VcsRead: 'vcs.read',
   VcsWrite: 'vcs.write',
   VcsRemote: 'vcs.remote',
@@ -87,7 +88,7 @@ export const ActionClass = {
 export type ActionClassValue = (typeof ActionClass)[keyof typeof ActionClass];
 
 // ---------------------------------------------------------------------------
-// Registry — 32 entries, aliases stored lowercase
+// Registry — 33 entries, aliases stored lowercase
 // ---------------------------------------------------------------------------
 
 export const REGISTRY: readonly ActionRegistryEntry[] = [
@@ -447,6 +448,18 @@ export const REGISTRY: readonly ActionRegistryEntry[] = [
       'get_arch',
       'get_os_info',
       'uname',
+    ],
+  },
+  {
+    action_class: ActionClass.SystemService,
+    default_risk: 'critical',
+    default_hitl_mode: 'per_request',
+    aliases: [
+      'systemctl',
+      'service',
+      'init',
+      'reboot',
+      'shutdown',
     ],
   },
   {

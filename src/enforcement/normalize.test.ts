@@ -80,6 +80,7 @@ describe('registry coverage — each action class resolves from at least one ali
     ['run_code',         'code.execute'],
     ['pay',              'payment.initiate'],
     ['get_system_info',  'system.read'],
+    ['systemctl',        'system.service'],
     ['git_log',          'vcs.read'],
     ['git_add',          'vcs.write'],
     ['git_clone',        'vcs.remote'],
@@ -280,6 +281,49 @@ describe('system.read target extraction', () => {
   it('returns empty target for get_system_info (no params)', () => {
     const result = normalize_action('get_system_info', {});
     expect(result.target).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// system.service action class — aliases, risk, HITL
+// ---------------------------------------------------------------------------
+
+describe('system.service aliases and defaults', () => {
+  it('systemctl → system.service with critical risk and per_request HITL', () => {
+    const result = normalize_action('systemctl', {});
+    expect(result.action_class).toBe('system.service');
+    expect(result.risk).toBe('critical');
+    expect(result.hitl_mode).toBe('per_request');
+  });
+
+  it('service → system.service', () => {
+    const result = normalize_action('service', {});
+    expect(result.action_class).toBe('system.service');
+  });
+
+  it('init → system.service', () => {
+    const result = normalize_action('init', {});
+    expect(result.action_class).toBe('system.service');
+  });
+
+  it('reboot → system.service', () => {
+    const result = normalize_action('reboot', {});
+    expect(result.action_class).toBe('system.service');
+  });
+
+  it('shutdown → system.service', () => {
+    const result = normalize_action('shutdown', {});
+    expect(result.action_class).toBe('system.service');
+  });
+
+  it('SYSTEMCTL (uppercase) → system.service via case-insensitive alias lookup', () => {
+    const result = normalize_action('SYSTEMCTL', {});
+    expect(result.action_class).toBe('system.service');
+  });
+
+  it('no intent_group on system.service', () => {
+    const result = normalize_action('systemctl', {});
+    expect(result.intent_group).toBeUndefined();
   });
 });
 
