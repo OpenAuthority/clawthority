@@ -121,15 +121,122 @@ describe('sendSlackApprovalRequest', () => {
 
     const body = JSON.parse(init?.body as string);
     expect(body.channel).toBe('C123');
-    expect(body.blocks).toHaveLength(2);
-    expect(body.blocks[0].type).toBe('section');
-    expect(body.blocks[1].type).toBe('actions');
 
-    // Check buttons
-    const buttons = body.blocks[1].elements;
+    // Minimum layout (no optional fields): header + fields section + context + divider + actions
+    expect(body.blocks).toHaveLength(5);
+    expect(body.blocks[0].type).toBe('header');
+    expect(body.blocks[1].type).toBe('section');
+    expect(body.blocks[1].fields).toBeDefined();
+    expect(body.blocks[2].type).toBe('context');
+    expect(body.blocks[3].type).toBe('divider');
+    expect(body.blocks[4].type).toBe('actions');
+
+    // Core fields: Tool, Agent, Policy, Expires in
+    const fields = body.blocks[1].fields as Array<{ type: string; text: string }>;
+    expect(fields).toHaveLength(4);
+    expect(fields[0].text).toContain('email.send');
+    expect(fields[1].text).toContain('agent-1');
+    expect(fields[2].text).toContain('Email policy');
+    expect(fields[3].text).toContain('300s');
+
+    // Context block contains the Approval ID
+    const contextEl = body.blocks[2].elements as Array<{ type: string; text: string }>;
+    expect(contextEl[0].text).toContain('abc12345');
+
+    // Buttons: Approve Always omitted by default (showApproveAlways not set → shown)
+    // opts has no showApproveAlways so it defaults to true → 3 buttons
+    const buttons = body.blocks[4].elements;
+    expect(buttons).toHaveLength(3);
+    expect(buttons[0].value).toBe('approve:abc12345');
+    expect(buttons[1].value).toBe('approve_always:abc12345');
+    expect(buttons[2].value).toBe('deny:abc12345');
+  });
+
+  it('omits Approve Always button when showApproveAlways is false', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, ts: '111.222' }), { status: 200 }),
+    );
+    await sendSlackApprovalRequest(config, { ...opts, showApproveAlways: false });
+
+    const body = JSON.parse(vi.mocked(fetch).mock.calls[0]![1]?.body as string);
+    const buttons = body.blocks.at(-1).elements;
     expect(buttons).toHaveLength(2);
     expect(buttons[0].value).toBe('approve:abc12345');
     expect(buttons[1].value).toBe('deny:abc12345');
+  });
+
+  it('adds optional fields block when action_class and target are provided', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, ts: '111.222' }), { status: 200 }),
+    );
+    await sendSlackApprovalRequest(config, {
+      ...opts,
+      action_class: 'email.send',
+      target: 'user@example.com',
+    });
+
+    const body = JSON.parse(vi.mocked(fetch).mock.calls[0]![1]?.body as string);
+    // header + fields + optional-fields + context + divider + actions = 6
+    expect(body.blocks).toHaveLength(6);
+    const optBlock = body.blocks[2];
+    expect(optBlock.type).toBe('section');
+    expect(optBlock.fields[0].text).toContain('email.send');
+    expect(optBlock.fields[1].text).toContain('user@example.com');
+  });
+
+  it('adds summary block when summary is provided', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, ts: '111.222' }), { status: 200 }),
+    );
+    await sendSlackApprovalRequest(config, { ...opts, summary: 'Send welcome email to new user' });
+
+    const body = JSON.parse(vi.mocked(fetch).mock.calls[0]![1]?.body as string);
+    // header + fields + summary + context + divider + actions = 6
+    expect(body.blocks).toHaveLength(6);
+    const summaryBlock = body.blocks[2];
+    expect(summaryBlock.type).toBe('section');
+    expect(summaryBlock.text.text).toContain('Send welcome email to new user');
+  });
+
+  it('includes expires_at in context block when provided', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, ts: '111.222' }), { status: 200 }),
+    );
+    await sendSlackApprovalRequest(config, { ...opts, expires_at: '2099-01-01T00:00:00Z' });
+
+    const body = JSON.parse(vi.mocked(fetch).mock.calls[0]![1]?.body as string);
+    const contextBlock = body.blocks.find((b: { type: string }) => b.type === 'context');
+    const elements = contextBlock.elements as Array<{ text: string }>;
+    expect(elements).toHaveLength(2);
+    expect(elements[1].text).toContain('2099-01-01T00:00:00Z');
+  });
+
+  it('prepends unverified agent warning block when verified is false', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, ts: '111.222' }), { status: 200 }),
+    );
+    await sendSlackApprovalRequest(config, { ...opts, verified: false });
+
+    const body = JSON.parse(vi.mocked(fetch).mock.calls[0]![1]?.body as string);
+    // warning + header + fields + context + divider + actions = 6
+    expect(body.blocks).toHaveLength(6);
+    expect(body.blocks[0].type).toBe('section');
+    expect(body.blocks[0].text.text).toContain('UNVERIFIED AGENT');
+    expect(body.blocks[1].type).toBe('header');
+  });
+
+  it('truncates field values longer than 100 characters', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, ts: '111.222' }), { status: 200 }),
+    );
+    const longName = 'a'.repeat(150);
+    await sendSlackApprovalRequest(config, { ...opts, toolName: longName });
+
+    const body = JSON.parse(vi.mocked(fetch).mock.calls[0]![1]?.body as string);
+    const fields = body.blocks[1].fields as Array<{ text: string }>;
+    // Tool field text should be at most 100 chars of content + backticks + label
+    expect(fields[0].text).toContain('\u2026'); // ellipsis
+    expect(fields[0].text).not.toContain('a'.repeat(101));
   });
 
   it('returns ok:false on HTTP error', async () => {
@@ -286,6 +393,30 @@ describe('SlackInteractionServer', () => {
     expect(res.status).toBe(200);
     await new Promise((r) => setTimeout(r, 50));
     expect(onAction).toHaveBeenCalledWith('deny', 'XyZ98765');
+  });
+
+  it('handles a valid approve_always interaction', async () => {
+    const payload = JSON.stringify({
+      type: 'block_actions',
+      actions: [{ action_id: 'hitl_approve_always', value: 'approve_always:abc12345' }],
+    });
+    const body = `payload=${encodeURIComponent(payload)}`;
+    const ts = String(Math.floor(Date.now() / 1000));
+    const sig = makeSignature(ts, body);
+
+    const res = await fetch(`http://localhost:${port}/slack/interactions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'X-Slack-Request-Timestamp': ts,
+        'X-Slack-Signature': sig,
+      },
+      body,
+    });
+
+    expect(res.status).toBe(200);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(onAction).toHaveBeenCalledWith('approve_always', 'abc12345');
   });
 
   it('handles an approve interaction with a UUID v7 token (36 chars)', async () => {

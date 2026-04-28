@@ -1,0 +1,34 @@
+version: "1"
+
+# Copy this file to hitl-policy.yaml and fill in your credentials.
+# Environment variables (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID,
+# SLACK_BOT_TOKEN, SLACK_CHANNEL_ID, SLACK_SIGNING_SECRET) always
+# take precedence over values set directly here.
+
+# telegram:
+#   botToken: ""
+#   chatId: ""
+
+# slack:
+#   botToken: ""
+#   channelId: ""
+#   signingSecret: ""
+#   interactionPort: 3201
+
+policies:
+  # Gate every unrecognised or sensitive action through Telegram.
+  # This policy mirrors the unknown_sensitive_action forbid rule in
+  # rules.json: a human must approve before the action proceeds.
+  - name: Unknown sensitive actions
+    description: >
+      Any action whose class is not explicitly permitted falls through to
+      this policy. An operator reviews and approves or denies in real time.
+    actions:
+      - unknown_sensitive_action
+    approval:
+      channel: telegram
+      timeout: 300   # 5 minutes — operator must respond within this window
+      fallback: deny # deny if no response (fail-closed)
+    tags:
+      - security
+      - default

@@ -35,19 +35,50 @@ Add the plugin to your OpenClaw configuration file at `~/.openclaw/config.json`:
 
 OpenClaw will load `dist/index.js` as the plugin entry point on next start.
 
-### 3. Choose your install mode (optional)
+### 3. Activate the CLOSED+HITL preset (recommended)
 
-Clawthority ships with two postures:
+The post-install script writes a ready-to-use **CLOSED+HITL** preset into `data/presets/closed-hitl/`. This is the recommended security configuration for production deployments: every action is denied unless explicitly permitted, and any unrecognised action is routed to a human operator for real-time approval instead of being silently dropped.
+
+**To activate:**
+
+```bash
+# Copy preset rules into the active rules file
+cp data/presets/closed-hitl/rules.json data/rules.json
+
+# Copy preset HITL policy and configure your approval channel
+cp data/presets/closed-hitl/hitl-policy.yaml hitl-policy.yaml
+# Edit hitl-policy.yaml — uncomment the telegram or slack block and add credentials,
+# or set TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID (or Slack equivalents) as env vars.
+
+# Enable CLOSED mode before launching the agent
+export CLAWTHORITY_MODE=closed
+```
+
+Restart OpenClaw. The logs should show:
+
+```
+[clawthority] mode: CLOSED (implicit deny; explicit permits enforced)
+[clawthority] HITL policies loaded: 1 policy, 1 action pattern
+[clawthority] Plugin activated. Watching rules for changes.
+```
+
+Any tool call that maps to `unknown_sensitive_action` will now be held for operator review via your configured channel. The operator can **Approve** (allow once), **Approve Always** (create a persistent auto-permit), or **Deny**.
+
+> For channel setup details see [Human-in-the-Loop](human-in-the-loop.md). For the full rule-set breakdown see [configuration.md — Install mode](configuration.md#install-mode).
+
+#### Alternative postures
+
+If CLOSED+HITL does not suit your environment, choose one of these instead:
 
 - **`open` (default)** — implicit permit with a critical-forbid safety net. Every tool call is allowed unless it hits `shell.exec`, `code.execute`, `payment.initiate`, `credential.read`, `credential.write`, or `unknown_sensitive_action`. Pick this for a zero-friction install when you plan to add forbids as you discover what needs locking down.
 
-- **`closed`** — implicit deny. No tool call is allowed unless an explicit `permit` rule covers it. Pick this for locked-down production deployments where the allow-list is authoritative.
+- **`closed` (no HITL)** — implicit deny without an approval flow. No tool call is allowed unless an explicit `permit` rule covers it. Unrecognised actions are silently denied. Pick this when you want an explicit allow-list and do not need operator approval for new actions.
 
 Select mode via the `CLAWTHORITY_MODE` environment variable before launching the agent:
 
 ```bash
 # open (default) — nothing to set
-# closed
+# closed (no HITL)
 export CLAWTHORITY_MODE=closed
 ```
 

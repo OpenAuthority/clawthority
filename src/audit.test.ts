@@ -14,7 +14,7 @@ import { existsSync } from 'node:fs';
 import {
   JsonlAuditLogger,
 } from './audit.js';
-import type { NormalizerUnclassifiedEntry } from './audit.js';
+import type { AutoPermitDerivationSkippedEntry, AutoPermitMatchedEntry, NormalizerUnclassifiedEntry } from './audit.js';
 
 describe('JsonlAuditLogger', () => {
   const tmpDir = tmpdir();
@@ -124,5 +124,106 @@ describe('JsonlAuditLogger', () => {
     expect(parsed.type).toBe('hitl');
     expect(parsed.decision).toBe('approved');
     expect(parsed.token).toBe('tok-123');
+  });
+
+  it('logs auto_permit_matched entries with all required fields', async () => {
+    const logger = new JsonlAuditLogger({ logFile });
+    const entry: AutoPermitMatchedEntry = {
+      ts: new Date().toISOString(),
+      type: 'auto_permit_matched',
+      pattern: 'git commit *',
+      method: 'default',
+      command: 'git commit -m "fix auth"',
+      toolName: 'bash',
+      actionClass: 'shell.exec',
+      agentId: 'agent-42',
+      channel: 'telegram',
+      verified: true,
+      mode: 'closed',
+    };
+    await logger.log(entry);
+
+    const content = await readFile(logFile, 'utf-8');
+    const parsed = JSON.parse(content.trim());
+    expect(parsed.type).toBe('auto_permit_matched');
+    expect(parsed.pattern).toBe('git commit *');
+    expect(parsed.method).toBe('default');
+    expect(parsed.command).toBe('git commit -m "fix auth"');
+    expect(parsed.toolName).toBe('bash');
+    expect(parsed.actionClass).toBe('shell.exec');
+    expect(parsed.agentId).toBe('agent-42');
+    expect(parsed.channel).toBe('telegram');
+    expect(parsed.verified).toBe(true);
+    expect(parsed.mode).toBe('closed');
+  });
+
+  it('logs auto_permit_matched entries without optional fields', async () => {
+    const logger = new JsonlAuditLogger({ logFile });
+    const entry: AutoPermitMatchedEntry = {
+      ts: new Date().toISOString(),
+      type: 'auto_permit_matched',
+      pattern: 'read_file',
+      method: 'default',
+      command: 'read_file',
+      toolName: 'read_file',
+      actionClass: 'filesystem.read',
+      agentId: 'agent-1',
+      channel: 'slack',
+    };
+    await logger.log(entry);
+
+    const content = await readFile(logFile, 'utf-8');
+    const parsed = JSON.parse(content.trim());
+    expect(parsed.type).toBe('auto_permit_matched');
+    expect(parsed.pattern).toBe('read_file');
+    expect(parsed.verified).toBeUndefined();
+    expect(parsed.mode).toBeUndefined();
+  });
+
+  it('logs auto_permit_derivation_skipped entries with operatorId', async () => {
+    const logger = new JsonlAuditLogger({ logFile });
+    const entry: AutoPermitDerivationSkippedEntry = {
+      ts: new Date().toISOString(),
+      type: 'auto_permit_derivation_skipped',
+      reason: 'command contains shell metacharacters',
+      command: 'git commit && git push',
+      toolName: 'bash',
+      actionClass: 'shell.exec',
+      channel: 'telegram',
+      agentId: 'agent-7',
+      operatorId: '123456789@alice',
+    };
+    await logger.log(entry);
+
+    const content = await readFile(logFile, 'utf-8');
+    const parsed = JSON.parse(content.trim());
+    expect(parsed.type).toBe('auto_permit_derivation_skipped');
+    expect(parsed.reason).toBe('command contains shell metacharacters');
+    expect(parsed.command).toBe('git commit && git push');
+    expect(parsed.toolName).toBe('bash');
+    expect(parsed.actionClass).toBe('shell.exec');
+    expect(parsed.channel).toBe('telegram');
+    expect(parsed.agentId).toBe('agent-7');
+    expect(parsed.operatorId).toBe('123456789@alice');
+  });
+
+  it('logs auto_permit_derivation_skipped entries without operatorId', async () => {
+    const logger = new JsonlAuditLogger({ logFile });
+    const entry: AutoPermitDerivationSkippedEntry = {
+      ts: new Date().toISOString(),
+      type: 'auto_permit_derivation_skipped',
+      reason: 'command is empty',
+      command: '',
+      toolName: 'bash',
+      actionClass: 'shell.exec',
+      channel: 'slack',
+      agentId: 'agent-2',
+    };
+    await logger.log(entry);
+
+    const content = await readFile(logFile, 'utf-8');
+    const parsed = JSON.parse(content.trim());
+    expect(parsed.type).toBe('auto_permit_derivation_skipped');
+    expect(parsed.operatorId).toBeUndefined();
   });
 });

@@ -177,22 +177,31 @@ export class PolicyEngine {
    * @param resource      Resource type to match rules against (e.g. `'tool'`, `'channel'`).
    * @param resourceName  Name of the specific resource being accessed (e.g. `'read_file'`).
    * @param context       Evaluation context — agent ID, channel, and optional metadata.
+   * @param target        Optional specific target of the action (e.g. a command string, URL,
+   *                      or file path). When provided, `target_match` and `target_in` on rules
+   *                      are checked against this value instead of `resourceName`. This allows
+   *                      command-specific matching within a tool type — e.g. matching the tool
+   *                      name via `match` while narrowing on the command via `target_match`.
+   *                      When omitted, `target_match`/`target_in` fall back to `resourceName`
+   *                      for backward compatibility.
    * @returns             An `EvaluationDecision` carrying the effect, optional reason,
    *                      matched rule reference, and rate-limit status if applicable.
    */
   evaluate(
     resource: Resource,
     resourceName: string,
-    context: RuleContext
+    context: RuleContext,
+    target?: string
   ): EvaluationDecision {
+    const effectiveTarget = target ?? resourceName;
     const matchingRules: Rule[] = [];
 
     for (const rule of this._rules) {
       if (rule.resource !== resource) continue;
       if (rule.match === undefined) continue;
       if (!matchesPattern(rule.match, resourceName)) continue;
-      if (rule.target_match !== undefined && !matchesPattern(rule.target_match, resourceName)) continue;
-      if (rule.target_in !== undefined && !rule.target_in.some(t => t.toLowerCase() === resourceName.toLowerCase())) continue;
+      if (rule.target_match !== undefined && !matchesPattern(rule.target_match, effectiveTarget)) continue;
+      if (rule.target_in !== undefined && !rule.target_in.some(t => t.toLowerCase() === effectiveTarget.toLowerCase())) continue;
       if (rule.condition !== undefined && !rule.condition(context)) continue;
       matchingRules.push(rule);
     }

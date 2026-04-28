@@ -379,6 +379,8 @@ describe('fine-grained tools — HITL approve (Telegram stub)', () => {
           getPending() { return undefined; }
           get size() { return 0; }
           shutdown() {}
+          isSessionAutoApproved() { return false; }
+          addSessionAutoApproval() {}
         },
       };
     });
@@ -391,7 +393,7 @@ describe('fine-grained tools — HITL approve (Telegram stub)', () => {
       );
       return {
         ...actual,
-        sendApprovalRequest: vi.fn(async () => true),
+        sendApprovalRequest: vi.fn(async () => ({ ok: true })),
         TelegramListener: class MockTelegramListener {
           constructor(_botToken: string, _onCommand: unknown) {}
           start(): void {}
@@ -525,6 +527,8 @@ describe('fine-grained tools — HITL approve (Slack stub)', () => {
           getPending() { return undefined; }
           get size() { return 0; }
           shutdown() {}
+          isSessionAutoApproved() { return false; }
+          addSessionAutoApproval() {}
         },
       };
     });

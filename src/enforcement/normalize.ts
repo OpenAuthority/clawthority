@@ -121,6 +121,12 @@ const TARGET_KEYS_BY_CLASS: Readonly<Record<string, readonly string[]>> = {
   'archive.create':    ['output_path', 'destination', 'archive_path', 'path', 'file_path'],
   'archive.extract':   ['destination', 'output_dir', 'archive_path', 'path', 'file_path'],
   'archive.read':      ['archive_path', 'path', 'file_path'],
+  // Shell execution: the command string is the target for pattern derivation
+  // and auto-permit matching. `command` is the canonical param name used by
+  // bash/shell tools; `cmd` and `script` are common aliases.
+  'shell.exec':        ['command', 'cmd', 'script'],
+  // Code execution: the source code or script text is the semantic target.
+  'code.execute':      ['code', 'script', 'command'],
 };
 
 /**

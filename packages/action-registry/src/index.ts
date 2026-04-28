@@ -401,6 +401,8 @@ export const REGISTRY: readonly ActionRegistryEntry[] = [
       'javascript',
       'node_exec',
       'code_runner',
+      'docker_run',
+      'docker_exec',
     ],
   },
   {
@@ -550,6 +552,7 @@ export const REGISTRY: readonly ActionRegistryEntry[] = [
       'yarn_run',
       'pnpm_run',
       'run_script',
+      'make_run',
     ],
   },
   {

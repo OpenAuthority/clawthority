@@ -15,6 +15,7 @@ export const npmInstallManifest: ToolManifest = {
   action_class: 'package.install',
   risk_tier: 'medium',
   default_hitl_mode: 'per_request',
+  target_field: 'packages',
   params: {
     type: 'object',
     properties: {
@@ -30,7 +31,7 @@ export const npmInstallManifest: ToolManifest = {
       flags: {
         type: 'array',
         items: { type: 'string' },
-        description: 'Additional npm install flags (e.g. ["--save-dev", "--legacy-peer-deps"]).',
+        description: 'Additional npm install flags (e.g. ["--save-dev", "--global", "--package-lock-only"]).',
       },
     },
     required: [],
@@ -39,10 +40,6 @@ export const npmInstallManifest: ToolManifest = {
   result: {
     type: 'object',
     properties: {
-      installed: {
-        type: 'boolean',
-        description: 'Whether the installation completed without error.',
-      },
       stdout: {
         type: 'string',
         description: 'Standard output from npm install.',
@@ -50,6 +47,10 @@ export const npmInstallManifest: ToolManifest = {
       stderr: {
         type: 'string',
         description: 'Standard error from npm install.',
+      },
+      exit_code: {
+        type: 'number',
+        description: 'Process exit code. Non-zero indicates npm reported an error.',
       },
     },
   },

@@ -604,6 +604,8 @@ describe('credential.list and credential.rotate — HITL timeout with deny fallb
           getPending() { return undefined; }
           get size() { return 0; }
           shutdown() {}
+          isSessionAutoApproved() { return false; }
+          addSessionAutoApproval() {}
         },
       };
     });
@@ -614,7 +616,7 @@ describe('credential.list and credential.rotate — HITL timeout with deny fallb
       );
       return {
         ...actual,
-        sendApprovalRequest: vi.fn(async () => true),
+        sendApprovalRequest: vi.fn(async () => ({ ok: true })),
         TelegramListener: class MockTelegramListener {
           constructor(_botToken: string, _onCommand: unknown) {}
           start(): void {}

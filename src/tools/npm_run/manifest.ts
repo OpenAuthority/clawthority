@@ -32,6 +32,10 @@ export const npmRunManifest: ToolManifest = {
         items: { type: 'string' },
         description: 'Additional arguments to pass after `--` to the script.',
       },
+      silent: {
+        type: 'boolean',
+        description: 'When true, pass `--silent` to suppress npm lifecycle output.',
+      },
     },
     required: ['script'],
     additionalProperties: false,

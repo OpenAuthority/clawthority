@@ -7,6 +7,126 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-04-28
+
+Headline release: **HITL becomes the primary control surface, not the failure mode.** Operators approve or deny tool calls with a single button tap on Telegram (no more `/approve <token>` typing); recurring commands can be saved as auto-permits with one click; approval messages are written for humans, not for compilers.
+
+### Added
+
+#### Telegram inline buttons for HITL approvals (W1)
+
+`sendApprovalRequest` now sends a MarkdownV2-formatted message with an `inline_keyboard` carrying three buttons — `✅ Approve once`, `🔁 Approve always`, `❌ Deny` — instead of asking the operator to type `/approve <token>`. `callback_data` uses a `<verb>:<token>` form (`approve_once:<uuidv7>`, `approve_always:<uuidv7>`, `deny:<uuidv7>`) which fits the 64-byte Telegram limit.
+
+`TelegramListener` was extended to dispatch `callback_query` updates alongside the existing long-poll loop. Each click triggers `answerCallbackQuery` (acknowledgement + replay-protected "Already decided" toast on second tap) and `editMessageText` to replace the buttons with a confirmation footer. The legacy `/approve <token>` text command is kept for one release with a deprecation hint per use; remove planned for v1.4.
+
+#### Approve Always — session-scoped auto-permits (W2)
+
+Tapping 🔁 derives a permit pattern from the current command and offers it back to the operator in a confirmation message (`Pattern: docker run * ubuntu *` with `[✅ Save] [❌ Cancel]` buttons; auto-confirm available via `CLAWTHORITY_APPROVE_ALWAYS_AUTO_CONFIRM=1`). On Save, the rule is appended to `data/auto-permits.json` (`{ version, rules, checksum, generated, created_by, created_at, derived_from }`), hot-reloaded via chokidar, and merged into the JSON rules engine. Future matching calls bypass HITL entirely with a `stage: 'auto-permit'` permit decision.
+
+Pattern derivation (`src/auto-permits/pattern-derivation.ts`) uses two methods:
+- **`tool` method:** registered tool name → pattern is the tool name itself.
+- **`default` method:** for `unknown_sensitive_action` / `shell.exec`, tokenises the command, drops flags, retains binary + first positional argument as `binary * positional *`.
+
+Refusal cases (fall back to Approve Once):
+- Shell metacharacters (`;`, `|`, `&&`, `>`, `<`, backticks, `$`) — derivation is unsafe.
+- Patterns longer than 200 chars after derivation.
+- Patterns deriving to bare wildcards or empty strings.
+
+#### CLI helpers for auto-permit management (W2)
+
+- `npm run list-auto-permits` — pretty-prints all rules with origin metadata.
+- `npm run show-auto-permit <pattern>` — full rule detail by pattern or index.
+- `npm run validate-auto-permits` — validates schema + checksum integrity.
+- `npm run test-auto-permit <command>` — dry-run match without executing.
+- `npm run remove-auto-permit <index>` — removes by index, bumps version.
+- `npm run revoke-auto-permit <pattern>` — revoke by pattern.
+
+#### Command explainer — plain-language HITL message bodies (W3)
+
+`src/enforcement/command-explainer/patterns.ts` ships 21 rule entries returning a `CommandExplanation { summary, effects[], warnings[], inferred_action_class }`. Coverage:
+- Containers: `docker run`, `docker build`, `docker exec` (detectors for `-v /:/host`, `--privileged`, `bash -c`, AWS credential mounts).
+- Package managers: `npm install`, `npm run`, `npm test`, `pip install`, `pytest`.
+- Build systems: `make`, `cargo build/test`, `go build`.
+- Linters/formatters: `eslint`, `prettier`.
+- VCS: `git commit`, `git push`, `git pull`.
+- Network/filesystem: `curl`, `wget`, `rm`, `cp`, `mv`, `cat`, `find`, `grep`.
+- Catch-all: "Runs a shell command" with the raw command in `effects[0]`.
+
+The explainer is **metadata-only** — it never touches `src/policy/`. Output flows into HITL message bodies and audit log entries (`inferredActionClass` field).
+
+#### Rich HITL message templates on all three channels (W4)
+
+Telegram (MarkdownV2), Slack (Block Kit), and console fallback (`src/hitl/console.ts`) now render the same semantic content:
+- Agent / Tool / Risk / Expires-in header.
+- "What will run" — raw command, truncated at 500 chars with elision hint pointing at `data/audit.jsonl`.
+- "What this does" — explainer effects (omitted when empty).
+- "Warnings" — explainer warnings prefixed with ⚠️ (omitted when empty).
+- "Why this is happening" — agent-supplied intent (omitted when empty).
+- Inline keyboard / Block Kit buttons (Once / Always / Deny).
+
+#### `intent_hint` metadata for agent-supplied rationale (W5)
+
+`beforeToolCallHandler` reads `ctx.metadata.intent_hint` (string, max 500 chars input, truncated to 199 + ellipsis at render time) and pipes it through `dispatchHitlChannel` to all three channel adapters. Opt-in for the agent — when absent, the "Why this is happening" section is omitted entirely.
+
+#### Recommended-default bootstrap — CLOSED + HITL preset (W6)
+
+`scripts/post-install.mjs` now writes a starter `data/rules.json` (only when absent) with `{ effect: 'forbid', action_class: 'unknown_sensitive_action', priority: 90, reason: 'Unknown tools require human approval' }` plus a baseline `hitl-policy.yaml` with an `unknown-tools-gate` policy. README quickstart leads with CLOSED+HITL as the recommended setup; OPEN is documented as the "I know what I'm doing" mode.
+
+When the plugin activates in OPEN mode and finds no permit/HITL coverage on `unknown_sensitive_action`, it logs an info-level recommendation pointing at the bootstrap docs.
+
+#### Top-6 typed tools — `npm_install`, `npm_run`, `pip_install`, `pytest`, `docker_run`, `make_run` (W7)
+
+Six high-volume tools now ship as first-class typed tools instead of going through `unknown_sensitive_action`/`shell.exec`. Each provides:
+- TypeBox-validated manifest with action_class (`package.install`, `package.run`, `build.test`).
+- `spawnSync` with explicit argv (no shell interpretation; allowlisted in spec-alignment).
+- Per-tool error types and exit-code propagation.
+- Full unit test coverage.
+
+Reduces HITL volume on the most common cases by 5–10× (per pre-release tester audit). Remaining cases route through the new HITL UX.
+
+#### Feature flags — graceful degradation (§16 rollback layer)
+
+- `CLAWTHORITY_DISABLE_APPROVE_ALWAYS=1` — hides the 🔁 button on all channels and refuses new auto-permit creation. Existing rules still match.
+- `CLAWTHORITY_APPROVE_ALWAYS_AUTO_CONFIRM=1` — skip the Save/Cancel confirmation step.
+- `CLAWTHORITY_HITL_MINIMAL=1` — falls back to the v1.2.x message body (raw command only, no effects/warnings/intent-hint sections). Buttons + Approve Always continue to work.
+
+#### Test coverage
+
+- **`src/hitl-telegram-buttons.e2e.ts`** (TC-TG-BTN-01..09) — full Telegram button workflow including Approve Always confirmation flow and `editMessageText` after each decision.
+- **`src/approve-always.e2e.ts`** (TC-AA-E2E-01..06) — end-to-end Approve Always: HITL → button tap → pattern derivation → file persist → next matching call bypasses HITL.
+- **`src/hitl/command-explainer-audit-integration.test.ts`** (TC-CEA-01..06) — explainer output reaches the audit log without bleeding into enforcement.
+- **`src/recommended-defaults.e2e.ts`** (TC-RD-01..06) — fresh install produces a HITL prompt on first `exec` call (not silent permit, not silent block).
+- New `src/regression-hitl-comprehensive.e2e.ts` covering all three button outcomes per channel.
+
+### Migration (from v1.2.x)
+
+**Telegram approval is now button-driven.** The legacy `/approve <token>` and `/deny <token>` text commands continue to work for v1.3.x with a deprecation hint logged on each use. Operators should migrate to the inline buttons; text-command support is scheduled for removal in v1.4.0. No action required for the migration itself — buttons are shown automatically.
+
+**`data/auto-permits.json` is a new optional file.** When operators tap 🔁 Approve Always, derived patterns are appended here. The file is human-readable and managed via `npm run list-auto-permits` / `npm run revoke-auto-permit`. Operators who prefer the v1.2.x flow (no auto-permits) can set `CLAWTHORITY_DISABLE_APPROVE_ALWAYS=1` — the 🔁 button is hidden on all channels.
+
+**Fresh installs now bootstrap with CLOSED + HITL.** `scripts/post-install.mjs` writes a starter `data/rules.json` and `hitl-policy.yaml` only when those files are absent. Upgraders from v1.2.x are unaffected — existing config is never overwritten. To opt in to the new bootstrap on an existing install, delete the two files and run `npm run plugin:install`.
+
+**Six new tools take precedence over `exec`.** If your agent calls `npm install`, `npm run`, `pip install`, `pytest`, `docker run`, or `make`, those calls now classify as `package.install` / `package.run` / `build.test` instead of `shell.exec` and are gated by their own action-class rules. Operators with custom forbids on `shell.exec` should add equivalent forbids on the new action classes if the same restriction is intended.
+
+**`ctx.metadata.intent_hint` is opt-in for agents.** Existing agents that don't supply a hint see no behavioural change — the "Why this is happening" section simply doesn't render.
+
+**Rollback escape hatches.** All v1.3.0 UX changes are individually disablable via env var: `CLAWTHORITY_DISABLE_APPROVE_ALWAYS=1`, `CLAWTHORITY_HITL_MINIMAL=1`, or revert to v1.2.4. The two-stage pipeline, capability gate, and HITL routing semantics are unchanged from v1.2.4.
+
+### ⚠️ Known gaps — deferred to v1.3.1 / v1.4
+
+- **Auto-permit TTL / auto-expiry.** Persisted permits live until manually removed. Auto-expiry is v1.4.
+- **Multi-operator quorum.** One operator's button click decides. n-of-m voting is out of scope.
+- **Web/dashboard approval UI.** Buttons live in Telegram and Slack only.
+- **Pattern editor UI.** v1.3.0 derives one default pattern per command and shows it for confirmation. Letting operators edit the pattern interactively is v1.4.
+- **Top-6 only.** The remaining ~6 high-volume tools land in v1.3.1 once HITL volume after this UX ships is measured.
+- **Normalizer Rules 4–8** (carried over from v1.2.x) — still not implemented; the explainer covers the same ground for human reviewers but does not enforce.
+
+---
+
+## [1.2.4] — 2026-04-24
+
+Final v1.2.x maintenance release. Adds the secrets-tool surface (`read_secret`, `write_secret`, `store_secret`, `list_secrets`, `rotate_secret`), HTTP write verbs (`http_put`, `http_post`, `http_patch`, `http_delete`), the audited `webhook` retry tool, the `unsafe_admin_exec` escape hatch, the `EnvCredentialVault` provider, and `send_notification`.
+
 ### Added
 
 #### `send_notification` — generic notification tool (HC-11)

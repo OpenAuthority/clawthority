@@ -442,6 +442,11 @@ export class SpecAlignmentValidator {
     // Git tools: spawnSync('git', [argv], { shell: false }) — explicit argv,
     // no shell interpretation.
     /^src\/tools\/git_[a-z]+\/git-[a-z]+\.ts$/,
+    // Typed package/build tool wrappers: spawnSync with an explicit argv
+    // array and no shell. Same safe-pattern category as git_* — each tool
+    // invokes a single fixed external binary (npm, pip, make, docker, pytest)
+    // with structured arguments derived from typed parameters.
+    /^src\/tools\/(?:npm_install|npm_run|pip_install|make_run|docker_run|pytest)\/[a-z-]+\.ts$/,
     // Meta-level validators that must reference the forbidden API names
     // as strings/regex sources to detect them in other files.
     /^src\/validation\/spec-alignment-validator\.ts$/,

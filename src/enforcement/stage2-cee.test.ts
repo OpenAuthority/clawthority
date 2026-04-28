@@ -12,7 +12,10 @@
  *   8. Engine receives correct action_class, target, and rule_context
  */
 import { describe, it, expect, vi } from 'vitest';
-import { createStage2, createEnforcementEngine } from './stage2-policy.js';
+import { createStage2, createEnforcementEngine, createCombinedStage2 } from './stage2-policy.js';
+import type { AutoPermitChecker } from './stage2-policy.js';
+import type { AutoPermitRuleChecker } from '../auto-permits/matcher.js';
+import type { AutoPermit } from '../models/auto-permit.js';
 import { EnforcementPolicyEngine } from './pipeline.js';
 import type { PipelineContext } from './pipeline.js';
 import type { Rule } from '../policy/types.js';
@@ -473,5 +476,223 @@ describe('createEnforcementEngine', () => {
     ];
     const engine = createEnforcementEngine(rules);
     expect(engine.rules).toHaveLength(2);
+  });
+});
+
+// ─── createCombinedStage2 — auto-permit (T49) ─────────────────────────────────
+//
+// TC-CS2-AP-01  auto-permit approves → returns permit without calling engines
+// TC-CS2-AP-02  auto-permit approves → decision has reason 'session_auto_approved', stage 'stage2'
+// TC-CS2-AP-03  auto-permit returns false → engine evaluation proceeds normally
+// TC-CS2-AP-04  autoPermit undefined → auto-permit check is skipped entirely
+// TC-CS2-AP-05  channel id from rule_context.channel is forwarded to isSessionAutoApproved
+// TC-CS2-AP-06  action_class from ctx is forwarded to isSessionAutoApproved
+
+describe('createCombinedStage2 — auto-permit', () => {
+  /** Minimal PolicyEngine stub that always permits. */
+  function makePermitEngine(): InstanceType<typeof EnforcementPolicyEngine> {
+    const eng = new EnforcementPolicyEngine();
+    vi.spyOn(eng, 'evaluateByActionClass').mockReturnValue({ effect: 'permit', reason: 'ok' });
+    vi.spyOn(eng, 'evaluateByIntentGroup').mockReturnValue({ effect: 'permit', reason: 'ok' });
+    vi.spyOn(eng, 'evaluate').mockReturnValue({ effect: 'permit', reason: 'ok' });
+    return eng;
+  }
+
+  function makeAutoPermitChecker(approved: boolean): AutoPermitChecker {
+    return { isSessionAutoApproved: vi.fn(() => approved) };
+  }
+
+  // TC-CS2-AP-01
+  it('returns permit immediately when auto-permit checker approves', async () => {
+    const cedar = makePermitEngine();
+    const evalSpy = vi.spyOn(cedar, 'evaluateByActionClass');
+    const checker = makeAutoPermitChecker(true);
+    const stage2 = createCombinedStage2(cedar, null, 'test_tool', checker);
+
+    const result = await stage2(makeCtx());
+
+    expect(result.effect).toBe('permit');
+    expect(evalSpy).not.toHaveBeenCalled();
+  });
+
+  // TC-CS2-AP-02
+  it('auto-permit decision carries reason session_auto_approved and stage stage2', async () => {
+    const stage2 = createCombinedStage2(makePermitEngine(), null, 'test_tool', makeAutoPermitChecker(true));
+
+    const result = await stage2(makeCtx());
+
+    expect(result.reason).toBe('session_auto_approved');
+    expect(result.stage).toBe('stage2');
+    expect(result.effect).toBe('permit');
+  });
+
+  // TC-CS2-AP-03
+  it('falls through to engine evaluation when auto-permit checker returns false', async () => {
+    const cedar = new EnforcementPolicyEngine();
+    const evalSpy = vi.spyOn(cedar, 'evaluateByActionClass').mockReturnValue({ effect: 'forbid', reason: 'blocked' });
+    const checker = makeAutoPermitChecker(false);
+    const stage2 = createCombinedStage2(cedar, null, 'test_tool', checker);
+
+    const result = await stage2(makeCtx());
+
+    expect(evalSpy).toHaveBeenCalledOnce();
+    expect(result.effect).toBe('forbid');
+    expect(result.reason).toBe('blocked');
+  });
+
+  // TC-CS2-AP-04
+  it('skips auto-permit check entirely when autoPermit is undefined', async () => {
+    const checker = makeAutoPermitChecker(true);
+    const cedar = makePermitEngine();
+    // No autoPermit argument → engines are always consulted
+    const stage2 = createCombinedStage2(cedar, null, 'test_tool');
+
+    const result = await stage2(makeCtx());
+
+    expect(checker.isSessionAutoApproved).not.toHaveBeenCalled();
+    expect(result.effect).toBe('permit');
+    expect(result.reason).not.toBe('session_auto_approved');
+  });
+
+  // TC-CS2-AP-05
+  it('forwards ctx.rule_context.channel as channelId to isSessionAutoApproved', async () => {
+    const checker = makeAutoPermitChecker(false);
+    const stage2 = createCombinedStage2(makePermitEngine(), null, 'test_tool', checker);
+
+    await stage2(makeCtx({ rule_context: { agentId: 'a', channel: 'chan-xyz' } }));
+
+    expect(checker.isSessionAutoApproved).toHaveBeenCalledWith('chan-xyz', expect.any(String));
+  });
+
+  // TC-CS2-AP-06
+  it('forwards ctx.action_class as actionClass to isSessionAutoApproved', async () => {
+    const checker = makeAutoPermitChecker(false);
+    const stage2 = createCombinedStage2(makePermitEngine(), null, 'test_tool', checker);
+
+    await stage2(makeCtx({ action_class: 'filesystem.delete' }));
+
+    expect(checker.isSessionAutoApproved).toHaveBeenCalledWith(expect.any(String), 'filesystem.delete');
+  });
+});
+
+// ─── createCombinedStage2 — file-based auto-permit rules (T30) ───────────────
+//
+// TC-CS2-APR-01  matched rule → returns permit, stage 'auto-permit'
+// TC-CS2-APR-02  matched rule → reason is 'auto_permit_rule'
+// TC-CS2-APR-03  matched rule → rule field carries the matched pattern
+// TC-CS2-APR-04  matched rule → Cedar engine is NOT consulted
+// TC-CS2-APR-05  no match → falls through to Cedar engine evaluation
+// TC-CS2-APR-06  autoPermitRules undefined → matchCommand never called
+// TC-CS2-APR-07  session auto-approval takes priority over file rules (checked first)
+// TC-CS2-APR-08  ctx.target is forwarded to matchCommand
+// TC-CS2-APR-09  null return from matchCommand → Cedar engine is consulted
+
+describe('createCombinedStage2 — file-based auto-permit rules', () => {
+  function makePermitEngine(): InstanceType<typeof EnforcementPolicyEngine> {
+    const eng = new EnforcementPolicyEngine();
+    vi.spyOn(eng, 'evaluateByActionClass').mockReturnValue({ effect: 'permit', reason: 'ok' });
+    vi.spyOn(eng, 'evaluateByIntentGroup').mockReturnValue({ effect: 'permit', reason: 'ok' });
+    vi.spyOn(eng, 'evaluate').mockReturnValue({ effect: 'permit', reason: 'ok' });
+    return eng;
+  }
+
+  function makeRuleChecker(rule: AutoPermit | null): AutoPermitRuleChecker {
+    return { matchCommand: vi.fn(() => rule) };
+  }
+
+  function makeRule(pattern: string): AutoPermit {
+    return { pattern, method: 'default', createdAt: Date.now(), originalCommand: pattern };
+  }
+
+  // TC-CS2-APR-01
+  it('TC-CS2-APR-01: matched rule returns permit with stage auto-permit', async () => {
+    const rule = makeRule('git commit *');
+    const stage2 = createCombinedStage2(makePermitEngine(), null, 'bash', undefined, makeRuleChecker(rule));
+    const result = await stage2(makeCtx({ target: 'git commit -m "fix"' }));
+    expect(result.effect).toBe('permit');
+    expect(result.stage).toBe('auto-permit');
+  });
+
+  // TC-CS2-APR-02
+  it('TC-CS2-APR-02: matched rule reason is auto_permit_rule', async () => {
+    const rule = makeRule('git commit *');
+    const stage2 = createCombinedStage2(makePermitEngine(), null, 'bash', undefined, makeRuleChecker(rule));
+    const result = await stage2(makeCtx({ target: 'git commit -m "fix"' }));
+    expect(result.reason).toBe('auto_permit_rule');
+  });
+
+  // TC-CS2-APR-03
+  it('TC-CS2-APR-03: matched rule carries the pattern in the rule field', async () => {
+    const rule = makeRule('git commit *');
+    const stage2 = createCombinedStage2(makePermitEngine(), null, 'bash', undefined, makeRuleChecker(rule));
+    const result = await stage2(makeCtx({ target: 'git commit -m "fix"' }));
+    expect(result.rule).toBe('git commit *');
+  });
+
+  // TC-CS2-APR-04
+  it('TC-CS2-APR-04: Cedar engine is not consulted when a rule matches', async () => {
+    const cedar = makePermitEngine();
+    const evalSpy = vi.spyOn(cedar, 'evaluateByActionClass');
+    const rule = makeRule('git commit *');
+    const stage2 = createCombinedStage2(cedar, null, 'bash', undefined, makeRuleChecker(rule));
+    await stage2(makeCtx({ target: 'git commit -m "fix"' }));
+    expect(evalSpy).not.toHaveBeenCalled();
+  });
+
+  // TC-CS2-APR-05
+  it('TC-CS2-APR-05: no match falls through to Cedar engine evaluation', async () => {
+    const cedar = makePermitEngine();
+    const evalSpy = vi.spyOn(cedar, 'evaluateByActionClass');
+    const stage2 = createCombinedStage2(cedar, null, 'bash', undefined, makeRuleChecker(null));
+    await stage2(makeCtx({ target: 'git status' }));
+    expect(evalSpy).toHaveBeenCalledOnce();
+  });
+
+  // TC-CS2-APR-06
+  it('TC-CS2-APR-06: autoPermitRules undefined — matchCommand is never called', async () => {
+    const checker = makeRuleChecker(null);
+    const stage2 = createCombinedStage2(makePermitEngine(), null, 'bash');
+    await stage2(makeCtx());
+    expect(checker.matchCommand).not.toHaveBeenCalled();
+  });
+
+  // TC-CS2-APR-07
+  it('TC-CS2-APR-07: session auto-approval fires before file rule check', async () => {
+    const sessionChecker: AutoPermitChecker = { isSessionAutoApproved: vi.fn(() => true) };
+    const ruleChecker = makeRuleChecker(makeRule('git commit *'));
+    const stage2 = createCombinedStage2(makePermitEngine(), null, 'bash', sessionChecker, ruleChecker);
+    const result = await stage2(makeCtx({ target: 'git commit -m "fix"' }));
+    // Session auto-approval wins; file rule checker is not consulted
+    expect(result.reason).toBe('session_auto_approved');
+    expect(ruleChecker.matchCommand).not.toHaveBeenCalled();
+  });
+
+  // TC-CS2-APR-08: registered (non-exec) tools forward toolName to matchCommand
+  it('TC-CS2-APR-08: toolName is forwarded to matchCommand for registered non-exec tools', async () => {
+    const checker = makeRuleChecker(null);
+    // Default makeCtx uses action_class 'filesystem.read' — a registered non-exec tool.
+    const stage2 = createCombinedStage2(makePermitEngine(), null, 'read_file', undefined, checker);
+    await stage2(makeCtx({ target: '/some/file.txt' }));
+    expect(checker.matchCommand).toHaveBeenCalledWith('read_file');
+  });
+
+  // TC-CS2-APR-08b: exec tools forward ctx.target (the command string) to matchCommand
+  it('TC-CS2-APR-08b: ctx.target is forwarded to matchCommand for exec tools', async () => {
+    const checker = makeRuleChecker(null);
+    // shell.exec action class → exec path → match against the command in ctx.target
+    const stage2 = createCombinedStage2(makePermitEngine(), null, 'bash', undefined, checker);
+    await stage2(makeCtx({ action_class: 'shell.exec', target: 'git status' }));
+    expect(checker.matchCommand).toHaveBeenCalledWith('git status');
+  });
+
+  // TC-CS2-APR-09
+  it('TC-CS2-APR-09: null matchCommand return leads to Cedar engine being consulted', async () => {
+    const cedar = makePermitEngine();
+    const evalSpy = vi.spyOn(cedar, 'evaluateByActionClass').mockReturnValue({ effect: 'forbid', reason: 'denied' });
+    const stage2 = createCombinedStage2(cedar, null, 'bash', undefined, makeRuleChecker(null));
+    const result = await stage2(makeCtx({ target: 'rm -rf /' }));
+    expect(evalSpy).toHaveBeenCalledOnce();
+    expect(result.effect).toBe('forbid');
+    expect(result.reason).toBe('denied');
   });
 });

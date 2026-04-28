@@ -19,6 +19,7 @@ import { EnforcementPolicyEngine } from './pipeline.js';
 import type { Stage2Fn, CeeDecision, PipelineContext } from './pipeline.js';
 import type { PolicyEngine } from '../policy/engine.js';
 import type { EvaluationDecision } from '../policy/engine.js';
+import type { AutoPermitRuleChecker } from '../auto-permits/matcher.js';
 
 // ---------------------------------------------------------------------------
 // Factory
@@ -109,6 +110,18 @@ export function createEnforcementEngine(
 // Combined handler stage2 factory
 // ---------------------------------------------------------------------------
 
+/**
+ * Minimal interface for checking session-scoped auto-approvals.
+ *
+ * `ApprovalManager` satisfies this interface. Accepting an interface rather
+ * than a concrete class keeps `createCombinedStage2` decoupled from the HITL
+ * subsystem and makes unit testing straightforward.
+ */
+export interface AutoPermitChecker {
+  /** Returns true when the `channelId:actionClass` pair has been auto-approved. */
+  isSessionAutoApproved(channelId: string, actionClass: string): boolean;
+}
+
 /** Priority threshold below which a forbid is treated as HITL-gated. */
 const HITL_PRIORITY_THRESHOLD = 100;
 
@@ -161,17 +174,88 @@ function toStagedForbid(result: EvaluationDecision, stage: string): CeeDecision 
  * Intent-group evaluation is skipped when a HITL-gated forbid has already
  * been captured — the first HITL signal is sufficient for dispatch.
  *
- * @param cedarEngine Cedar TS policy engine (evaluateByActionClass used).
- * @param jsonEngine  JSON rules engine, or null if not configured.
- * @param toolName    Original tool name used for JSON resource/match rules.
+ * @param cedarEngine      Cedar TS policy engine (evaluateByActionClass used).
+ * @param jsonEngine       JSON rules engine, or null if not configured.
+ * @param toolName         Original tool name used for JSON resource/match rules.
+ * @param autoPermit       Optional checker for session-scoped auto-approvals.
+ *                         When provided and `isSessionAutoApproved` returns true
+ *                         for the current channel + action class, the function
+ *                         returns a permit immediately before any engine
+ *                         evaluation occurs. Pass `undefined` (or omit) to
+ *                         disable auto-permit checks — controlled externally via
+ *                         the `approveAlwaysEnabled` feature flag so that
+ *                         disabling the flag at startup prevents any new
+ *                         auto-permit decisions from being issued.
+ * @param autoPermitRules  Optional checker for file-based auto-permit rules
+ *                         loaded from the auto-permit store. When provided and
+ *                         `matchCommand` returns a matching rule, the function
+ *                         returns a permit with `stage: 'auto-permit'` and
+ *                         `rule` set to the matched pattern. Failed pattern
+ *                         compilations are silently skipped so the call falls
+ *                         through to HITL gating — fail-safe behaviour.
  */
 export function createCombinedStage2(
   cedarEngine: PolicyEngine,
   jsonEngine: PolicyEngine | null,
   toolName: string,
+  autoPermit?: AutoPermitChecker,
+  autoPermitRules?: AutoPermitRuleChecker,
 ): Stage2Fn {
   return async (ctx: PipelineContext): Promise<CeeDecision> => {
     try {
+      // ── Session auto-approval pre-check ───────────────────────────────────
+      // Checked first so session-scoped auto-approvals bypass HITL gating with
+      // minimal overhead (a single Set.has lookup). The source tag
+      // 'session_auto_approved' in the returned reason identifies the origin of
+      // the permit for audit and logging purposes.
+      if (autoPermit !== undefined) {
+        const channelId = ctx.rule_context.channel;
+        if (autoPermit.isSessionAutoApproved(channelId, ctx.action_class)) {
+          return { effect: 'permit', reason: 'session_auto_approved', stage: 'stage2' };
+        }
+      }
+
+      // ── File-based auto-permit rules check ────────────────────────────────
+      // Checked after session auto-approval but before Cedar/JSON engine
+      // evaluation. A matching stored rule returns a permit immediately with
+      // stage 'auto-permit'; the matched pattern is forwarded in `rule` so
+      // the callsite can log it and record coverage map usage.
+      // Failed pattern compilations are silently skipped — the rule is ignored
+      // and the command falls through to HITL gating (fail-safe behaviour).
+      //
+      // Command string selection:
+      //   - Exec-type tools (shell.exec, code.execute, unknown_sensitive_action):
+      //     ctx.target IS the shell command string (extracted from the
+      //     `command`/`cmd`/`script` param by normalize_action, or set directly
+      //     when the unregistered tool falls through to the catch-all class).
+      //     Match directly against it so that patterns like `git commit *`
+      //     match incoming shell commands.
+      //   - Registered non-exec tools: target is a resource (file path, URL,
+      //     etc.), not a shell command.  Match against the tool name so that
+      //     tool-name patterns (`read_file *`) match any invocation of that
+      //     tool regardless of which resource it targets.
+      if (autoPermitRules !== undefined) {
+        const EXEC_ACTION_CLASSES: ReadonlySet<string> = new Set([
+          'shell.exec',
+          'code.execute',
+          'unknown_sensitive_action',
+        ]);
+        const cmdToMatch = EXEC_ACTION_CLASSES.has(ctx.action_class)
+          ? ctx.target
+          : toolName;
+        if (cmdToMatch.length > 0) {
+          const matched = autoPermitRules.matchCommand(cmdToMatch);
+          if (matched !== null) {
+            return {
+              effect: 'permit',
+              reason: 'auto_permit_rule',
+              stage: 'auto-permit',
+              rule: matched.pattern,
+            };
+          }
+        }
+      }
+
       let pendingHitlGated: CeeDecision | null = null;
 
       // ── Cedar engine ──────────────────────────────────────────────────────
@@ -190,7 +274,7 @@ export function createCombinedStage2(
 
       // ── JSON rules engine (resource/match-based, keyed by toolName) ───────
       if (jsonEngine !== null) {
-        const jsonResult = jsonEngine.evaluate('tool', toolName, ctx.rule_context);
+        const jsonResult = jsonEngine.evaluate('tool', toolName, ctx.rule_context, ctx.target);
         if (jsonResult.effect === 'forbid') {
           if (isHitlGatedDecision(jsonResult)) {
             pendingHitlGated ??= toStagedForbid(jsonResult, 'json-rules');

@@ -4,6 +4,7 @@ export type {
   PolicyDecisionEntry,
   HitlDecisionEntry,
   NormalizerUnclassifiedEntry,
+  AutoPermitAddedEntry,
   JsonlAuditLoggerOptions,
 } from "./audit.js";
 
@@ -14,6 +15,26 @@ export {
 } from "./identity.js";
 export type { RegisteredAgent, IdentityVerificationResult } from "./identity.js";
 
+// ─── Auto-permits subsystem re-exports ───────────────────────────────────────
+export {
+  AutoPermitStorageModeSchema,
+  DEFAULT_AUTO_PERMIT_STORE_PATH,
+  RULES_FILE_PATH,
+  resolveAutoPermitStoreConfig,
+  compilePatternRegex,
+  FileAutoPermitChecker,
+  loadAutoPermitRulesFromFile,
+  saveAutoPermitRules,
+  watchAutoPermitStore,
+} from "./auto-permits/index.js";
+export type {
+  AutoPermitStorageMode,
+  ResolvedAutoPermitStoreConfig,
+  AutoPermitRuleChecker,
+  LoadResult,
+  AutoPermitWatchHandle,
+} from "./auto-permits/index.js";
+
 // ─── Cedar-style engine re-exports ───────────────────────────────────────────
 export { PolicyEngine as CedarPolicyEngine } from "./policy/engine.js";
 export type { EvaluationDecision, EvaluationEffect } from "./policy/engine.js";
@@ -21,6 +42,8 @@ export type { Rule, RuleContext, Resource, Effect, RateLimit } from "./policy/ty
 export { default as defaultRules, mergeRules, OPEN_MODE_RULES } from "./policy/rules.js";
 export { resolveMode, modeToDefaultEffect } from "./policy/mode.js";
 export type { ClawMode } from "./policy/mode.js";
+export { resolveFeatureFlags } from "./features.js";
+export type { FeatureFlags } from "./features.js";
 
 // ─── Phase 2: Coverage tracking re-exports ───────────────────────────────────
 export { CoverageMap } from "./policy/coverage.js";
@@ -96,6 +119,8 @@ export {
   TelegramListener,
   sendApprovalRequest,
   sendConfirmation,
+  editMessageDecision,
+  sendApproveAlwaysConfirmation,
   resolveTelegramConfig,
   SlackInteractionServer,
   sendSlackApprovalRequest,
@@ -117,7 +142,9 @@ export type {
   ApprovalRequestHandle,
   ResolvedTelegramConfig,
   SendApprovalOpts,
+  SendApproveAlwaysConfirmationOpts,
   TelegramCommand,
+  TelegramOperatorInfo,
   ResolvedSlackConfig,
   SlackSendApprovalOpts,
   SlackSendApprovalResult,
@@ -126,11 +153,12 @@ export type {
 
 // ─── Internal imports ─────────────────────────────────────────────────────────
 import { JsonlAuditLogger } from "./audit.js";
-import type { HitlDecisionEntry, NormalizerUnclassifiedEntry, PolicyDecisionEntry } from "./audit.js";
+import type { AutoPermitAddedEntry, AutoPermitDerivationSkippedEntry, AutoPermitMatchedEntry, HitlDecisionEntry, NormalizerUnclassifiedEntry, PolicyDecisionEntry } from "./audit.js";
 import { PolicyEngine as CedarPolicyEngine } from "./policy/engine.js";
 import type { Rule, RuleContext } from "./policy/types.js";
 import defaultRules, { OPEN_MODE_RULES } from "./policy/rules.js";
 import { resolveMode, modeToDefaultEffect, type ClawMode } from "./policy/mode.js";
+import { resolveFeatureFlags, type FeatureFlags } from "./features.js";
 import { startRulesWatcher, type WatcherHandle } from "./watcher.js";
 import { CoverageMap } from "./policy/coverage.js";
 import { checkAction, matchesActionPattern } from "./hitl/matcher.js";
@@ -138,8 +166,11 @@ import { parseHitlPolicyFile } from "./hitl/parser.js";
 import { startHitlPolicyWatcher, type HitlWatcherHandle } from "./hitl/watcher.js";
 import type { HitlPolicyConfig } from "./hitl/types.js";
 import { ApprovalManager } from "./hitl/approval-manager.js";
-import { TelegramListener, sendApprovalRequest, sendConfirmation, resolveTelegramConfig } from "./hitl/telegram.js";
+import { TelegramListener, sendApprovalRequest, sendConfirmation, editMessageDecision, sendApproveAlwaysConfirmation, resolveTelegramConfig } from "./hitl/telegram.js";
+import type { TelegramOperatorInfo } from "./hitl/telegram.js";
 import { SlackInteractionServer, sendSlackApprovalRequest, sendSlackConfirmation, resolveSlackConfig } from "./hitl/slack.js";
+import { sendConsoleApprovalRequest } from "./hitl/console.js";
+import { explainCommand } from "./hitl/command-explainer.js";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -156,6 +187,9 @@ import { validateCapability } from "./enforcement/stage1-capability.js";
 import { createCombinedStage2 } from "./enforcement/stage2-policy.js";
 import { FileAuthorityAdapter } from "./adapter/file-adapter.js";
 import type { WatchHandle } from "./adapter/types.js";
+import { FileAutoPermitChecker, resolveAutoPermitStoreConfig, loadAutoPermitRulesFromFile, saveAutoPermitRules, watchAutoPermitStore, derivePattern, compilePatternRegex } from "./auto-permits/index.js";
+import type { AutoPermitWatchHandle } from "./auto-permits/index.js";
+import type { AutoPermit } from "./models/auto-permit.js";
 
 /**
  * Resolved identity view used by audit and HITL call sites. Derived from
@@ -190,6 +224,12 @@ function resolveIdentity(agentId: string | undefined, channelId: string | undefi
 export interface HookContext {
   agentId?: string;
   channelId?: string;
+  /**
+   * Arbitrary metadata provided by the caller. When present,
+   * `intent_hint` (string) carries the agent's stated rationale for the
+   * tool call and is forwarded to HITL approval messages.
+   */
+  metadata?: Record<string, unknown>;
 }
 
 // ── before_tool_call ──
@@ -345,6 +385,12 @@ const MODE: ClawMode = resolveMode();
 const DEFAULT_EFFECT: 'permit' | 'forbid' = modeToDefaultEffect(MODE);
 const ACTIVE_RULES: Rule[] = MODE === 'open' ? OPEN_MODE_RULES : defaultRules;
 
+/**
+ * Feature flags resolved once at module load.
+ * A plugin restart is required to change them.
+ */
+const FEATURES: FeatureFlags = resolveFeatureFlags();
+
 console.log(
   `[clawthority] mode: ${MODE.toUpperCase()} (${
     MODE === 'open'
@@ -399,6 +445,19 @@ const jsonRulesEngineRef: { current: CedarPolicyEngine | null } = {
  * same data directory used by loadJsonRules(). null until activate() runs.
  */
 let adapterRef: FileAuthorityAdapter | null = null;
+
+/**
+ * File-based auto-permit rule checker. Loaded from the auto-permit store
+ * (data/auto-permits.json by default) during activate(). Undefined until
+ * loadAutoPermitRules() completes or when the store file does not exist yet.
+ *
+ * Re-created on each successful loadAutoPermitRules() call so that rules
+ * added to the store (e.g. via "Approve Always") are visible to subsequent
+ * tool calls without a plugin restart.
+ */
+const autoPermitCheckerRef: { current: FileAutoPermitChecker | undefined } = {
+  current: undefined,
+};
 
 /**
  * WatchHandle returned by adapterRef.watchPolicyBundle(). Stored so it can
@@ -588,6 +647,51 @@ async function loadJsonRules(): Promise<void> {
       } satisfies Rule;
     });
 
+    // ── Merge auto-permit rules from auto-permits.json ─────────────────────
+    // Only in 'separate' mode; in 'rules' mode the auto-permit store path is
+    // data/rules.json itself (already loaded above) and AutoPermit records
+    // use a different schema (pattern/method/createdAt/originalCommand) that
+    // the rules parser silently ignores — no need to load twice.
+    const apConfig = resolveAutoPermitStoreConfig();
+    if (apConfig.mode === 'separate') {
+      try {
+        const apPath = resolve(moduleDir, '../../', apConfig.path);
+        const apResult = await loadAutoPermitRulesFromFile(apPath);
+        if (apResult.found) {
+          if (apResult.skipped > 0) {
+            console.warn(
+              `[plugin:clawthority] auto-permits.json: ${apResult.skipped} invalid record(s) skipped`,
+            );
+          }
+          for (const err of apResult.validationErrors) {
+            console.warn(err);
+          }
+          let merged = 0;
+          for (const permit of apResult.rules) {
+            const compiled = compilePatternRegex(permit.pattern);
+            if (compiled === null) continue;
+            cedarRules.push({
+              effect: 'permit',
+              resource: 'tool',
+              match: '*',
+              target_match: compiled,
+              priority: 50,
+              reason: `auto-permit: ${permit.pattern}`,
+              tags: ['auto-permit'],
+            } satisfies Rule);
+            merged++;
+          }
+          if (merged > 0) {
+            console.log(
+              `[plugin:clawthority] merged ${merged} auto-permit rule(s) from ${apConfig.path}`,
+            );
+          }
+        }
+      } catch (apErr) {
+        console.warn('[plugin:clawthority] failed to load auto-permits.json — skipping:', apErr);
+      }
+    }
+
     const engine = new CedarPolicyEngine();
     engine.addRules(cedarRules);
     jsonRulesEngineRef.current = engine;
@@ -596,6 +700,170 @@ async function loadJsonRules(): Promise<void> {
     console.log(`[plugin:clawthority] loaded ${cedarRules.length} rule(s) from data/${activeFile}`);
   } catch (err) {
     console.error("[plugin:clawthority] failed to load rules file — JSON rules will not be enforced:", err);
+  }
+}
+
+// ─── Auto-permit rules loader ─────────────────────────────────────────────────
+
+/**
+ * Loads auto-permit rules from the configured store file and populates
+ * `autoPermitCheckerRef.current` with a `FileAutoPermitChecker` instance.
+ *
+ * Delegates entirely to {@link loadAutoPermitRulesFromFile} from the store
+ * module. The store path is resolved via `resolveAutoPermitStoreConfig()`
+ * which reads the `CLAWTHORITY_AUTO_PERMIT_STORE` env var (defaults to
+ * `data/auto-permits.json`). The file is optional — when absent the function
+ * returns silently and `autoPermitCheckerRef.current` remains undefined,
+ * meaning auto-permit matching is skipped for all subsequent tool calls.
+ *
+ * Invalid records (those that fail the `AutoPermit` schema) are skipped with
+ * a warning so a single corrupt entry does not discard the entire store.
+ */
+async function loadAutoPermitRules(): Promise<void> {
+  try {
+    const config = resolveAutoPermitStoreConfig();
+    const moduleDir = dirname(fileURLToPath(import.meta.url));
+    const storePath = resolve(moduleDir, "../../", config.path);
+
+    const result = await loadAutoPermitRulesFromFile(storePath);
+
+    if (result.skipped > 0) {
+      console.warn(
+        `[plugin:clawthority] auto-permit store: ${result.skipped} invalid record(s) skipped (schema mismatch)`,
+      );
+    }
+    for (const err of result.validationErrors) {
+      console.warn(err);
+    }
+
+    if (!result.found) {
+      // Store file does not exist yet — silently skip; auto-permit matching
+      // will be disabled until the file is created (e.g. on first approval).
+      return;
+    }
+
+    autoPermitCheckerRef.current = new FileAutoPermitChecker(result.rules);
+    console.log(
+      `[plugin:clawthority] auto-permit rules loaded: ${result.rules.length} rule(s) from ${config.path}`,
+    );
+  } catch (err) {
+    console.warn("[plugin:clawthority] failed to load auto-permit rules — matching will be skipped:", err);
+  }
+}
+
+// ─── Auto-permit pattern persistence ─────────────────────────────────────────
+
+/**
+ * Derives a permit pattern from `command` and appends it to the auto-permit
+ * store file.  On success the in-memory checker is reloaded so the new rule
+ * takes effect immediately for subsequent tool calls.
+ *
+ * Called from the "Approve Always" callbacks (Telegram and Slack) after the
+ * session-scoped auto-approval is registered.  Failures are swallowed and
+ * logged so that the broader approval flow is never interrupted.
+ *
+ * Derivation strategy:
+ *   - Exec-type tools (`shell.exec`, `code.execute`): the `command` param IS
+ *     the shell command (e.g. `"git commit -m 'msg'"`).  The pattern is
+ *     derived from the command string: binary + first-positional + `*`.
+ *   - Registered non-exec tools (all others): the `command` param is a
+ *     resource (file path, URL, etc.) which is not meaningful as a pattern
+ *     anchor.  The pattern is derived from `toolName` instead, yielding a
+ *     `toolName *` wildcard that covers all invocations of that tool.
+ *
+ * @param command     The raw target string from the pending approval (resource
+ *                    for most tools; the shell command for exec tools).
+ * @param toolName    The original tool name (e.g. `'bash'`, `'read_file'`).
+ * @param actionClass The normalized action class (e.g. `'shell.exec'`,
+ *                    `'filesystem.read'`) — used to select the derivation path.
+ * @param channel     Log prefix / audit channel tag (e.g. `'telegram'`).
+ * @param operatorId  Identity of the operator who clicked "Approve Always".
+ * @param agentId     Agent ID that triggered the original HITL approval request.
+ */
+async function persistAutoPermitPattern(
+  command: string,
+  toolName: string,
+  actionClass: string,
+  channel: string,
+  operatorId?: string,
+  agentId?: string,
+): Promise<void> {
+  // Determine derivation strategy based on action class.
+  const EXEC_ACTION_CLASSES: ReadonlySet<string> = new Set([
+    'shell.exec',
+    'code.execute',
+  ]);
+  const isExec = EXEC_ACTION_CLASSES.has(actionClass);
+
+  let derived: ReturnType<typeof derivePattern>;
+  try {
+    if (isExec) {
+      // Exec path: tokenise the shell command string.
+      derived = derivePattern({ command });
+    } else {
+      // Registered-tool path: generate a tool-name wildcard pattern.
+      derived = derivePattern({ command: toolName, toolName });
+    }
+  } catch (err) {
+    // Shell metacharacters, empty command, or other derivation failures are
+    // expected for compound commands — log and return quietly.
+    const reason = (err as Error).message;
+    console.log(`[hitl-${channel}] auto-permit pattern derivation skipped: ${reason}`);
+    void logAutoPermitDerivationSkipped({
+      reason,
+      command: isExec ? command : toolName,
+      toolName,
+      actionClass,
+      channel,
+      agentId: agentId ?? 'unknown',
+      ...(operatorId !== undefined ? { operatorId } : {}),
+    });
+    return;
+  }
+
+  // Confirmation: show the derived pattern before persisting.
+  console.log(`[hitl-${channel}] auto-permit pattern derived: '${derived.pattern}' — saving to store`);
+
+  try {
+    const config = resolveAutoPermitStoreConfig();
+    const moduleDir = dirname(fileURLToPath(import.meta.url));
+    const storePath = resolve(moduleDir, "../../", config.path);
+
+    const existing = await loadAutoPermitRulesFromFile(storePath);
+    const nextVersion = existing.version + 1;
+
+    const now = Date.now();
+    const newRule: AutoPermit = {
+      pattern: derived.pattern,
+      method: derived.method,
+      createdAt: now,
+      originalCommand: command,
+      created_by: operatorId ?? channel,
+      created_at: new Date(now).toISOString(),
+      derived_from: command,
+    };
+
+    await saveAutoPermitRules(storePath, [...existing.rules, newRule], nextVersion);
+    await loadAutoPermitRules();
+    console.log(`[hitl-${channel}] auto-permit rule saved: '${derived.pattern}' (store v${nextVersion})`);
+
+    // Emit auto_permit_added audit event.
+    if (hitlAuditLogger) {
+      const entry: AutoPermitAddedEntry = {
+        ts: new Date().toISOString(),
+        type: 'auto_permit_added',
+        pattern: derived.pattern,
+        method: derived.method,
+        originalCommand: command,
+        channel,
+        agentId: agentId ?? 'unknown',
+        storeVersion: nextVersion,
+        ...(operatorId !== undefined ? { operatorId } : {}),
+      };
+      await hitlAuditLogger.log(entry);
+    }
+  } catch (err) {
+    console.warn(`[hitl-${channel}] failed to save auto-permit rule: ${(err as Error).message}`);
   }
 }
 
@@ -639,6 +907,49 @@ function warnIfPermitOnUnknownToolsWithoutHitl(
   );
 }
 
+/**
+ * Logs an info-level recommendation when the plugin is running in OPEN mode
+ * without any protection for `unknown_sensitive_action`.
+ *
+ * In OPEN mode the `unknown_sensitive_action` forbid is intentionally absent
+ * from the active rule set — unrecognised tool names fall through to the
+ * implicit permit. When no operator-supplied forbid rule and no HITL policy
+ * cover `unknown_sensitive_action`, the agent can invoke any unregistered tool
+ * with no gate at all. This function surfaces that gap at activation time so
+ * operators can make an informed decision about their posture.
+ *
+ * Only runs in OPEN mode; CLOSED mode carries an implicit deny that already
+ * covers unknown tools. Logged at most once per startup — the `activated`
+ * guard in `activate()` ensures this path is reached at most once per
+ * plugin lifecycle.
+ */
+function logOpenModeRecommendation(
+  mode: ClawMode,
+  jsonRules: readonly Rule[] | null,
+  hitlConfig: HitlPolicyConfig | null,
+): void {
+  if (mode !== 'open') return;
+
+  // Operator has an explicit forbid rule covering unknown_sensitive_action.
+  const hasForbidRule = jsonRules !== null && jsonRules.some(
+    (r) => r.effect === 'forbid' && r.action_class === 'unknown_sensitive_action',
+  );
+  if (hasForbidRule) return;
+
+  // A HITL policy covers unknown_sensitive_action (exact or wildcard match).
+  const hitlCovers = hitlConfig?.policies.some((p) =>
+    p.actions.some((a) => matchesActionPattern(a, 'unknown_sensitive_action')),
+  ) ?? false;
+  if (hitlCovers) return;
+
+  console.log(
+    `[plugin:clawthority] ℹ OPEN mode: unrecognised tool calls are implicitly permitted — ` +
+    `no forbid rule or HITL policy covers "unknown_sensitive_action". ` +
+    `Add a forbid rule in data/rules.json or a HITL policy in hitl-policy.yaml to gate ` +
+    `unknown tools. See docs/configuration.md#install-mode for recommended bootstrap configuration.`,
+  );
+}
+
 /** Mutable ref for the loaded HITL policy config. null until loaded. */
 const hitlConfigRef: { current: HitlPolicyConfig | null } = { current: null };
 let hitlWatcher: HitlWatcherHandle | null = null;
@@ -646,11 +957,43 @@ let telegramListener: TelegramListener | null = null;
 let slackInteractionServer: SlackInteractionServer | null = null;
 const approvalManager = new ApprovalManager();
 
+/**
+ * Chokidar watch handle for the auto-permit store file. Set up in activate()
+ * to reload rules when the store is modified externally. Cleaned up in deactivate().
+ */
+let autoPermitStoreWatcher: AutoPermitWatchHandle | null = null;
+
 /** @deprecated Use per-call EventEmitter inside beforeToolCallHandler instead. */
 const pipelineEmitter = new EventEmitter();
 
 /** Maps HITL token → Slack message timestamp for chat.update on decision. */
 const slackMessageTimestamps = new Map<string, string>();
+
+/** Maps HITL token → Telegram message_id for editMessageText on decision. */
+const telegramMessageIds = new Map<string, number>();
+
+/**
+ * How long (ms) an Approve Always confirmation waits for a Save/Cancel
+ * response before timing out.  After timeout the confirmation is silently
+ * discarded; the original approval continues to age toward its own TTL.
+ */
+const APPROVE_ALWAYS_CONFIRM_TIMEOUT_MS = 5 * 60 * 1_000; // 5 minutes
+
+interface PendingApproveAlwaysConfirmation {
+  token: string;
+  pattern: string;
+  method: string;
+  operatorId: string | undefined;
+  agentId: string;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+/**
+ * Maps HITL token → pending Approve Always confirmation state.
+ * Set when the operator clicks "Approve Always" and a pattern confirmation
+ * message is sent.  Cleared on Save, Cancel, or timeout.
+ */
+const pendingApproveAlwaysConfirmations = new Map<string, PendingApproveAlwaysConfirmation>();
 
 /** JSONL audit logger for HITL decisions — initialised in activate(). */
 let hitlAuditLogger: JsonlAuditLogger | null = null;
@@ -682,7 +1025,10 @@ function formatMatchedRule(rule: { effect: string; resource?: string; action_cla
 }
 
 /**
- * Dispatches a HITL approval request to the appropriate channel adapter (Telegram or Slack).
+ * Dispatches a HITL approval request to the appropriate channel adapter
+ * (Telegram, Slack, or console). Calls `explainCommand` on `target` and
+ * spreads the resulting explanation, effects, warnings, rawCommand,
+ * action_class, target, and expires_at into all channel send calls.
  *
  * Returns a `BeforeToolCallResult` when the action should be blocked, or `undefined` to allow.
  */
@@ -690,10 +1036,37 @@ async function dispatchHitlChannel(
   policy: import('./hitl/types.js').HitlPolicy,
   toolName: string,
   identity: ResolvedIdentity,
+  target: string,
+  action_class: string,
+  intentHint?: string,
 ): Promise<BeforeToolCallResult | void> {
   const channel = policy.approval.channel;
   const auditAgent = identity.auditAgentId;
   const auditChannel = identity.auditChannel;
+
+  // Compute shared fields for all channel send calls.
+  // When CLAWTHORITY_HITL_MINIMAL=1, the explainer is skipped entirely and the
+  // rich-body sections (explanation, effects, warnings, intentHint) are
+  // omitted — channels render only the raw command + buttons, matching the
+  // v1.2.x message style. The §16 rollback escape hatch.
+  const expires_at = new Date(Date.now() + policy.approval.timeout * 1000).toISOString();
+  const sharedOpts: Record<string, unknown> = {
+    action_class,
+    target,
+    expires_at,
+    rawCommand: target,
+  };
+  if (!FEATURES.hitlMinimal) {
+    const { summary, effects, warnings, inferred_action_class } = explainCommand(target);
+    const explanation = summary !== `Runs ${target.trim().split(/\s+/)[0]}` && summary !== 'Runs an unrecognised command'
+      ? summary
+      : undefined;
+    if (explanation !== undefined) sharedOpts.explanation = explanation;
+    if (effects.length > 0) sharedOpts.effects = effects;
+    if (warnings.length > 0) sharedOpts.warnings = warnings;
+    if (intentHint !== undefined) sharedOpts.intentHint = intentHint;
+    void inferred_action_class; // available for future use
+  }
 
   if (channel === 'telegram') {
     const telegramConfig = resolveTelegramConfig(hitlConfigRef.current?.telegram);
@@ -708,10 +1081,10 @@ async function dispatchHitlChannel(
       return;
     }
 
-    const { token, promise } = approvalManager.createApprovalRequest({ toolName, agentId: auditAgent, channelId: auditChannel, policy });
-    const sent = await sendApprovalRequest(telegramConfig, { token, toolName, agentId: auditAgent, policyName: policy.name, timeoutSeconds: policy.approval.timeout, verified: identity.verified });
+    const { token, promise } = approvalManager.createApprovalRequest({ toolName, agentId: auditAgent, channelId: auditChannel, policy, target });
+    const sendResult = await sendApprovalRequest(telegramConfig, { token, toolName, agentId: auditAgent, policyName: policy.name, timeoutSeconds: policy.approval.timeout, verified: identity.verified, showApproveAlways: FEATURES.approveAlwaysEnabled, ...sharedOpts });
 
-    if (!sent) {
+    if (!sendResult.ok) {
       approvalManager.cancel(token);
       console.log(`[clawthority] │ [hitl] telegram unreachable — applying fallback: ${policy.approval.fallback}`);
       await logHitlDecision('telegram-unreachable', token, toolName, auditAgent, auditChannel, policy.name, policy.approval.timeout, identity.verified);
@@ -723,8 +1096,17 @@ async function dispatchHitlChannel(
       return;
     }
 
+    // Store message_id for editMessageText on decision (mirrors Slack's messageTs).
+    if (sendResult.messageId !== undefined) telegramMessageIds.set(token, sendResult.messageId);
+
     return await resolveHitlDecision(token, promise, policy, toolName, identity, (t, decision) => {
-      void sendConfirmation(telegramConfig, { token: t, decision, toolName });
+      const messageId = telegramMessageIds.get(t);
+      telegramMessageIds.delete(t);
+      if (messageId !== undefined) {
+        void editMessageDecision(telegramConfig, { messageId, token: t, decision, toolName });
+      } else {
+        void sendConfirmation(telegramConfig, { token: t, decision, toolName });
+      }
     });
   }
 
@@ -741,8 +1123,8 @@ async function dispatchHitlChannel(
       return;
     }
 
-    const { token, promise } = approvalManager.createApprovalRequest({ toolName, agentId: auditAgent, channelId: auditChannel, policy });
-    const result = await sendSlackApprovalRequest(slackConfig, { token, toolName, agentId: auditAgent, policyName: policy.name, timeoutSeconds: policy.approval.timeout, verified: identity.verified });
+    const { token, promise } = approvalManager.createApprovalRequest({ toolName, agentId: auditAgent, channelId: auditChannel, policy, target });
+    const result = await sendSlackApprovalRequest(slackConfig, { token, toolName, agentId: auditAgent, policyName: policy.name, timeoutSeconds: policy.approval.timeout, verified: identity.verified, showApproveAlways: FEATURES.approveAlwaysEnabled, ...sharedOpts });
 
     if (!result.ok) {
       approvalManager.cancel(token);
@@ -766,6 +1148,24 @@ async function dispatchHitlChannel(
         void sendSlackConfirmation(slackConfig, { token: t, decision, toolName, messageTs });
       }
     });
+  }
+
+  if (channel === 'console') {
+    const { token, promise } = approvalManager.createApprovalRequest({ toolName, agentId: auditAgent, channelId: auditChannel, policy, target });
+    const result = await sendConsoleApprovalRequest({ token, toolName, agentId: auditAgent, policyName: policy.name, timeoutSeconds: policy.approval.timeout, verified: identity.verified, showApproveAlways: FEATURES.approveAlwaysEnabled, ...sharedOpts });
+
+    if (result.decision === 'approved_always') {
+      approvalManager.addSessionAutoApproval(auditChannel, action_class);
+      console.log(`[hitl-console] session auto-approval registered: channel=${auditChannel} action_class=${action_class}`);
+      if (target.length > 0 || !['shell.exec', 'code.execute'].includes(action_class)) {
+        void persistAutoPermitPattern(target, toolName, action_class, 'console', undefined, auditAgent);
+      }
+    }
+
+    const decision: 'approved' | 'denied' = result.decision === 'denied' ? 'denied' : 'approved';
+    approvalManager.resolveApproval(token, decision);
+
+    return await resolveHitlDecision(token, promise, policy, toolName, identity, () => { /* result already shown inline */ });
   }
 
   // Unknown channel — no adapter available
@@ -871,6 +1271,30 @@ async function logNormalizerUnclassified(
   } satisfies NormalizerUnclassifiedEntry);
 }
 
+/** Log an auto-permit match event to the JSONL audit file. */
+async function logAutoPermitMatched(
+  entry: Omit<AutoPermitMatchedEntry, 'ts' | 'type'>,
+): Promise<void> {
+  if (!hitlAuditLogger) return;
+  await hitlAuditLogger.log({
+    ts: new Date().toISOString(),
+    type: 'auto_permit_matched',
+    ...entry,
+  } satisfies AutoPermitMatchedEntry);
+}
+
+/** Log a skipped auto-permit derivation to the JSONL audit file. */
+async function logAutoPermitDerivationSkipped(
+  entry: Omit<AutoPermitDerivationSkippedEntry, 'ts' | 'type'>,
+): Promise<void> {
+  if (!hitlAuditLogger) return;
+  await hitlAuditLogger.log({
+    ts: new Date().toISOString(),
+    type: 'auto_permit_derivation_skipped',
+    ...entry,
+  } satisfies AutoPermitDerivationSkippedEntry);
+}
+
 /** Log a HITL decision to the JSONL audit file. */
 async function logHitlDecision(
   decision: HitlDecisionEntry['decision'],
@@ -961,6 +1385,17 @@ const beforeToolCallHandler: BeforeToolCallHandler = async ({ toolName, params, 
     identity.channel,
   );
 
+  // ── Extract intent_hint from caller metadata ──────────────────────────────
+  // Agents may supply ctx.metadata.intent_hint to explain why they are
+  // invoking the tool. Sanitised to printable ASCII/whitespace and capped at
+  // 500 chars before being forwarded to HITL approval messages.
+  const rawIntentHint = typeof ctx.metadata?.['intent_hint'] === 'string'
+    ? ctx.metadata['intent_hint']
+    : undefined;
+  const intentHint: string | undefined = rawIntentHint !== undefined
+    ? (rawIntentHint.replace(/[^\x20-\x7E\t\n]/g, '').trim().slice(0, 500) || undefined)
+    : undefined;
+
   const normalizedParams = (params !== null && typeof params === 'object' && !Array.isArray(params))
     ? (params as Record<string, unknown>)
     : {};
@@ -1031,7 +1466,18 @@ const beforeToolCallHandler: BeforeToolCallHandler = async ({ toolName, params, 
   // evaluation into a single Stage2Fn. HITL-gated forbids (priority < 100)
   // are returned as forbid decisions with their priority preserved so the
   // post-pipeline handler can route them through HITL resolution.
-  const stage2 = createCombinedStage2(cedarEngineRef.current, jsonRulesEngineRef.current, toolName);
+  // Auto-permits are wired in when approveAlwaysEnabled is true so that
+  // session-scoped auto-approvals bypass HITL gating in the policy engine
+  // itself. Passing undefined when the flag is off disables the check without
+  // clearing any in-process state (evaluation is disabled; creation was already
+  // prevented at the Slack UI layer by hiding the Approve Always button).
+  const stage2 = createCombinedStage2(
+    cedarEngineRef.current,
+    jsonRulesEngineRef.current,
+    toolName,
+    FEATURES.approveAlwaysEnabled ? approvalManager : undefined,
+    autoPermitCheckerRef.current,
+  );
 
   // ── Route all tool calls through runPipeline ─────────────────────────────
   // A per-call EventEmitter is used instead of a module-level emitter to
@@ -1040,6 +1486,35 @@ const beforeToolCallHandler: BeforeToolCallHandler = async ({ toolName, params, 
   // by the HITL resolution stage below once the final disposition is known.
   const callEmitter = new EventEmitter();
   callEmitter.once('executionEvent', ({ decision }: { decision: CeeDecision }) => {
+    // File-based auto-permit rule match: log the matched pattern and record
+    // usage in the coverage map so the dashboard can track which rules fire.
+    if (decision.effect === 'permit' && decision.stage === 'auto-permit') {
+      const patternLabel = decision.rule ?? 'unknown';
+      console.log(
+        `[clawthority] │ [stage2/auto-permit] ✓ matched rule '${patternLabel}' (${normalizedAction.action_class})`,
+      );
+      coverageMap.record('command', patternLabel, 'permit');
+      // Resolve the full rule object from the in-memory checker so we can
+      // include the derivation method in the audit entry.
+      const matchedRule = autoPermitCheckerRef.current?.matchCommand(
+        normalizedAction.target ?? toolName,
+      ) ?? null;
+      void logAutoPermitMatched({
+        pattern: patternLabel,
+        method: matchedRule?.method ?? 'unknown',
+        command: normalizedAction.target ?? toolName,
+        ...auditBase,
+      });
+      return;
+    }
+    // Session auto-approval: log with source tag so the auto-generated permit
+    // reason ('session_auto_approved') is visible in the operator log stream.
+    if (decision.effect === 'permit' && decision.reason === 'session_auto_approved') {
+      console.log(
+        `[clawthority] │ [stage2/auto-permit] ✓ session_auto_approved (${normalizedAction.action_class})`,
+      );
+      return;
+    }
     // Permits are intentionally not logged (see logPolicyDecision comment above).
     // pipeline_error fails closed without an audit entry — the error is already
     // visible on stderr and a logged forbid with no rule context would be noise.
@@ -1105,10 +1580,14 @@ const beforeToolCallHandler: BeforeToolCallHandler = async ({ toolName, params, 
 
         if (hitlResult.requiresApproval && hitlResult.matchedPolicy) {
           const policy = hitlResult.matchedPolicy;
-          console.log(`[clawthority] │ [hitl] releasing ${pipelineDecision.stage ?? 'unknown'} HITL-gated forbid via policy "${policy.name}" (${policy.approval.channel})`);
-          const hitlChannelResult = await dispatchHitlChannel(policy, toolName, identity);
-          if (hitlChannelResult) return hitlChannelResult;
-          // Approved: fall through to the pre-existing HITL check and then ALLOWED.
+          if (approvalManager.isSessionAutoApproved(identity.auditChannel, normalizedAction.action_class)) {
+            console.log(`[clawthority] │ [hitl] ✓ session auto-approved (${normalizedAction.action_class}) — skipping HITL dispatch`);
+          } else {
+            console.log(`[clawthority] │ [hitl] releasing ${pipelineDecision.stage ?? 'unknown'} HITL-gated forbid via policy "${policy.name}" (${policy.approval.channel})`);
+            const hitlChannelResult = await dispatchHitlChannel(policy, toolName, identity, normalizedAction.target, normalizedAction.action_class, intentHint);
+            if (hitlChannelResult) return hitlChannelResult;
+          }
+          // Approved (or auto-approved): fall through to the pre-existing HITL check and then ALLOWED.
         } else {
           const priority = pipelineDecision.priority;
           const ruleTag = pipelineDecision.rule;
@@ -1160,9 +1639,13 @@ const beforeToolCallHandler: BeforeToolCallHandler = async ({ toolName, params, 
 
     if (hitlResult.requiresApproval && hitlResult.matchedPolicy) {
       const policy = hitlResult.matchedPolicy;
-      console.log(`[clawthority] │ [hitl] matched policy "${policy.name}" — requesting approval via ${policy.approval.channel}`);
-      const hitlChannelResult = await dispatchHitlChannel(policy, toolName, identity);
-      if (hitlChannelResult) return hitlChannelResult;
+      if (approvalManager.isSessionAutoApproved(identity.auditChannel, normalizedAction.action_class)) {
+        console.log(`[clawthority] │ [hitl] ✓ session auto-approved (${normalizedAction.action_class}) — skipping HITL dispatch`);
+      } else {
+        console.log(`[clawthority] │ [hitl] matched policy "${policy.name}" — requesting approval via ${policy.approval.channel}`);
+        const hitlChannelResult = await dispatchHitlChannel(policy, toolName, identity, normalizedAction.target, normalizedAction.action_class, intentHint);
+        if (hitlChannelResult) return hitlChannelResult;
+      }
     } else if (hitlConfig !== null) {
       console.log(`[clawthority] │ [hitl] ✓ no matching HITL policy`);
     }
@@ -1395,6 +1878,30 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
       console.error("[plugin:clawthority] unexpected error in loadJsonRules:", err);
     }
 
+    // Load file-based auto-permit rules from the auto-permit store.
+    // Awaited for the same reason as loadJsonRules() above — an unawaited load
+    // would race with the first tool call and silently skip the rules.
+    // The file is optional; absence is handled gracefully inside the function.
+    try {
+      await loadAutoPermitRules();
+    } catch (err) {
+      console.error("[plugin:clawthority] unexpected error in loadAutoPermitRules:", err);
+    }
+
+    // Watch the auto-permit store for external modifications (e.g. direct
+    // file edits by an operator) so the in-memory checker stays in sync.
+    try {
+      const apConfig = resolveAutoPermitStoreConfig();
+      const apModuleDir = dirname(fileURLToPath(import.meta.url));
+      const apStorePath = resolve(apModuleDir, "../../", apConfig.path);
+      autoPermitStoreWatcher = watchAutoPermitStore(apStorePath, () => {
+        void loadAutoPermitRules();
+        void loadJsonRules();
+      });
+    } catch (err) {
+      console.warn("[plugin:clawthority] failed to start auto-permit store watcher:", err);
+    }
+
     // Instantiate the file-based authority adapter using the same rules file
     // path as loadJsonRules() so both subsystems read from the same source.
     // bundle.json takes precedence over rules.json when present.
@@ -1490,8 +1997,136 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
       if (telegramConfig) {
         telegramListener = new TelegramListener(
           telegramConfig.botToken,
-          (command, token) => {
-            const decision = command === 'approve' ? 'approved' as const : 'denied' as const;
+          (command, token, from?: TelegramOperatorInfo) => {
+            // Build operator identity string from Telegram callback_query.from.
+            // Format: "<userId>" or "<userId>@<username>" when username is set.
+            const operatorId = from !== undefined
+              ? (from.username !== undefined
+                ? `${from.userId}@${from.username}`
+                : String(from.userId))
+              : undefined;
+
+            // ── confirm_approve_always ────────────────────────────────────
+            if (command === 'confirm_approve_always') {
+              const conf = pendingApproveAlwaysConfirmations.get(token);
+              if (conf) {
+                clearTimeout(conf.timer);
+                pendingApproveAlwaysConfirmations.delete(token);
+                const pending = approvalManager.getPending(token);
+                if (pending) {
+                  approvalManager.addSessionAutoApproval(pending.channelId, pending.action_class);
+                  console.log(
+                    `[hitl-telegram] session auto-approval registered: channel=${pending.channelId} action_class=${pending.action_class}` +
+                    (operatorId !== undefined ? ` operator=${operatorId}` : ''),
+                  );
+                  if (pending.target.length > 0 || !['shell.exec', 'code.execute'].includes(pending.action_class)) {
+                    void persistAutoPermitPattern(pending.target, pending.toolName, pending.action_class, 'telegram', operatorId, conf.agentId);
+                  }
+                }
+              } else {
+                console.log(`[hitl-telegram] confirm_approve_always: no pending confirmation for token=${token}`);
+              }
+              const resolved = approvalManager.resolveApproval(token, 'approved');
+              if (!resolved) {
+                console.log(`[hitl-telegram] confirm_approve_always: unknown or expired token: ${token}`);
+              }
+              return;
+            }
+
+            // ── cancel_approve_always ─────────────────────────────────────
+            if (command === 'cancel_approve_always') {
+              const conf = pendingApproveAlwaysConfirmations.get(token);
+              if (conf) {
+                clearTimeout(conf.timer);
+                pendingApproveAlwaysConfirmations.delete(token);
+              }
+              console.log(`[hitl-telegram] approve-always confirmation cancelled for token=${token}`);
+              // Original approval stays pending — operator can still use the original buttons.
+              return;
+            }
+
+            // ── approve_always ────────────────────────────────────────────
+            if (command === 'approve_always' && FEATURES.approveAlwaysEnabled) {
+              // Cancel any stale pending confirmation for this token.
+              const existingConf = pendingApproveAlwaysConfirmations.get(token);
+              if (existingConf) {
+                clearTimeout(existingConf.timer);
+                pendingApproveAlwaysConfirmations.delete(token);
+              }
+
+              const pending = approvalManager.getPending(token);
+              if (pending) {
+                // Try to derive a pattern for the confirmation message, unless
+                // auto-confirm is enabled (CLAWTHORITY_APPROVE_ALWAYS_AUTO_CONFIRM=1).
+                let derived: ReturnType<typeof derivePattern> | undefined;
+                const isExecAction = ['shell.exec', 'code.execute'].includes(pending.action_class);
+                const hasDerivableInput = isExecAction ? pending.target.length > 0 : pending.toolName.length > 0;
+                if (hasDerivableInput && !FEATURES.approveAlwaysAutoConfirm) {
+                  try {
+                    if (isExecAction) {
+                      derived = derivePattern({ command: pending.target });
+                    } else {
+                      derived = derivePattern({ command: pending.toolName, toolName: pending.toolName });
+                    }
+                  } catch {
+                    // Shell metacharacters or empty command — skip confirmation.
+                  }
+                }
+
+                if (derived !== undefined) {
+                  // Show confirmation message; do NOT resolve the original approval yet.
+                  const confTimer = setTimeout(() => {
+                    pendingApproveAlwaysConfirmations.delete(token);
+                    console.log(`[hitl-telegram] approve-always confirmation timed out for token=${token}`);
+                  }, APPROVE_ALWAYS_CONFIRM_TIMEOUT_MS);
+                  if (typeof confTimer === 'object' && 'unref' in confTimer) confTimer.unref();
+
+                  pendingApproveAlwaysConfirmations.set(token, {
+                    token,
+                    pattern: derived.pattern,
+                    method: derived.method,
+                    operatorId,
+                    agentId: pending.agentId,
+                    timer: confTimer,
+                  });
+
+                  void sendApproveAlwaysConfirmation(telegramConfig, {
+                    token,
+                    pattern: derived.pattern,
+                    originalCommand: pending.target,
+                  });
+                  return; // Wait for confirm or cancel — do not resolve yet.
+                }
+
+                // Auto-confirm path: CLAWTHORITY_APPROVE_ALWAYS_AUTO_CONFIRM=1,
+                // target is empty, or pattern derivation failed.
+                approvalManager.addSessionAutoApproval(pending.channelId, pending.action_class);
+                console.log(
+                  `[hitl-telegram] session auto-approval registered: channel=${pending.channelId} action_class=${pending.action_class}` +
+                  (operatorId !== undefined ? ` operator=${operatorId}` : ''),
+                );
+                if (pending.target.length > 0 || !['shell.exec', 'code.execute'].includes(pending.action_class)) {
+                  void persistAutoPermitPattern(pending.target, pending.toolName, pending.action_class, 'telegram', operatorId, pending.agentId);
+                }
+              }
+            }
+
+            // ── approve / deny (and approve_always feature-disabled fallthrough) ─
+            // Cancel any stale pending confirmation for this token (operator chose
+            // a different action on the original message).
+            const staleConf = pendingApproveAlwaysConfirmations.get(token);
+            if (staleConf) {
+              clearTimeout(staleConf.timer);
+              pendingApproveAlwaysConfirmations.delete(token);
+            }
+
+            // Duplicate tap: token already consumed — show alert to operator.
+            if (approvalManager.isConsumed(token)) {
+              return 'Already decided';
+            }
+
+            // approve_always resolves the current request as approved.
+            const decision = command === 'deny' ? 'denied' as const : 'approved' as const;
             const resolved = approvalManager.resolveApproval(token, decision);
             if (!resolved) {
               console.log(`[hitl-telegram] unknown or expired token: ${token}`);
@@ -1509,7 +2144,25 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
           slackConfig.interactionPort,
           slackConfig.signingSecret,
           (command, token) => {
-            const decision = command === 'approve' ? 'approved' as const : 'denied' as const;
+            if (command === 'approve_always' && FEATURES.approveAlwaysEnabled) {
+              // Register session auto-approval before resolving so future
+              // requests of the same action class in this channel skip HITL.
+              const pending = approvalManager.getPending(token);
+              if (pending) {
+                approvalManager.addSessionAutoApproval(pending.channelId, pending.action_class);
+                console.log(`[hitl-slack] session auto-approval registered: channel=${pending.channelId} action_class=${pending.action_class}`);
+                // Derive and persist an auto-permit pattern from the command
+                // target so future matching commands are auto-permitted without
+                // requiring HITL at all. Failures are logged, not thrown.
+                // Slack interaction payloads do not expose a structured operator
+                // identity at this level; operatorId is omitted.
+                if (pending.target.length > 0 || !['shell.exec', 'code.execute'].includes(pending.action_class)) {
+                  void persistAutoPermitPattern(pending.target, pending.toolName, pending.action_class, 'slack', undefined, pending.agentId);
+                }
+              }
+            }
+            // approve_always resolves the current request as approved.
+            const decision = command === 'deny' ? 'denied' as const : 'approved' as const;
             const resolved = approvalManager.resolveApproval(token, decision);
             if (!resolved) {
               console.log(`[hitl-slack] unknown or expired token: ${token}`);
@@ -1547,6 +2200,17 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
       );
     }
 
+    // Mode recommendation: surface open-mode gap when no protection exists
+    // for unknown_sensitive_action (neither a forbid rule nor a HITL policy).
+    // Passes null when no JSON rules are loaded so the function treats that as
+    // "no operator forbid" — correct because an absent rules.json means no
+    // operator-supplied constraints at all.
+    logOpenModeRecommendation(
+      MODE,
+      jsonRulesEngineRef.current?.rules ?? null,
+      hitlConfigRef.current,
+    );
+
     console.log("[plugin:clawthority] activated – lifecycle hooks registered");
   },
 
@@ -1561,6 +2225,11 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
       slackInteractionServer = null;
     }
     slackMessageTimestamps.clear();
+    telegramMessageIds.clear();
+    for (const conf of pendingApproveAlwaysConfirmations.values()) {
+      clearTimeout(conf.timer);
+    }
+    pendingApproveAlwaysConfirmations.clear();
     approvalManager.shutdown();
     if (hitlWatcher !== null) {
       await hitlWatcher.stop();
@@ -1568,6 +2237,12 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
     }
     hitlConfigRef.current = null;
     hitlAuditLogger = null;
+
+    // ── Auto-permit store watcher cleanup ─────────────────────────────────
+    if (autoPermitStoreWatcher !== null) {
+      autoPermitStoreWatcher.stop();
+      autoPermitStoreWatcher = null;
+    }
 
     // ── Rules watcher cleanup ─────────────────────────────────────────────
     if (rulesWatcher !== null) {

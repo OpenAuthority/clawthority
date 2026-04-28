@@ -223,6 +223,12 @@ Structured decisions land in `data/audit.jsonl` - each block carries `stage`, `r
 
 Full schema and environment-variable overrides: [docs/configuration.md](docs/configuration.md). Recovery runbook for lockouts: [docs/troubleshooting.md](docs/troubleshooting.md#total-lockout-recovery).
 
+### Feature flags
+
+| Variable | Default | Effect |
+|---|---|---|
+| `CLAWTHORITY_DISABLE_APPROVE_ALWAYS` | _(unset)_ | Set to `1` to hide the 🔁 Approve Always button in Slack approval messages and prevent creation of new session auto-permits. Existing in-process auto-permits are still honoured. Requires restart to change. |
+
 ---
 
 ## Budget control

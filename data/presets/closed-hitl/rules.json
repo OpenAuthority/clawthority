@@ -1,0 +1,14 @@
+[
+  {
+    "effect": "forbid",
+    "action_class": "unknown_sensitive_action",
+    "priority": 90,
+    "reason": "CLOSED+HITL preset: unrecognised action classes are withheld pending human review. Configure hitl-policy.yaml and set your channel credentials to enable real-time operator approval. To permit a specific action class without HITL, add an explicit permit rule at a priority lower than 90.",
+    "tags": [
+      "security",
+      "hitl",
+      "preset",
+      "closed-hitl"
+    ]
+  }
+]

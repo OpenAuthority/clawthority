@@ -559,6 +559,51 @@ describe('PolicyEngine', () => {
       });
       expect(strictEngine.evaluate('external', 'anything@example.com', ctx).effect).toBe('forbid');
     });
+
+    it('TC-TM-07: target param enables command-specific matching within a tool type', () => {
+      engine.addRule({ effect: 'permit', resource: 'tool', match: '*' });
+      engine.addRule({
+        effect: 'forbid',
+        resource: 'tool',
+        match: 'Bash',
+        target_match: /^docker run.*--privileged/,
+        reason: 'privileged_docker',
+      });
+      // Same tool name 'Bash', but command contains --privileged → forbidden
+      const blocked = engine.evaluate('tool', 'Bash', ctx, 'docker run --privileged nginx');
+      expect(blocked.effect).toBe('forbid');
+      expect(blocked.reason).toBe('privileged_docker');
+      // Same tool, safe command → target_match skips the forbid rule, permit wins
+      const allowed = engine.evaluate('tool', 'Bash', ctx, 'docker run nginx');
+      expect(allowed.effect).toBe('permit');
+    });
+
+    it('TC-TM-08: omitting target falls back to resourceName for target_match (backward compat)', () => {
+      engine.addRule({
+        effect: 'forbid',
+        resource: 'external',
+        match: '*',
+        target_match: /^blocked@evil\.com$/,
+        reason: 'blocked',
+      });
+      // Old-style call without target — target_match is checked against resourceName
+      expect(engine.evaluate('external', 'blocked@evil.com', ctx).effect).toBe('forbid');
+      expect(engine.evaluate('external', 'safe@ok.com', ctx).effect).toBe('permit');
+    });
+
+    it('TC-TM-09: target_in matches against the explicit target, not resourceName', () => {
+      const strictEngine = new PolicyEngine({ defaultEffect: 'forbid' });
+      strictEngine.addRule({
+        effect: 'permit',
+        resource: 'tool',
+        match: 'Bash',
+        target_in: ['git status', 'git log'],
+      });
+      expect(strictEngine.evaluate('tool', 'Bash', ctx, 'git status').effect).toBe('permit');
+      expect(strictEngine.evaluate('tool', 'Bash', ctx, 'git log').effect).toBe('permit');
+      // Command not in the list → rule is skipped, implicit deny in strict mode
+      expect(strictEngine.evaluate('tool', 'Bash', ctx, 'rm -rf /').effect).toBe('forbid');
+    });
   });
 
   describe('rate limiting', () => {

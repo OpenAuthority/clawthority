@@ -62,6 +62,7 @@ interface LoadOpts {
   mode: 'open' | 'closed';
   hitl?: HitlPolicyConfig;
   jsonRules?: Array<Record<string, unknown>>;
+  autoPermitRules?: Array<Record<string, unknown>>;
 }
 
 const tempFiles = new Set<string>();
@@ -80,6 +81,18 @@ async function loadPlugin(opts: LoadOpts): Promise<BeforeToolCallHandler> {
     tempFiles.add(tmpPath);
   } else {
     delete process.env.CLAWTHORITY_RULES_FILE;
+  }
+
+  if (opts.autoPermitRules !== undefined) {
+    const tmpPath = join(
+      tmpdir(),
+      `oa-ap-${Date.now()}-${Math.random().toString(36).slice(2)}.json`,
+    );
+    await writeFile(tmpPath, JSON.stringify(opts.autoPermitRules), 'utf-8');
+    process.env.CLAWTHORITY_AUTO_PERMIT_STORE = tmpPath;
+    tempFiles.add(tmpPath);
+  } else {
+    delete process.env.CLAWTHORITY_AUTO_PERMIT_STORE;
   }
 
   vi.resetModules();
@@ -143,12 +156,14 @@ describe('beforeToolCallHandler — unit coverage', () => {
     delete process.env.CLAWTHORITY_MODE;
     delete process.env.OPENAUTH_FORCE_ACTIVE;
     delete process.env.CLAWTHORITY_RULES_FILE;
+    delete process.env.CLAWTHORITY_AUTO_PERMIT_STORE;
   });
 
   afterEach(async () => {
     delete process.env.CLAWTHORITY_MODE;
     delete process.env.OPENAUTH_FORCE_ACTIVE;
     delete process.env.CLAWTHORITY_RULES_FILE;
+    delete process.env.CLAWTHORITY_AUTO_PERMIT_STORE;
     vi.doUnmock('./hitl/parser.js');
     for (const path of tempFiles) {
       await rm(path, { force: true }).catch(() => undefined);
@@ -313,6 +328,51 @@ describe('beforeToolCallHandler — unit coverage', () => {
       expect(registryWarns).toHaveLength(0);
     } finally {
       warnSpy.mockRestore();
+    }
+  });
+
+  // ── loadJsonRules: auto-permit merge (TC-LJR-AP-01) ───────────────────────
+
+  it('activates without error when auto-permits.json is absent (missing file handled gracefully)', async () => {
+    // Use a temp path that does not exist as the auto-permit store.
+    // loadPlugin with an explicit autoPermitRules array pointing to a real
+    // (but schema-invalid) path would work too, but the simplest case is to
+    // verify that the default missing-file path is handled gracefully. We use
+    // a jsonRules fixture so CLAWTHORITY_RULES_FILE is controlled and rules.json
+    // path resolution in loadJsonRules cannot affect the outcome.
+    const handler = await loadPlugin({ mode: 'open', jsonRules: [] });
+    // Default data/auto-permits.json is absent; plugin must still activate.
+    const result = await call(handler, 'read_file', { path: '/tmp/notes.txt' });
+    expect(result?.block).not.toBe(true);
+  });
+
+  // ── loadJsonRules: auto-permit merge (TC-LJR-AP-02) ───────────────────────
+
+  it('merges auto-permit rules from auto-permits.json and logs the count', async () => {
+    const logMessages: string[] = [];
+    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      if (typeof args[0] === 'string') logMessages.push(args[0] as string);
+    });
+    try {
+      // Provide an empty jsonRules array so CLAWTHORITY_RULES_FILE controls the
+      // rules path; auto-permits are loaded from the separate temp file.
+      await loadPlugin({
+        mode: 'open',
+        jsonRules: [],
+        autoPermitRules: [
+          {
+            pattern: 'git commit *',
+            method: 'default',
+            createdAt: Date.now(),
+            originalCommand: 'git commit -m "fix"',
+          },
+        ],
+      });
+      // logMessages collects every console.log call made during activate().
+      // The merged auto-permit rule count must appear in at least one message.
+      expect(logMessages.join('\n')).toMatch(/merged 1 auto-permit rule/);
+    } finally {
+      logSpy.mockRestore();
     }
   });
 });

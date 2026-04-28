@@ -75,6 +75,7 @@ The `data/` directory is the default location for:
 | `data/bundle.json` | Policy bundle (preferred format, v1.2.1+) | `CLAWTHORITY_RULES_FILE` env var |
 | `data/rules.json` | Authorization rules array (legacy format, fallback) | `CLAWTHORITY_RULES_FILE` env var |
 | `data/audit.jsonl` | JSONL audit log | `AUDIT_LOG_FILE` env var |
+| `data/auto-permits.json` | Auto-generated permit records (default separate file) | `CLAWTHORITY_AUTO_PERMIT_STORE` env var |
 
 `data/bundle.json` takes precedence over `data/rules.json` when both are present. The server creates `data/` automatically if it does not exist. Override both paths with absolute paths for production deployments where the plugin directory may be read-only.
 
@@ -658,6 +659,7 @@ Controls the plugin's policy posture at activation and the install-phase bypass 
 |---|---|---|
 | `OPENAUTH_FORCE_ACTIVE` | _(unset)_ | Set to `'1'` to suppress the install-phase enforcement bypass. Without this, enforcement is suspended while `npm_lifecycle_event` is one of `install`, `preinstall`, `postinstall`, or `prepare`. **Must be set to `'1'` in all production deployments.** See [Operator Security Guide — F-01](operator-security-guide.md#f-01-openauth_force_active-configuration). |
 | `CLAWTHORITY_MODE` | `open` | `open` — implicit permit with a critical-forbid safety net (six action classes: `shell.exec`, `code.execute`, `payment.initiate`, `credential.read`, `credential.write`, `unknown_sensitive_action`). `closed` — implicit deny, user adds explicit `permit` rules. Any other value logs a warning and falls back to `open`. Case- and whitespace-insensitive. Read once at module load — **restart the plugin to change modes.** |
+| `CLAWTHORITY_DISABLE_APPROVE_ALWAYS` | _(unset)_ | Set to `'1'` to hide the 🔁 "Approve Always" button in Slack HITL approval messages and prevent creation of new session-scoped auto-permits. Existing in-process auto-permits continue to be honoured — only creation of new ones is blocked. Read once at module load — **restart the plugin to change.** |
 
 Mode only affects Stage 2 policy evaluation and which default rule set is loaded. Stage 1 (capability gate, protected paths, HITL binding) fails closed in both modes regardless.
 
@@ -677,6 +679,12 @@ node dist/index.js
 # Locked-down production
 CLAWTHORITY_MODE=closed node dist/index.js
 ```
+
+### Auto-permit store
+
+| Variable | Default | Description |
+|---|---|---|
+| `CLAWTHORITY_AUTO_PERMIT_STORE` | `data/auto-permits.json` | Path to the file where auto-generated permit records are stored. Defaults to a dedicated `data/auto-permits.json` file (**separate** mode) so auto-permits remain distinct from hand-authored rules and are easy to review or revoke individually. Set to `data/rules.json` to enable **single-file** mode, which appends auto-permit records to the main rules file alongside operator-authored rules. Any other absolute or relative path is used as a custom separate store. Read once at module load — **restart the plugin to change.** |
 
 ### HITL — Telegram
 

@@ -1,0 +1,60 @@
+version: "1"
+
+# CLOSED+HITL preset — recommended security configuration
+# =========================================================
+# This preset enforces CLOSED mode with human-in-the-loop approval for any
+# action whose class is not explicitly recognised. An operator reviews each
+# request in real time and can Approve (once), Approve Always, or Deny.
+#
+# ACTIVATION
+# ----------
+# 1. Copy this file to hitl-policy.yaml in the plugin root:
+#      cp data/presets/closed-hitl/hitl-policy.yaml hitl-policy.yaml
+#
+# 2. Copy the preset rules to data/rules.json (fresh install only):
+#      cp data/presets/closed-hitl/rules.json data/rules.json
+#
+# 3. Set the mode environment variable before launching the agent:
+#      export CLAWTHORITY_MODE=closed
+#
+# 4. Fill in your approval channel credentials below (or via env vars).
+#    Environment variables always take precedence over values in this file.
+#
+# CREDENTIALS
+# -----------
+# Telegram (recommended for individuals):
+#   env: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+# Slack (recommended for teams):
+#   env: SLACK_BOT_TOKEN, SLACK_CHANNEL_ID, SLACK_SIGNING_SECRET
+
+# telegram:
+#   botToken: ""   # or: TELEGRAM_BOT_TOKEN env var
+#   chatId: ""     # or: TELEGRAM_CHAT_ID env var
+
+# slack:
+#   botToken: ""        # or: SLACK_BOT_TOKEN env var
+#   channelId: ""       # or: SLACK_CHANNEL_ID env var
+#   signingSecret: ""   # or: SLACK_SIGNING_SECRET env var
+#   interactionPort: 3201
+
+policies:
+  # Gate every unrecognised action through the approval channel.
+  # This policy works in tandem with the unknown_sensitive_action forbid rule
+  # in rules.json: the rule prevents the action from proceeding automatically,
+  # and this policy provides the operator with an Approve/Deny path.
+  - name: unknown-sensitive-action-hitl
+    description: >
+      CLOSED+HITL preset: any action whose class is not explicitly recognised
+      is routed to an operator for real-time approval. The operator can
+      Approve (allow once), Approve Always (create an auto-permit), or Deny.
+    actions:
+      - unknown_sensitive_action
+    approval:
+      channel: telegram    # replace with: slack, console (for dev/testing)
+      timeout: 300         # 5 minutes — operator must respond within this window
+      fallback: deny       # deny automatically if the operator does not respond (fail-closed)
+    tags:
+      - security
+      - hitl
+      - preset
+      - closed-hitl
