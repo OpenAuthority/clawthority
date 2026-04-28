@@ -351,3 +351,241 @@ describe('TC-CE-37: docker exec without shell — no inline script effect', () =
     expect(hasEffectMatching(result.effects, /inline.*script|script.*inline/i)).toBe(false);
   });
 });
+
+// ── TC-CE-38 – TC-CE-39 : empty / whitespace input ────────────────────────────
+
+describe('TC-CE-38: empty string — returns unrecognised fallback', () => {
+  it('returns a well-formed result for an empty string', () => {
+    const result = explain('');
+    expect(result).toHaveProperty('summary');
+    expect(result).toHaveProperty('effects');
+    expect(result).toHaveProperty('warnings');
+    expect(result.summary).toMatch(/unrecogni/i);
+    expect(result.effects).toBeInstanceOf(Array);
+    expect(result.warnings).toBeInstanceOf(Array);
+  });
+});
+
+describe('TC-CE-39: whitespace-only input — returns unrecognised fallback', () => {
+  it('returns a well-formed result when the command is only spaces', () => {
+    const result = explain('   ');
+    expect(result.summary).toMatch(/unrecogni/i);
+    expect(result.effects).toHaveLength(0);
+    expect(result.warnings).toHaveLength(0);
+  });
+});
+
+// ── TC-CE-40 : catch-all for unknown commands ──────────────────────────────────
+
+describe('TC-CE-40: catch-all pattern — unknown commands produce generic summary', () => {
+  it('returns a summary containing the binary name for an unknown command', () => {
+    const result = explain('curl https://example.com');
+    expect(result.summary).toMatch(/curl/i);
+  });
+
+  it('returns empty effects and warnings for an unknown command', () => {
+    const result = explain('ls -la /tmp');
+    expect(result.effects).toBeInstanceOf(Array);
+    expect(result.warnings).toBeInstanceOf(Array);
+  });
+
+  it('handles a bare unknown binary without arguments', () => {
+    const result = explain('make');
+    expect(result.summary).toMatch(/make/i);
+  });
+});
+
+// ── TC-CE-41 – TC-CE-43 : additional git subcommands ──────────────────────────
+
+describe('TC-CE-41: git add — stages changes summary', () => {
+  it('produces a summary mentioning staging', () => {
+    const result = explain('git add .');
+    expect(result.summary).toMatch(/stage|staging/i);
+  });
+});
+
+describe('TC-CE-42: git stash — stash summary', () => {
+  it('produces a summary mentioning stashing', () => {
+    const result = explain('git stash');
+    expect(result.summary).toMatch(/stash/i);
+  });
+});
+
+describe('TC-CE-43: git unknown subcommand — generic summary', () => {
+  it('returns a summary containing "git" for an unrecognised git subcommand', () => {
+    const result = explain('git rebase main');
+    expect(result.summary).toMatch(/git/i);
+  });
+});
+
+// ── TC-CE-44 – TC-CE-48 : additional npm subcommands ─────────────────────────
+
+describe('TC-CE-44: npm i — short alias treated identically to npm install', () => {
+  it('produces an install summary when using the "i" alias', () => {
+    const result = explain('npm i express');
+    expect(result.summary).toMatch(/install/i);
+    expect(result.summary).toMatch(/express/);
+  });
+});
+
+describe('TC-CE-45: npm run-script — treated identically to npm run', () => {
+  it('includes the script name in the summary when using run-script', () => {
+    const result = explain('npm run-script build');
+    expect(result.summary).toMatch(/build/);
+  });
+
+  it('warns about arbitrary shell execution for run-script', () => {
+    const result = explain('npm run-script test');
+    expect(hasWarningMatching(result.warnings, /shell|arbitrary/i)).toBe(true);
+  });
+});
+
+describe('TC-CE-46: npm uninstall / rm / remove — uninstall summary', () => {
+  it('produces an uninstall summary for npm uninstall', () => {
+    const result = explain('npm uninstall lodash');
+    expect(result.summary).toMatch(/uninstall/i);
+  });
+
+  it('produces an uninstall summary for npm rm alias', () => {
+    const result = explain('npm rm express');
+    expect(result.summary).toMatch(/uninstall/i);
+  });
+
+  it('produces an uninstall summary for npm remove alias', () => {
+    const result = explain('npm remove react');
+    expect(result.summary).toMatch(/uninstall/i);
+  });
+});
+
+describe('TC-CE-47: npm audit — security audit summary', () => {
+  it('produces a summary mentioning vulnerabilities or auditing', () => {
+    const result = explain('npm audit');
+    expect(result.summary).toMatch(/audit|vulnerabilit/i);
+  });
+
+  it('has no effects and no warnings', () => {
+    const result = explain('npm audit');
+    expect(result.effects).toHaveLength(0);
+    expect(result.warnings).toHaveLength(0);
+  });
+});
+
+describe('TC-CE-48: npm unknown subcommand — generic summary', () => {
+  it('returns a summary containing "npm" for an unrecognised npm subcommand', () => {
+    const result = explain('npm outdated');
+    expect(result.summary).toMatch(/npm/i);
+  });
+});
+
+// ── TC-CE-49 : pip install edge case ─────────────────────────────────────────
+
+describe('TC-CE-49: pip install with no packages — generic install summary', () => {
+  it('returns a generic summary when no package names are provided', () => {
+    const result = explain('pip install');
+    expect(result.summary).toMatch(/install|Python/i);
+    // Must not list specific packages since there are none
+    expect(result.summary).not.toMatch(/:/);
+  });
+});
+
+// ── TC-CE-50 : docker unknown subcommand ──────────────────────────────────────
+
+describe('TC-CE-50: docker unknown subcommand — generic summary', () => {
+  it('returns a summary containing "docker" for docker pull', () => {
+    const result = explain('docker pull ubuntu:latest');
+    expect(result.summary).toMatch(/docker/i);
+  });
+
+  it('returns a summary for docker ps', () => {
+    const result = explain('docker ps');
+    expect(result.summary).toMatch(/docker/i);
+  });
+});
+
+// ── TC-CE-51 : docker exec access warning ─────────────────────────────────────
+
+describe('TC-CE-51: docker exec — always warns about container access', () => {
+  it('includes a container access warning', () => {
+    const result = explain('docker exec my-container env');
+    expect(hasWarningMatching(result.warnings, /access|container/i)).toBe(true);
+  });
+});
+
+// ── TC-CE-52 : tokenizer edge cases ───────────────────────────────────────────
+
+describe('TC-CE-52: tokenizer — quoted strings with spaces', () => {
+  it('keeps a double-quoted string with spaces as a single token', () => {
+    const result = explain('git commit -m "fix the bug in the parser"');
+    expect(result.summary).toMatch(/commit/i);
+  });
+
+  it('keeps a single-quoted string with spaces as a single token', () => {
+    const result = explain("git commit -m 'fix the bug in the parser'");
+    expect(result.summary).toMatch(/commit/i);
+  });
+
+  it('includes quoted package name in npm install summary', () => {
+    const result = explain('npm install "my-scoped-pkg"');
+    expect(result.summary).toMatch(/my-scoped-pkg/);
+  });
+});
+
+// ── TC-CE-53 : docker run — image extraction with flags before image ──────────
+
+describe('TC-CE-53: docker run with -it flags — image correctly extracted', () => {
+  it('extracts the image name when -it flags precede it', () => {
+    const result = explain('docker run -it ubuntu:22.04 bash');
+    expect(result.summary).toMatch(/ubuntu:22\.04/);
+  });
+
+  it('extracts the image name when -d detach flag precedes it', () => {
+    const result = explain('docker run -d nginx');
+    expect(result.summary).toMatch(/nginx/);
+  });
+});
+
+// ── TC-CE-54 : docker run --volume= inline syntax ─────────────────────────────
+
+describe('TC-CE-54: docker run --volume=/:/host — full disk access warning', () => {
+  it('warns about full disk access when --volume= inline syntax mounts root', () => {
+    const result = explain('docker run --volume=/:/host ubuntu bash');
+    expect(hasWarningMatching(result.warnings, /full disk|root filesystem|full.+access/i)).toBe(true);
+  });
+
+  it('does not warn for non-root --volume= inline mounts', () => {
+    const result = explain('docker run --volume=/data:/data ubuntu bash');
+    expect(hasWarningMatching(result.warnings, /full disk|root filesystem/i)).toBe(false);
+  });
+});
+
+// ── TC-CE-55 : timeout protection ─────────────────────────────────────────────
+
+describe('TC-CE-55: timeout protection — long inputs complete quickly', () => {
+  it('handles a very long unknown command within 200 ms', { timeout: 500 }, () => {
+    const longCommand = 'unknowncmd ' + 'a'.repeat(50_000);
+    const start = Date.now();
+    const result = explain(longCommand);
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeLessThan(200);
+    expect(result).toHaveProperty('summary');
+  });
+
+  it('handles a very long git command within 200 ms', { timeout: 500 }, () => {
+    const longCommand = 'git push ' + '-f '.repeat(10_000) + 'origin main';
+    const start = Date.now();
+    const result = explain(longCommand);
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeLessThan(200);
+    expect(result).toHaveProperty('summary');
+  });
+
+  it('handles a docker run with many -v flags within 200 ms', { timeout: 500 }, () => {
+    const vFlags = Array.from({ length: 500 }, (_, i) => `-v /data${i}:/mnt${i}`).join(' ');
+    const longCommand = `docker run ${vFlags} ubuntu bash`;
+    const start = Date.now();
+    const result = explain(longCommand);
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeLessThan(200);
+    expect(result).toHaveProperty('summary');
+  });
+});
