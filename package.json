@@ -40,7 +40,10 @@
     "test:watch": "vitest",
     "prevalidate:spec": "npm run build --workspace=packages/action-registry && node scripts/gen-build-info.mjs && tsc",
     "validate:spec": "node scripts/validate-spec-alignment.mjs",
-    "validate:manifests": "node scripts/validate-skill-manifests.mjs"
+    "validate:manifests": "node scripts/validate-skill-manifests.mjs",
+    "list-auto-permits": "node scripts/auto-permits.mjs list",
+    "show-auto-permit": "node scripts/auto-permits.mjs show",
+    "remove-auto-permit": "node scripts/auto-permits.mjs remove"
   },
   "dependencies": {
     "@openclaw/action-registry": "*",
