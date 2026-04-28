@@ -1,4 +1,4 @@
-// ─── Pattern Derivation Engine — unit tests (T48, T28) ───────────────────────
+// ─── Pattern Derivation Engine — unit tests (T48, T28, T49) ─────────────────
 //
 // TC-PDE-01  default: binary + positional → `{binary} {positional} *`
 // TC-PDE-02  default: binary only (no args) → `{binary}`
@@ -40,6 +40,8 @@
 // TC-PDE-38  toolName: wildcard character → PatternDerivationError
 // TC-PDE-39  toolName: derived pattern passes validatePattern
 // TC-PDE-40  toolName: derivation is deterministic (same input → same pattern)
+// TC-PDE-41  performance: 1000 consecutive derivePattern calls complete within 500ms
+// TC-PDE-42  performance: 1000 validatePattern calls complete within 100ms
 
 import { describe, it, expect } from 'vitest';
 import {
@@ -361,5 +363,47 @@ describe('derivePattern — registered tool (toolName)', () => {
     expect(a.binary).toBe(b.binary);
     expect(a.tokenCount).toBe(b.tokenCount);
     expect(a.method).toBe(b.method);
+  });
+});
+
+// ─── Performance ─────────────────────────────────────────────────────────────
+
+describe('derivePattern — performance', () => {
+  // TC-PDE-41
+  it('completes 1000 consecutive derivePattern calls within 500ms', () => {
+    const commands = [
+      'git commit -m "perf test"',
+      'npm install --save-dev vitest',
+      'docker run --rm alpine sh',
+      'ls -la /tmp',
+      'echo hello',
+    ];
+
+    const start = performance.now();
+    for (let i = 0; i < 1000; i++) {
+      derivePattern({ command: commands[i % commands.length]! });
+    }
+    const elapsed = performance.now() - start;
+
+    expect(elapsed).toBeLessThan(500);
+  });
+
+  // TC-PDE-42
+  it('completes 1000 validatePattern calls within 100ms', () => {
+    const patterns = [
+      'git commit *',
+      'npm install *',
+      'docker run *',
+      'ls *',
+      'echo',
+    ];
+
+    const start = performance.now();
+    for (let i = 0; i < 1000; i++) {
+      validatePattern(patterns[i % patterns.length]!);
+    }
+    const elapsed = performance.now() - start;
+
+    expect(elapsed).toBeLessThan(100);
   });
 });
