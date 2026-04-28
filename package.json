@@ -43,6 +43,8 @@
     "validate:manifests": "node scripts/validate-skill-manifests.mjs",
     "list-auto-permits": "node scripts/auto-permits.mjs list",
     "show-auto-permit": "node scripts/auto-permits.mjs show",
+    "validate-auto-permits": "node scripts/auto-permits.mjs validate",
+    "test-auto-permit": "node scripts/auto-permits.mjs test",
     "remove-auto-permit": "node scripts/auto-permits.mjs remove"
   },
   "dependencies": {
