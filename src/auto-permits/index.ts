@@ -65,3 +65,14 @@ export type {
   AutoPermitEntryError,
   AutoPermitFileValidationResult,
 } from './validation.js';
+
+export {
+  measurePermitEval,
+  estimatePermitMemoryBytes,
+  logPermitMemoryUsage,
+  SLOW_EVAL_THRESHOLD_MS,
+  LARGE_PERMIT_SET_THRESHOLD,
+  MEMORY_WARN_THRESHOLD_BYTES,
+} from './perf-monitor.js';
+
+export type { AutoPermitPerfMetrics } from './perf-monitor.js';

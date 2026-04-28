@@ -11,6 +11,7 @@
  */
 
 import type { AutoPermit } from '../models/auto-permit.js';
+import { measurePermitEval, logPermitMemoryUsage } from './perf-monitor.js';
 
 // ── Interface ─────────────────────────────────────────────────────────────────
 
@@ -134,7 +135,11 @@ export class FileAutoPermitChecker implements AutoPermitRuleChecker {
    */
   private readonly cache = new Map<string, RegExp | null>();
 
-  constructor(private readonly rules: readonly AutoPermit[]) {}
+  constructor(private readonly rules: readonly AutoPermit[]) {
+    // Monitor memory footprint of the permit set at construction time so
+    // operators are warned early when the store grows large.
+    logPermitMemoryUsage(rules);
+  }
 
   /** Returns the compiled regex for `pattern`, compiling on first use. */
   private compiled(pattern: string): RegExp | null {
@@ -155,12 +160,15 @@ export class FileAutoPermitChecker implements AutoPermitRuleChecker {
     if (command.length === 0) return null;
     const normalized = normalizeCommand(command);
     if (normalized.length === 0) return null;
-    for (const rule of this.rules) {
-      const regex = this.compiled(rule.pattern);
-      if (regex !== null && regex.test(normalized)) {
-        return rule;
+    const { result } = measurePermitEval(this.rules.length, () => {
+      for (const rule of this.rules) {
+        const regex = this.compiled(rule.pattern);
+        if (regex !== null && regex.test(normalized)) {
+          return rule;
+        }
       }
-    }
-    return null;
+      return null;
+    });
+    return result;
   }
 }
