@@ -180,7 +180,7 @@ export async function sendApprovalRequest(
   // Inline keyboard — Approve Once, (optional) Approve Always, Deny.
   const showApproveAlways = opts.showApproveAlways !== false;
   const row: Array<{ text: string; callback_data: string }> = [
-    { text: '\u2705 Approve Once', callback_data: `approve:${opts.token}` },
+    { text: '\u2705 Approve Once', callback_data: `approve_once:${opts.token}` },
   ];
   if (showApproveAlways) {
     row.push({ text: '\uD83D\uDD01 Approve Always', callback_data: `approve_always:${opts.token}` });
@@ -355,7 +355,7 @@ export async function sendApproveAlwaysConfirmation(
   }
 }
 
-export type TelegramCommand = 'approve' | 'approve_always' | 'deny' | 'confirm_approve_always' | 'cancel_approve_always';
+export type TelegramCommand = 'approve' | 'approve_once' | 'approve_always' | 'deny' | 'confirm_approve_always' | 'cancel_approve_always';
 
 /**
  * Identity of the Telegram operator who triggered a command via an inline
@@ -379,9 +379,9 @@ export interface TelegramOperatorInfo {
 const COMMAND_RE = /^\/(approve_always|approve|deny)\s+([\w.:-]{6,128})$/;
 
 // Same token format but triggered by inline keyboard callback_data ("command:TOKEN").
-// confirm_approve_always and cancel_approve_always must appear before approve_always
-// so the longer prefixes are tried first in the alternation.
-const CALLBACK_DATA_RE = /^(confirm_approve_always|cancel_approve_always|approve_always|approve|deny):([\w.:-]{6,128})$/;
+// confirm_approve_always and cancel_approve_always must appear before approve_always,
+// and approve_once must appear before approve so the longer prefixes are tried first.
+const CALLBACK_DATA_RE = /^(confirm_approve_always|cancel_approve_always|approve_always|approve_once|approve|deny):([\w.:-]{6,128})$/;
 
 /**
  * Long-polling listener for Telegram bot updates.

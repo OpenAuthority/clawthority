@@ -179,7 +179,7 @@ describe('sendApprovalRequest', () => {
     const row = body.reply_markup.inline_keyboard[0];
     expect(row).toHaveLength(3);
     const callbackDatas = row.map((b: { callback_data: string }) => b.callback_data);
-    expect(callbackDatas).toContain('approve:abc12345');
+    expect(callbackDatas).toContain('approve_once:abc12345');
     expect(callbackDatas).toContain('approve_always:abc12345');
     expect(callbackDatas).toContain('deny:abc12345');
   });
@@ -194,7 +194,7 @@ describe('sendApprovalRequest', () => {
     const row = body.reply_markup.inline_keyboard[0];
     expect(row).toHaveLength(2);
     const callbackDatas = row.map((b: { callback_data: string }) => b.callback_data);
-    expect(callbackDatas).toContain('approve:abc12345');
+    expect(callbackDatas).toContain('approve_once:abc12345');
     expect(callbackDatas).toContain('deny:abc12345');
     expect(callbackDatas).not.toContain('approve_always:abc12345');
   });
@@ -557,11 +557,11 @@ describe('TelegramListener', () => {
     expect(onCommand).toHaveBeenCalledWith('approve_always', uuid);
   });
 
-  it('handles callback_query approve from inline keyboard', async () => {
+  it('handles callback_query approve_once from inline keyboard', async () => {
     const updates = {
       ok: true,
       result: [
-        { update_id: 20, callback_query: { id: 'cq-1', data: 'approve:abc12345' } },
+        { update_id: 20, callback_query: { id: 'cq-1', data: 'approve_once:abc12345' } },
       ],
     };
 
@@ -573,7 +573,7 @@ describe('TelegramListener', () => {
     listener.start();
 
     await vi.waitFor(() => expect(onCommand).toHaveBeenCalled());
-    expect(onCommand).toHaveBeenCalledWith('approve', 'abc12345');
+    expect(onCommand).toHaveBeenCalledWith('approve_once', 'abc12345');
   });
 
   it('handles callback_query deny from inline keyboard', async () => {
@@ -618,7 +618,7 @@ describe('TelegramListener', () => {
     const updates = {
       ok: true,
       result: [
-        { update_id: 23, callback_query: { id: 'cq-answer-test', data: 'approve:abc12345' } },
+        { update_id: 23, callback_query: { id: 'cq-answer-test', data: 'approve_once:abc12345' } },
       ],
     };
 
@@ -681,7 +681,7 @@ describe('TelegramListener', () => {
     const updates = {
       ok: true,
       result: [
-        { update_id: 26, callback_query: { id: 'cq-uuid', data: `approve:${uuid}` } },
+        { update_id: 26, callback_query: { id: 'cq-uuid', data: `approve_once:${uuid}` } },
       ],
     };
 
@@ -693,7 +693,7 @@ describe('TelegramListener', () => {
     listener.start();
 
     await vi.waitFor(() => expect(onCommand).toHaveBeenCalled());
-    expect(onCommand).toHaveBeenCalledWith('approve', uuid);
+    expect(onCommand).toHaveBeenCalledWith('approve_once', uuid);
   });
 
   it('ignores non-command messages', async () => {
@@ -852,7 +852,7 @@ describe('TelegramListener', () => {
     const updates = {
       ok: true,
       result: [
-        { update_id: 50, callback_query: { id: 'cq-offset', data: 'approve:abc12345' } },
+        { update_id: 50, callback_query: { id: 'cq-offset', data: 'approve_once:abc12345' } },
       ],
     };
 
@@ -909,7 +909,7 @@ describe('TelegramListener', () => {
     const updates = {
       ok: true,
       result: [
-        { update_id: 61, callback_query: { id: 'cq-nofrom', data: 'approve:abc12345' } },
+        { update_id: 61, callback_query: { id: 'cq-nofrom', data: 'approve_once:abc12345' } },
       ],
     };
 
@@ -922,7 +922,7 @@ describe('TelegramListener', () => {
 
     await vi.waitFor(() => expect(onCommand).toHaveBeenCalled());
     // Called with only two arguments when from is absent.
-    expect(onCommand).toHaveBeenCalledWith('approve', 'abc12345');
+    expect(onCommand).toHaveBeenCalledWith('approve_once', 'abc12345');
   });
 
   it('handles callback_query confirm_approve_always from inline keyboard', async () => {
@@ -1135,7 +1135,7 @@ describe('TelegramListener — duplicate callback_query alert', () => {
     const updates = {
       ok: true,
       result: [
-        { update_id: 80, callback_query: { id: 'cq-dup', data: 'approve:abc12345' } },
+        { update_id: 80, callback_query: { id: 'cq-dup', data: 'approve_once:abc12345' } },
       ],
     };
 
@@ -1166,7 +1166,7 @@ describe('TelegramListener — duplicate callback_query alert', () => {
     const updates = {
       ok: true,
       result: [
-        { update_id: 81, callback_query: { id: 'cq-ok', data: 'approve:abc12345' } },
+        { update_id: 81, callback_query: { id: 'cq-ok', data: 'approve_once:abc12345' } },
       ],
     };
 
