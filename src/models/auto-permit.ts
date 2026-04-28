@@ -75,6 +75,36 @@ export const AutoPermitSchema = Type.Object({
    * @example `"deploy to staging"`, `"run linter before commit"`
    */
   intentHint: Type.Optional(Type.String()),
+
+  /**
+   * Identifies the operator or HITL channel that triggered the "Approve Always"
+   * action creating this auto-permit record.
+   *
+   * Set to the `operatorId` when available (e.g. the Telegram user ID or Slack
+   * actor), falling back to the channel identifier (e.g. `"telegram"`,
+   * `"slack"`) when no operator identity is present.
+   */
+  created_by: Type.Optional(Type.String({ minLength: 1 })),
+
+  /**
+   * ISO-8601 timestamp string at which the auto-permit record was created.
+   *
+   * Human-readable complement to the numeric {@link createdAt} unix-ms field.
+   * Both fields represent the same storage instant; prefer `createdAt` for
+   * numeric comparisons and `created_at` for display and audit output.
+   *
+   * @example `"2024-11-14T12:34:56.789Z"`
+   */
+  created_at: Type.Optional(Type.String({ minLength: 1 })),
+
+  /**
+   * The original command string from which {@link pattern} was derived.
+   *
+   * Snake_case alias for {@link originalCommand}, included for readability and
+   * consistency with the bundle.json rule field naming convention.  Both fields
+   * carry the same value; `originalCommand` is kept for backward compatibility.
+   */
+  derived_from: Type.Optional(Type.String({ minLength: 1 })),
 });
 
 export type AutoPermit = Static<typeof AutoPermitSchema>;

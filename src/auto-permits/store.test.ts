@@ -7,7 +7,7 @@
 // TC-APS-05  loadAutoPermitRulesFromFile: empty JSON array → found: true, empty rules
 // TC-APS-06  loadAutoPermitRulesFromFile: other file read errors are re-thrown
 // TC-APS-07  saveAutoPermitRules: writes JSON to .tmp then renames atomically
-// TC-APS-08  saveAutoPermitRules: persists an empty array as valid JSON
+// TC-APS-08  saveAutoPermitRules: persists an empty array as valid JSON with checksum
 // TC-APS-09  saveAutoPermitRules: written content round-trips through JSON.parse
 // TC-APS-10  watchAutoPermitStore: returns handle with stop() method
 // TC-APS-11  watchAutoPermitStore: callback fires on 'add' event (after debounce)
@@ -15,6 +15,9 @@
 // TC-APS-13  watchAutoPermitStore: rapid events collapse into a single callback
 // TC-APS-14  watchAutoPermitStore: stop() closes watcher and cancels debounce
 // TC-APS-15  watchAutoPermitStore: custom debounceMs overrides the 300 ms default
+// TC-APS-16  saveAutoPermitRules: checksum equals SHA-256(JSON.stringify(rules))
+// TC-APS-17  loadAutoPermitRulesFromFile: extracts checksum from versioned envelope
+// TC-APS-18  loadAutoPermitRulesFromFile: checksum is undefined for legacy flat-array
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
@@ -64,12 +67,14 @@ const mockReadFile = vi.fn<[string, string], Promise<string>>();
 const mockWriteFile = vi.fn<[string, string, unknown], Promise<void>>();
 const mockRename = vi.fn<[string, string], Promise<void>>();
 const mockChmod = vi.fn<[string, number], Promise<void>>();
+const mockMkdir = vi.fn<[string, unknown], Promise<void>>();
 
 vi.mock('node:fs/promises', () => ({
   readFile: (...args: Parameters<typeof mockReadFile>) => mockReadFile(...args),
   writeFile: (...args: Parameters<typeof mockWriteFile>) => mockWriteFile(...args),
   rename: (...args: Parameters<typeof mockRename>) => mockRename(...args),
   chmod: (...args: Parameters<typeof mockChmod>) => mockChmod(...args),
+  mkdir: (...args: Parameters<typeof mockMkdir>) => mockMkdir(...args),
 }));
 
 // ── Import SUT after mocks ────────────────────────────────────────────────────
@@ -168,6 +173,23 @@ describe('loadAutoPermitRulesFromFile', () => {
     expect(result.skipped).toBe(0);
   });
 
+  // TC-APS-17
+  it('extracts checksum from versioned { version, rules, checksum } envelope', async () => {
+    const rule = makeRule({ pattern: 'git push *' });
+    const digest = '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945';
+    mockReadFile.mockResolvedValue(JSON.stringify({ version: 2, rules: [rule], checksum: digest }));
+    const result = await loadAutoPermitRulesFromFile(STORE_PATH);
+    expect(result.checksum).toBe(digest);
+  });
+
+  // TC-APS-18
+  it('returns undefined checksum for legacy flat-array format', async () => {
+    const rule = makeRule({ pattern: 'git push *' });
+    mockReadFile.mockResolvedValue(JSON.stringify([rule]));
+    const result = await loadAutoPermitRulesFromFile(STORE_PATH);
+    expect(result.checksum).toBeUndefined();
+  });
+
   // TC-APS-06
   it('re-throws non-ENOENT file read errors', async () => {
     const err = Object.assign(new Error('EACCES'), { code: 'EACCES' });
@@ -187,6 +209,8 @@ describe('saveAutoPermitRules', () => {
     mockRename.mockResolvedValue(undefined);
     mockChmod.mockReset();
     mockChmod.mockResolvedValue(undefined);
+    mockMkdir.mockReset();
+    mockMkdir.mockResolvedValue(undefined);
   });
 
   // TC-APS-07
@@ -203,10 +227,13 @@ describe('saveAutoPermitRules', () => {
   });
 
   // TC-APS-08
-  it('writes versioned envelope { version, rules } as valid JSON when rules is empty', async () => {
+  it('writes versioned envelope { version, rules, checksum } as valid JSON when rules is empty', async () => {
     await saveAutoPermitRules(STORE_PATH, [], 1);
     const written = mockWriteFile.mock.calls[0]![1] as string;
-    expect(JSON.parse(written)).toEqual({ version: 1, rules: [] });
+    const parsed = JSON.parse(written) as { version: number; rules: unknown[]; checksum: string };
+    expect(parsed.version).toBe(1);
+    expect(parsed.rules).toEqual([]);
+    expect(parsed.checksum).toBe('4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945');
   });
 
   // TC-APS-09
@@ -226,6 +253,17 @@ describe('saveAutoPermitRules', () => {
     const written = mockWriteFile.mock.calls[0]![1] as string;
     const parsed = JSON.parse(written) as { version: number; rules: AutoPermit[] };
     expect(parsed.version).toBe(1);
+  });
+
+  // TC-APS-16
+  it('writes checksum equal to SHA-256(JSON.stringify(rules))', async () => {
+    const { createHash } = await import('node:crypto');
+    const rule = makeRule({ pattern: 'git commit *' });
+    await saveAutoPermitRules(STORE_PATH, [rule], 1);
+    const written = mockWriteFile.mock.calls[0]![1] as string;
+    const parsed = JSON.parse(written) as { version: number; rules: AutoPermit[]; checksum: string };
+    const expected = createHash('sha256').update(JSON.stringify(parsed.rules)).digest('hex');
+    expect(parsed.checksum).toBe(expected);
   });
 });
 

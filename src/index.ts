@@ -782,11 +782,15 @@ async function persistAutoPermitPattern(
     const existing = await loadAutoPermitRulesFromFile(storePath);
     const nextVersion = existing.version + 1;
 
+    const now = Date.now();
     const newRule: AutoPermit = {
       pattern: derived.pattern,
       method: derived.method,
-      createdAt: Date.now(),
+      createdAt: now,
       originalCommand: command,
+      created_by: operatorId ?? channel,
+      created_at: new Date(now).toISOString(),
+      derived_from: command,
     };
 
     await saveAutoPermitRules(storePath, [...existing.rules, newRule], nextVersion);

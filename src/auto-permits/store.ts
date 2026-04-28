@@ -8,10 +8,25 @@
  * @module
  */
 
-import { readFile, writeFile, rename, chmod } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { readFile, writeFile, rename, chmod, mkdir } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import chokidar from 'chokidar';
 import { isAutoPermit } from '../models/auto-permit.js';
 import type { AutoPermit } from '../models/auto-permit.js';
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/**
+ * Returns the SHA-256 hex digest of `data`.
+ *
+ * Used to compute the `checksum` field written into the auto-permit store
+ * envelope, matching the checksum convention established by `bundle.json`
+ * (`SHA-256(JSON.stringify(rules))`).
+ */
+function sha256(data: string): string {
+  return createHash('sha256').update(data).digest('hex');
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -39,6 +54,15 @@ export interface LoadResult {
    * the versioned `{ version, rules }` envelope.
    */
   version: number;
+
+  /**
+   * SHA-256 hex checksum field from the file envelope, if present.
+   *
+   * `undefined` when the file does not exist, uses the legacy flat-array
+   * format, or the envelope omits the `checksum` field.  Present only when
+   * the file uses the versioned `{ version, rules, checksum }` bundle format.
+   */
+  checksum?: string;
 }
 
 /**
@@ -93,17 +117,18 @@ export async function loadAutoPermitRulesFromFile(storePath: string): Promise<Lo
     return { rules, skipped, path: storePath, found: true, version: 0 };
   }
 
-  // Versioned format: { version: number, rules: AutoPermit[] }
+  // Versioned format: { version: number, rules: AutoPermit[], checksum?: string }
   if (
     typeof parsed === 'object' &&
     parsed !== null &&
     typeof (parsed as { version?: unknown }).version === 'number' &&
     Array.isArray((parsed as { rules?: unknown }).rules)
   ) {
-    const obj = parsed as { version: number; rules: unknown[] };
+    const obj = parsed as { version: number; rules: unknown[]; checksum?: unknown };
     const rules = obj.rules.filter(isAutoPermit);
     const skipped = obj.rules.length - rules.length;
-    return { rules, skipped, path: storePath, found: true, version: obj.version };
+    const checksum = typeof obj.checksum === 'string' ? obj.checksum : undefined;
+    return { rules, skipped, path: storePath, found: true, version: obj.version, checksum };
   }
 
   return { rules: [], skipped: 0, path: storePath, found: true, version: 0 };
@@ -132,8 +157,12 @@ export async function saveAutoPermitRules(
   rules: AutoPermit[],
   nextVersion: number = 1,
 ): Promise<void> {
+  // Ensure the parent directory exists before writing (crash-safe first write).
+  await mkdir(dirname(storePath), { recursive: true });
+
   const tmpPath = `${storePath}.tmp`;
-  const store = { version: nextVersion, rules };
+  const checksum = sha256(JSON.stringify(rules));
+  const store = { version: nextVersion, rules, checksum };
   const content = JSON.stringify(store, null, 2) + '\n';
   await writeFile(tmpPath, content, { mode: 0o644 });
   await rename(tmpPath, storePath);
