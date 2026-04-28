@@ -747,23 +747,48 @@ async function loadAutoPermitRules(): Promise<void> {
  * session-scoped auto-approval is registered.  Failures are swallowed and
  * logged so that the broader approval flow is never interrupted.
  *
- * @param command    The command string to derive a pattern from (e.g. tool target).
- * @param channel    Log prefix / audit channel tag (e.g. `'telegram'`, `'slack'`).
- * @param operatorId Identity of the operator who clicked "Approve Always", when
- *                   available.  For Telegram button clicks this is the numeric user
- *                   ID, optionally followed by `@username`.  Absent for text-command
- *                   approvals and Slack (not exposed in the interaction payload).
- * @param agentId    Agent ID that triggered the original HITL approval request.
+ * Derivation strategy:
+ *   - Exec-type tools (`shell.exec`, `code.execute`): the `command` param IS
+ *     the shell command (e.g. `"git commit -m 'msg'"`).  The pattern is
+ *     derived from the command string: binary + first-positional + `*`.
+ *   - Registered non-exec tools (all others): the `command` param is a
+ *     resource (file path, URL, etc.) which is not meaningful as a pattern
+ *     anchor.  The pattern is derived from `toolName` instead, yielding a
+ *     `toolName *` wildcard that covers all invocations of that tool.
+ *
+ * @param command     The raw target string from the pending approval (resource
+ *                    for most tools; the shell command for exec tools).
+ * @param toolName    The original tool name (e.g. `'bash'`, `'read_file'`).
+ * @param actionClass The normalized action class (e.g. `'shell.exec'`,
+ *                    `'filesystem.read'`) — used to select the derivation path.
+ * @param channel     Log prefix / audit channel tag (e.g. `'telegram'`).
+ * @param operatorId  Identity of the operator who clicked "Approve Always".
+ * @param agentId     Agent ID that triggered the original HITL approval request.
  */
 async function persistAutoPermitPattern(
   command: string,
+  toolName: string,
+  actionClass: string,
   channel: string,
   operatorId?: string,
   agentId?: string,
 ): Promise<void> {
+  // Determine derivation strategy based on action class.
+  const EXEC_ACTION_CLASSES: ReadonlySet<string> = new Set([
+    'shell.exec',
+    'code.execute',
+  ]);
+  const isExec = EXEC_ACTION_CLASSES.has(actionClass);
+
   let derived: ReturnType<typeof derivePattern>;
   try {
-    derived = derivePattern({ command });
+    if (isExec) {
+      // Exec path: tokenise the shell command string.
+      derived = derivePattern({ command });
+    } else {
+      // Registered-tool path: generate a tool-name wildcard pattern.
+      derived = derivePattern({ command: toolName, toolName });
+    }
   } catch (err) {
     // Shell metacharacters, empty command, or other derivation failures are
     // expected for compound commands — log and return quietly.
@@ -1821,8 +1846,8 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
                     `[hitl-telegram] session auto-approval registered: channel=${pending.channelId} action_class=${pending.action_class}` +
                     (operatorId !== undefined ? ` operator=${operatorId}` : ''),
                   );
-                  if (pending.target.length > 0) {
-                    void persistAutoPermitPattern(pending.target, 'telegram', operatorId, conf.agentId);
+                  if (pending.target.length > 0 || !['shell.exec', 'code.execute'].includes(pending.action_class)) {
+                    void persistAutoPermitPattern(pending.target, pending.toolName, pending.action_class, 'telegram', operatorId, conf.agentId);
                   }
                 }
               } else {
@@ -1861,9 +1886,15 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
                 // Try to derive a pattern for the confirmation message, unless
                 // auto-confirm is enabled (CLAWTHORITY_APPROVE_ALWAYS_AUTO_CONFIRM=1).
                 let derived: ReturnType<typeof derivePattern> | undefined;
-                if (pending.target.length > 0 && !FEATURES.approveAlwaysAutoConfirm) {
+                const isExecAction = ['shell.exec', 'code.execute'].includes(pending.action_class);
+                const hasDerivableInput = isExecAction ? pending.target.length > 0 : pending.toolName.length > 0;
+                if (hasDerivableInput && !FEATURES.approveAlwaysAutoConfirm) {
                   try {
-                    derived = derivePattern({ command: pending.target });
+                    if (isExecAction) {
+                      derived = derivePattern({ command: pending.target });
+                    } else {
+                      derived = derivePattern({ command: pending.toolName, toolName: pending.toolName });
+                    }
                   } catch {
                     // Shell metacharacters or empty command — skip confirmation.
                   }
@@ -1901,8 +1932,8 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
                   `[hitl-telegram] session auto-approval registered: channel=${pending.channelId} action_class=${pending.action_class}` +
                   (operatorId !== undefined ? ` operator=${operatorId}` : ''),
                 );
-                if (pending.target.length > 0) {
-                  void persistAutoPermitPattern(pending.target, 'telegram', operatorId, pending.agentId);
+                if (pending.target.length > 0 || !['shell.exec', 'code.execute'].includes(pending.action_class)) {
+                  void persistAutoPermitPattern(pending.target, pending.toolName, pending.action_class, 'telegram', operatorId, pending.agentId);
                 }
               }
             }
@@ -1947,8 +1978,8 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
                 // requiring HITL at all. Failures are logged, not thrown.
                 // Slack interaction payloads do not expose a structured operator
                 // identity at this level; operatorId is omitted.
-                if (pending.target.length > 0) {
-                  void persistAutoPermitPattern(pending.target, 'slack', undefined, pending.agentId);
+                if (pending.target.length > 0 || !['shell.exec', 'code.execute'].includes(pending.action_class)) {
+                  void persistAutoPermitPattern(pending.target, pending.toolName, pending.action_class, 'slack', undefined, pending.agentId);
                 }
               }
             }

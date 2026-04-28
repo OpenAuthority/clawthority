@@ -39,6 +39,22 @@ export const DerivePatternOptsSchema = Type.Object({
    * Derivation strategy.  Defaults to `'default'` when omitted.
    */
   method: Type.Optional(DerivationMethodSchema),
+  /**
+   * Registered tool name to derive a tool-name pattern from.
+   *
+   * When provided, the derivation bypasses shell-command tokenisation and
+   * generates a `toolName *` wildcard pattern that covers all future
+   * invocations of the tool regardless of its arguments.  This is the
+   * correct strategy for registered (non-exec) tools whose `target` is
+   * a resource (file path, URL, etc.) rather than a shell command.
+   *
+   * The tool name is validated as a single token: no spaces, no wildcard
+   * characters, and no shell metacharacters.
+   *
+   * When both `toolName` and `command` are supplied, `toolName` takes
+   * precedence and the tool-name derivation path is used.
+   */
+  toolName: Type.Optional(Type.String({ minLength: 1 })),
 });
 
 export type DerivePatternOpts = Static<typeof DerivePatternOptsSchema>;
@@ -257,6 +273,53 @@ function tokenize(command: string): string[] {
  *   tokenisation or when the derived pattern fails validation.
  */
 export function derivePattern(opts: DerivePatternOpts): DerivedPattern {
+  // ── Registered-tool derivation path ─────────────────────────────────────────
+  // When a tool name is provided the caller is asking for a "tool-name pattern"
+  // that covers every future invocation of the tool regardless of its
+  // arguments.  The tool name is treated as the binary; shell tokenisation is
+  // skipped entirely.
+  if (opts.toolName !== undefined) {
+    const toolName = opts.toolName.trim();
+
+    if (toolName.length === 0) {
+      throw new PatternDerivationError('Tool name must not be empty');
+    }
+
+    // A tool name must be a single valid token: no spaces, no wildcards,
+    // no shell metacharacters.
+    if (!VALID_TOKEN_RE.test(toolName)) {
+      throw new PatternDerivationError(
+        'Tool name must be a single token without spaces or wildcard characters',
+      );
+    }
+
+    if (SHELL_METACHAR_RE.test(toolName)) {
+      throw new PatternDerivationError(
+        'Tool name contains shell metacharacters — pattern derivation refused',
+      );
+    }
+
+    // Always append a wildcard so the pattern covers any argument list.
+    const pattern = `${toolName} *`;
+
+    const validation = validatePattern(pattern);
+    if (!validation.valid) {
+      throw new PatternDerivationError(
+        `Derived tool-name pattern failed validation: ${validation.errors.join('; ')}`,
+      );
+    }
+
+    return {
+      pattern,
+      method: 'default',
+      binary: toolName,
+      originalCommand: opts.command,
+      tokenCount: 1,
+      derivedAt: Date.now(),
+    };
+  }
+
+  // ── Exec-command derivation path ─────────────────────────────────────────────
   const method = opts.method ?? 'default';
   const command = opts.command.trim();
 

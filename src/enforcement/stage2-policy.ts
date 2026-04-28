@@ -222,15 +222,34 @@ export function createCombinedStage2(
       // the callsite can log it and record coverage map usage.
       // Failed pattern compilations are silently skipped — the rule is ignored
       // and the command falls through to HITL gating (fail-safe behaviour).
+      //
+      // Command string selection:
+      //   - Exec-type tools (shell.exec, code.execute): ctx.target IS the
+      //     shell command string (extracted from the `command`/`cmd`/`script`
+      //     param by normalize_action).  Match directly against it so that
+      //     patterns like `git commit *` match incoming shell commands.
+      //   - Registered non-exec tools: target is a resource (file path, URL,
+      //     etc.), not a shell command.  Match against the tool name so that
+      //     tool-name patterns (`read_file *`) match any invocation of that
+      //     tool regardless of which resource it targets.
       if (autoPermitRules !== undefined) {
-        const matched = autoPermitRules.matchCommand(ctx.target);
-        if (matched !== null) {
-          return {
-            effect: 'permit',
-            reason: 'auto_permit_rule',
-            stage: 'auto-permit',
-            rule: matched.pattern,
-          };
+        const EXEC_ACTION_CLASSES: ReadonlySet<string> = new Set([
+          'shell.exec',
+          'code.execute',
+        ]);
+        const cmdToMatch = EXEC_ACTION_CLASSES.has(ctx.action_class)
+          ? ctx.target
+          : toolName;
+        if (cmdToMatch.length > 0) {
+          const matched = autoPermitRules.matchCommand(cmdToMatch);
+          if (matched !== null) {
+            return {
+              effect: 'permit',
+              reason: 'auto_permit_rule',
+              stage: 'auto-permit',
+              rule: matched.pattern,
+            };
+          }
         }
       }
 

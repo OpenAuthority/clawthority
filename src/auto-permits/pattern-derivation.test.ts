@@ -30,6 +30,16 @@
 // TC-PDE-28  shell metachar $  in command → PatternDerivationError
 // TC-PDE-29  validatePattern: pattern length > 200 → invalid
 // TC-PDE-30  validatePattern: pattern exactly 200 chars → valid
+// TC-PDE-31  toolName: simple tool name → `{toolName} *`
+// TC-PDE-32  toolName: tool name with underscores → `{toolName} *`
+// TC-PDE-33  toolName: metadata fields binary, tokenCount, method are correct
+// TC-PDE-34  toolName: takes precedence over command field
+// TC-PDE-35  toolName: shell metachar in name → PatternDerivationError
+// TC-PDE-36  toolName: empty string → PatternDerivationError
+// TC-PDE-37  toolName: name with space (two tokens) → PatternDerivationError
+// TC-PDE-38  toolName: wildcard character → PatternDerivationError
+// TC-PDE-39  toolName: derived pattern passes validatePattern
+// TC-PDE-40  toolName: derivation is deterministic (same input → same pattern)
 
 import { describe, it, expect } from 'vitest';
 import {
@@ -280,5 +290,76 @@ describe('validatePattern — maximum length', () => {
     expect(atLimit.length).toBe(MAX_PATTERN_LENGTH);
     const result = validatePattern(atLimit);
     expect(result.valid).toBe(true);
+  });
+});
+
+// ─── Registered-tool derivation (toolName parameter) ─────────────────────────
+
+describe('derivePattern — registered tool (toolName)', () => {
+  // TC-PDE-31
+  it('produces toolName + * for a simple tool name', () => {
+    const result = derivePattern({ command: 'read_file', toolName: 'read_file' });
+    expect(result.pattern).toBe('read_file *');
+  });
+
+  // TC-PDE-32
+  it('produces toolName + * for a tool name with underscores', () => {
+    const result = derivePattern({ command: 'send_email', toolName: 'send_email' });
+    expect(result.pattern).toBe('send_email *');
+  });
+
+  // TC-PDE-33
+  it('populates binary, tokenCount, and method correctly', () => {
+    const result = derivePattern({ command: 'delete_file', toolName: 'delete_file' });
+    expect(result.binary).toBe('delete_file');
+    expect(result.tokenCount).toBe(1);
+    expect(result.method).toBe('default');
+    expect(result.firstPositional).toBeUndefined();
+  });
+
+  // TC-PDE-34
+  it('toolName takes precedence over command field', () => {
+    // Even though command is a complex shell command, toolName drives the pattern.
+    const result = derivePattern({ command: 'git commit -m "msg"', toolName: 'read_file' });
+    expect(result.pattern).toBe('read_file *');
+    expect(result.binary).toBe('read_file');
+  });
+
+  // TC-PDE-35
+  it('throws PatternDerivationError when toolName contains a shell metacharacter', () => {
+    expect(() => derivePattern({ command: 'x', toolName: 'read|file' })).toThrow(PatternDerivationError);
+    expect(() => derivePattern({ command: 'x', toolName: 'read;file' })).toThrow(PatternDerivationError);
+    expect(() => derivePattern({ command: 'x', toolName: 'read$file' })).toThrow(PatternDerivationError);
+  });
+
+  // TC-PDE-36
+  it('throws PatternDerivationError for an empty toolName', () => {
+    expect(() => derivePattern({ command: 'x', toolName: '   ' })).toThrow(PatternDerivationError);
+  });
+
+  // TC-PDE-37
+  it('throws PatternDerivationError when toolName contains a space (multi-token)', () => {
+    expect(() => derivePattern({ command: 'x', toolName: 'read file' })).toThrow(PatternDerivationError);
+  });
+
+  // TC-PDE-38
+  it('throws PatternDerivationError when toolName contains a wildcard character', () => {
+    expect(() => derivePattern({ command: 'x', toolName: 'read*file' })).toThrow(PatternDerivationError);
+  });
+
+  // TC-PDE-39
+  it('derived tool-name pattern passes validatePattern', () => {
+    const result = derivePattern({ command: 'write_file', toolName: 'write_file' });
+    expect(validatePattern(result.pattern).valid).toBe(true);
+  });
+
+  // TC-PDE-40
+  it('derivation is deterministic — same toolName always produces the same pattern', () => {
+    const a = derivePattern({ command: 'git_commit', toolName: 'git_commit' });
+    const b = derivePattern({ command: 'git_commit', toolName: 'git_commit' });
+    expect(a.pattern).toBe(b.pattern);
+    expect(a.binary).toBe(b.binary);
+    expect(a.tokenCount).toBe(b.tokenCount);
+    expect(a.method).toBe(b.method);
   });
 });

@@ -667,11 +667,21 @@ describe('createCombinedStage2 — file-based auto-permit rules', () => {
     expect(ruleChecker.matchCommand).not.toHaveBeenCalled();
   });
 
-  // TC-CS2-APR-08
-  it('TC-CS2-APR-08: ctx.target is forwarded to matchCommand', async () => {
+  // TC-CS2-APR-08: registered (non-exec) tools forward toolName to matchCommand
+  it('TC-CS2-APR-08: toolName is forwarded to matchCommand for registered non-exec tools', async () => {
     const checker = makeRuleChecker(null);
+    // Default makeCtx uses action_class 'filesystem.read' — a registered non-exec tool.
+    const stage2 = createCombinedStage2(makePermitEngine(), null, 'read_file', undefined, checker);
+    await stage2(makeCtx({ target: '/some/file.txt' }));
+    expect(checker.matchCommand).toHaveBeenCalledWith('read_file');
+  });
+
+  // TC-CS2-APR-08b: exec tools forward ctx.target (the command string) to matchCommand
+  it('TC-CS2-APR-08b: ctx.target is forwarded to matchCommand for exec tools', async () => {
+    const checker = makeRuleChecker(null);
+    // shell.exec action class → exec path → match against the command in ctx.target
     const stage2 = createCombinedStage2(makePermitEngine(), null, 'bash', undefined, checker);
-    await stage2(makeCtx({ target: 'git status' }));
+    await stage2(makeCtx({ action_class: 'shell.exec', target: 'git status' }));
     expect(checker.matchCommand).toHaveBeenCalledWith('git status');
   });
 
