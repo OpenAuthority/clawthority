@@ -224,6 +224,12 @@ function resolveIdentity(agentId: string | undefined, channelId: string | undefi
 export interface HookContext {
   agentId?: string;
   channelId?: string;
+  /**
+   * Arbitrary metadata provided by the caller. When present,
+   * `intent_hint` (string) carries the agent's stated rationale for the
+   * tool call and is forwarded to HITL approval messages.
+   */
+  metadata?: Record<string, unknown>;
 }
 
 // ── before_tool_call ──
@@ -1032,6 +1038,7 @@ async function dispatchHitlChannel(
   identity: ResolvedIdentity,
   target: string,
   action_class: string,
+  intentHint?: string,
 ): Promise<BeforeToolCallResult | void> {
   const channel = policy.approval.channel;
   const auditAgent = identity.auditAgentId;
@@ -1051,6 +1058,7 @@ async function dispatchHitlChannel(
     ...(explanation !== undefined ? { explanation } : {}),
     ...(effects.length > 0 ? { effects } : {}),
     ...(warnings.length > 0 ? { warnings } : {}),
+    ...(intentHint !== undefined ? { intentHint } : {}),
   };
   void inferred_action_class; // available for future use
 
@@ -1371,6 +1379,17 @@ const beforeToolCallHandler: BeforeToolCallHandler = async ({ toolName, params, 
     identity.channel,
   );
 
+  // ── Extract intent_hint from caller metadata ──────────────────────────────
+  // Agents may supply ctx.metadata.intent_hint to explain why they are
+  // invoking the tool. Sanitised to printable ASCII/whitespace and capped at
+  // 500 chars before being forwarded to HITL approval messages.
+  const rawIntentHint = typeof ctx.metadata?.['intent_hint'] === 'string'
+    ? ctx.metadata['intent_hint']
+    : undefined;
+  const intentHint: string | undefined = rawIntentHint !== undefined
+    ? (rawIntentHint.replace(/[^\x20-\x7E\t\n]/g, '').trim().slice(0, 500) || undefined)
+    : undefined;
+
   const normalizedParams = (params !== null && typeof params === 'object' && !Array.isArray(params))
     ? (params as Record<string, unknown>)
     : {};
@@ -1559,7 +1578,7 @@ const beforeToolCallHandler: BeforeToolCallHandler = async ({ toolName, params, 
             console.log(`[clawthority] │ [hitl] ✓ session auto-approved (${normalizedAction.action_class}) — skipping HITL dispatch`);
           } else {
             console.log(`[clawthority] │ [hitl] releasing ${pipelineDecision.stage ?? 'unknown'} HITL-gated forbid via policy "${policy.name}" (${policy.approval.channel})`);
-            const hitlChannelResult = await dispatchHitlChannel(policy, toolName, identity, normalizedAction.target, normalizedAction.action_class);
+            const hitlChannelResult = await dispatchHitlChannel(policy, toolName, identity, normalizedAction.target, normalizedAction.action_class, intentHint);
             if (hitlChannelResult) return hitlChannelResult;
           }
           // Approved (or auto-approved): fall through to the pre-existing HITL check and then ALLOWED.
@@ -1618,7 +1637,7 @@ const beforeToolCallHandler: BeforeToolCallHandler = async ({ toolName, params, 
         console.log(`[clawthority] │ [hitl] ✓ session auto-approved (${normalizedAction.action_class}) — skipping HITL dispatch`);
       } else {
         console.log(`[clawthority] │ [hitl] matched policy "${policy.name}" — requesting approval via ${policy.approval.channel}`);
-        const hitlChannelResult = await dispatchHitlChannel(policy, toolName, identity, normalizedAction.target, normalizedAction.action_class);
+        const hitlChannelResult = await dispatchHitlChannel(policy, toolName, identity, normalizedAction.target, normalizedAction.action_class, intentHint);
         if (hitlChannelResult) return hitlChannelResult;
       }
     } else if (hitlConfig !== null) {

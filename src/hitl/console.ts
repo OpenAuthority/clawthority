@@ -141,6 +141,11 @@ export async function sendConsoleApprovalRequest(
     }
   }
 
+  if (opts.intentHint) {
+    const truncated = opts.intentHint.length > 200 ? opts.intentHint.slice(0, 199) + '\u2026' : opts.intentHint;
+    lines.push('', `\uD83E\uDD14 ${bold('Why this is happening:')} ${truncated}`);
+  }
+
   if (opts.rawCommand) {
     const truncated = opts.rawCommand.length > 200 ? opts.rawCommand.slice(0, 199) + '\u2026' : opts.rawCommand;
     lines.push('', dim(`\uD83D\uDDB5 Command: ${truncated}`));

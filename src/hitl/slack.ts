@@ -69,6 +69,11 @@ export interface SlackSendApprovalOpts {
    * Truncated to 200 characters with an ellipsis.
    */
   rawCommand?: string;
+  /**
+   * Agent-provided rationale for why this action is being taken.
+   * Rendered as a 'Why this is happening' section, truncated at 200 characters.
+   */
+  intentHint?: string;
 }
 
 export interface SlackSendApprovalResult {
@@ -182,6 +187,15 @@ export async function sendSlackApprovalRequest(
     blocks.push({
       type: 'section',
       text: { type: 'mrkdwn', text: `*Warnings:*\n${warningLines}` },
+    });
+  }
+
+  // Optional intent hint — agent-provided rationale, truncated at 200 chars.
+  if (opts.intentHint) {
+    const hint = opts.intentHint.length > 200 ? opts.intentHint.slice(0, 199) + '\u2026' : opts.intentHint;
+    blocks.push({
+      type: 'section',
+      text: { type: 'mrkdwn', text: `:thinking_face: *Why this is happening:*\n${hint}` },
     });
   }
 

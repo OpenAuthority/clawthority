@@ -88,6 +88,11 @@ export interface SendApprovalOpts {
    * Truncated to 200 characters with an ellipsis.
    */
   rawCommand?: string;
+  /**
+   * Agent-provided rationale for why this action is being taken.
+   * Rendered as a 'Why this is happening' section, truncated at 200 characters.
+   */
+  intentHint?: string;
 }
 
 export interface SendApprovalResult {
@@ -171,6 +176,12 @@ export async function sendApprovalRequest(
     for (const warning of opts.warnings) {
       lines.push(`\u2022 ${escapeMarkdownV2(warning)}`);
     }
+  }
+
+  // Intent hint — agent-provided rationale, truncated to 200 chars
+  if (opts.intentHint) {
+    const truncated = opts.intentHint.length > 200 ? opts.intentHint.slice(0, 199) + '\u2026' : opts.intentHint;
+    lines.push(``, `\uD83E\uDD14 *Why this is happening:*`, escapeMarkdownV2(truncated));
   }
 
   // Raw command — pre-formatted code block, truncated to 200 chars
