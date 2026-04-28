@@ -1082,6 +1082,299 @@ function batchExplain(_args: string[]): ExplainResult {
   };
 }
 
+// ── Distro / system package managers ───────────────────────────────────────────
+
+/** apt / apt-get subcommand dispatch. */
+function aptExplain(args: string[]): ExplainResult {
+  const sub = args[0];
+  const pos = positionalArgs(args.slice(1));
+  const pkgs = pos.length > 0 ? pos.join(' ') : '';
+  const isAssumeYes = args.includes('-y') || args.includes('--yes') || args.includes('--assume-yes');
+
+  switch (sub) {
+    case 'install':
+      return {
+        summary: pkgs.length > 0 ? `Installs apt packages: ${pkgs}` : 'Installs apt packages',
+        effects: ['Downloads and installs system packages from configured repositories'],
+        warnings: ['New code from a remote repository will run with the privileges of the installer'],
+      };
+    case 'remove':
+    case 'purge':
+      return {
+        summary: pkgs.length > 0
+          ? `${sub === 'purge' ? 'Purges' : 'Removes'} apt packages: ${pkgs}`
+          : `${sub === 'purge' ? 'Purges' : 'Removes'} apt packages`,
+        effects: [
+          sub === 'purge'
+            ? 'Removes packages and their configuration files'
+            : 'Removes installed packages (configuration files retained)',
+        ],
+        warnings: ['Service interruption possible if a removed package provides a running daemon'],
+      };
+    case 'update':
+      return {
+        summary: 'Refreshes the apt package index',
+        effects: ['Downloads metadata from configured repositories — does not install anything'],
+        warnings: [],
+      };
+    case 'upgrade':
+    case 'dist-upgrade':
+    case 'full-upgrade':
+      return {
+        summary: sub === 'upgrade' ? 'Upgrades all upgradable packages' : `Upgrades all packages (${sub})`,
+        effects: ['Downloads and installs newer package versions across the system'],
+        warnings: [
+          'Bulk operation — affects every upgradable package',
+          ...(isAssumeYes ? ['-y / --yes accepts every prompt non-interactively'] : []),
+        ],
+      };
+    case 'autoremove':
+      return {
+        summary: 'Removes packages no longer required',
+        effects: ['Removes orphaned dependencies'],
+        warnings: ['Bulk operation — packages no longer flagged as required will be uninstalled'],
+      };
+    default:
+      return {
+        summary: sub !== undefined ? `Runs apt ${sub}` : 'Runs apt',
+        effects: [],
+        warnings: [],
+      };
+  }
+}
+
+/** Shared yum / dnf dispatch — same subcommand surface. */
+function yumDnfExplain(binary: 'yum' | 'dnf', args: string[]): ExplainResult {
+  const sub = args[0];
+  const pos = positionalArgs(args.slice(1));
+  const pkgs = pos.length > 0 ? pos.join(' ') : '';
+  const isAssumeYes = args.includes('-y') || args.includes('--assumeyes');
+
+  switch (sub) {
+    case 'install':
+      return {
+        summary: pkgs.length > 0 ? `Installs ${binary} packages: ${pkgs}` : `Installs ${binary} packages`,
+        effects: ['Downloads and installs RPM packages from configured repositories'],
+        warnings: ['New code from a remote repository will run with the privileges of the installer'],
+      };
+    case 'remove':
+    case 'erase':
+      return {
+        summary: pkgs.length > 0 ? `Removes ${binary} packages: ${pkgs}` : `Removes ${binary} packages`,
+        effects: ['Removes installed packages'],
+        warnings: ['Service interruption possible if a removed package provides a running daemon'],
+      };
+    case 'update':
+    case 'upgrade':
+      return {
+        summary: pkgs.length > 0
+          ? `Updates ${binary} packages: ${pkgs}`
+          : `Updates all installed ${binary} packages`,
+        effects: ['Downloads and installs newer package versions'],
+        warnings: [
+          ...(pkgs.length === 0 ? ['Bulk operation — affects every upgradable package'] : []),
+          ...(isAssumeYes ? ['-y / --assumeyes accepts every prompt non-interactively'] : []),
+        ],
+      };
+    case 'check-update':
+      return {
+        summary: `Checks ${binary} for available updates`,
+        effects: ['Reads repository metadata — does not install anything'],
+        warnings: [],
+      };
+    default:
+      return {
+        summary: sub !== undefined ? `Runs ${binary} ${sub}` : `Runs ${binary}`,
+        effects: [],
+        warnings: [],
+      };
+  }
+}
+
+/** dpkg flag-driven dispatch (Debian low-level package operations). */
+function dpkgExplain(args: string[]): ExplainResult {
+  const positional = positionalArgs(args);
+  const pkgs = positional.join(' ');
+  if (args.includes('-i') || args.includes('--install')) {
+    return {
+      summary: pkgs.length > 0 ? `Installs .deb files: ${pkgs}` : 'Installs .deb files',
+      effects: ['Installs a Debian package directly from a .deb file'],
+      warnings: [
+        'Bypasses the apt repository — package signature and dependency resolution are weaker than `apt install`',
+      ],
+    };
+  }
+  if (args.includes('-r') || args.includes('--remove')) {
+    return {
+      summary: pkgs.length > 0 ? `Removes packages: ${pkgs}` : 'Removes packages',
+      effects: ['Removes installed packages (configuration files retained)'],
+      warnings: ['Service interruption possible if a removed package provides a running daemon'],
+    };
+  }
+  if (args.includes('-P') || args.includes('--purge')) {
+    return {
+      summary: pkgs.length > 0 ? `Purges packages: ${pkgs}` : 'Purges packages',
+      effects: ['Removes packages and their configuration files'],
+      warnings: ['Service interruption possible if a removed package provides a running daemon'],
+    };
+  }
+  if (args.includes('-l') || args.includes('--list') || args.includes('-L')) {
+    return {
+      summary: 'Lists installed Debian packages',
+      effects: ['Reads the dpkg status database'],
+      warnings: [],
+    };
+  }
+  return {
+    summary: 'Runs dpkg',
+    effects: [],
+    warnings: [],
+  };
+}
+
+/** snap subcommand dispatch. */
+function snapExplain(args: string[]): ExplainResult {
+  const sub = args[0];
+  const pos = positionalArgs(args.slice(1));
+  const pkgs = pos.length > 0 ? pos.join(' ') : '';
+
+  switch (sub) {
+    case 'install':
+      return {
+        summary: pkgs.length > 0 ? `Installs snaps: ${pkgs}` : 'Installs snaps',
+        effects: ['Downloads and installs snap packages from the Snap Store'],
+        warnings: ['Snaps can request system-wide interfaces — review the package’s declared plugs'],
+      };
+    case 'remove':
+      return {
+        summary: pkgs.length > 0 ? `Removes snaps: ${pkgs}` : 'Removes snaps',
+        effects: ['Removes installed snap packages'],
+        warnings: [],
+      };
+    case 'refresh':
+      return {
+        summary: pkgs.length > 0 ? `Refreshes snaps: ${pkgs}` : 'Refreshes all installed snaps',
+        effects: ['Downloads and installs newer snap revisions'],
+        warnings: pkgs.length === 0 ? ['Bulk operation — affects every installed snap'] : [],
+      };
+    case 'list':
+      return {
+        summary: 'Lists installed snaps',
+        effects: ['Reads the snap registry'],
+        warnings: [],
+      };
+    default:
+      return {
+        summary: sub !== undefined ? `Runs snap ${sub}` : 'Runs snap',
+        effects: [],
+        warnings: [],
+      };
+  }
+}
+
+/** Homebrew subcommand dispatch. */
+function brewExplain(args: string[]): ExplainResult {
+  const sub = args[0];
+  const pos = positionalArgs(args.slice(1));
+  const pkgs = pos.length > 0 ? pos.join(' ') : '';
+
+  switch (sub) {
+    case 'install':
+      return {
+        summary: pkgs.length > 0 ? `Installs brew packages: ${pkgs}` : 'Installs brew packages',
+        effects: ['Downloads and installs Homebrew formulae'],
+        warnings: ['New code from a remote tap will run with the privileges of the installer'],
+      };
+    case 'uninstall':
+    case 'remove':
+    case 'rm':
+      return {
+        summary: pkgs.length > 0 ? `Uninstalls brew packages: ${pkgs}` : 'Uninstalls brew packages',
+        effects: ['Removes installed Homebrew formulae'],
+        warnings: [],
+      };
+    case 'upgrade':
+      return {
+        summary: pkgs.length > 0 ? `Upgrades brew packages: ${pkgs}` : 'Upgrades all brew packages',
+        effects: ['Downloads and installs newer formula versions'],
+        warnings: pkgs.length === 0 ? ['Bulk operation — affects every installed formula'] : [],
+      };
+    case 'update':
+      return {
+        summary: 'Refreshes the Homebrew formula index',
+        effects: ['Pulls the latest formula definitions from upstream'],
+        warnings: [],
+      };
+    case 'list':
+    case 'ls':
+      return {
+        summary: 'Lists installed Homebrew formulae',
+        effects: ['Reads the local Homebrew registry'],
+        warnings: [],
+      };
+    case 'cleanup':
+      return {
+        summary: 'Removes old / unused Homebrew downloads',
+        effects: ['Frees disk space by removing old formula versions and caches'],
+        warnings: [],
+      };
+    default:
+      return {
+        summary: sub !== undefined ? `Runs brew ${sub}` : 'Runs brew',
+        effects: [],
+        warnings: [],
+      };
+  }
+}
+
+/** pacman flag-driven dispatch (Arch). */
+function pacmanExplain(args: string[]): ExplainResult {
+  const flags = args.find(a => /^-[A-Z]/.test(a)) ?? '';
+  const positional = positionalArgs(args);
+  const pkgs = positional.join(' ');
+  // pacman -S install, -R remove, -Syu upgrade, -Q query, -U install local file
+  if (/^-S/.test(flags) && /y.*u|u.*y/i.test(flags)) {
+    return {
+      summary: 'Synchronises and upgrades all packages',
+      effects: ['Refreshes the package database and upgrades every package'],
+      warnings: ['Bulk operation — affects every installed package'],
+    };
+  }
+  if (/^-S/.test(flags)) {
+    return {
+      summary: pkgs.length > 0 ? `Installs pacman packages: ${pkgs}` : 'Installs pacman packages',
+      effects: ['Downloads and installs packages from configured repositories'],
+      warnings: ['New code from a remote repository will run with the privileges of the installer'],
+    };
+  }
+  if (/^-R/.test(flags)) {
+    return {
+      summary: pkgs.length > 0 ? `Removes pacman packages: ${pkgs}` : 'Removes pacman packages',
+      effects: ['Removes installed packages'],
+      warnings: ['Service interruption possible if a removed package provides a running daemon'],
+    };
+  }
+  if (/^-Q/.test(flags)) {
+    return {
+      summary: 'Queries the local pacman database',
+      effects: ['Reads installed-package metadata'],
+      warnings: [],
+    };
+  }
+  if (/^-U/.test(flags)) {
+    return {
+      summary: pkgs.length > 0 ? `Installs local .pkg files: ${pkgs}` : 'Installs local .pkg files',
+      effects: ['Installs a package directly from a local archive'],
+      warnings: ['Bypasses repository signature checks — package authenticity is weaker'],
+    };
+  }
+  return {
+    summary: 'Runs pacman',
+    effects: [],
+    warnings: [],
+  };
+}
+
 function mkdirExplain(args: string[]): ExplainResult {
   const pos = positionalArgs(args);
   const path = pos[0] ?? '<directory>';
@@ -1531,6 +1824,14 @@ const rules: CommandRule[] = [
   { match: /^atrm\b/,              explain: atrmExplain },
   { match: /^at\b/,               explain: atExplain },
   { match: /^batch\b/,            explain: batchExplain },
+  // Distro / system package managers
+  { match: /^apt(-get)?\b/,       explain: aptExplain },
+  { match: /^yum\b/,              explain: (args) => yumDnfExplain('yum', args) },
+  { match: /^dnf\b/,              explain: (args) => yumDnfExplain('dnf', args) },
+  { match: /^dpkg\b/,             explain: dpkgExplain },
+  { match: /^snap\b/,             explain: snapExplain },
+  { match: /^brew\b/,             explain: brewExplain },
+  { match: /^pacman\b/,           explain: pacmanExplain },
 ];
 
 // ── Public API ─────────────────────────────────────────────────────────────────

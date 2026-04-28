@@ -28,6 +28,8 @@
  *   TC-CE-182 – TC-CE-194: network-transfer patterns
  *                          (rsync remote-flagging, scp remote-flagging,
  *                          sftp interactive vs batch)
+ *   TC-CE-195 – TC-CE-215: distro / system package-manager patterns
+ *                          (apt, yum, dnf, dpkg, snap, brew, pacman)
  */
 
 import { describe, it, expect } from 'vitest';
@@ -2361,5 +2363,282 @@ describe('TC-CE-194: rule routing — sftp vs ssh vs scp', () => {
   it('"ssh host" routes to sshExplain (not sftp/scp)', () => {
     const result = explain('ssh alice@host');
     expect(result.summary).toMatch(/secure shell/i);
+  });
+});
+
+// ── TC-CE-195 – TC-CE-215 : distro / system package managers ─────────────────
+
+describe('TC-CE-195: apt install — names packages and warns about remote-code execution', () => {
+  it('reports the packages in the summary', () => {
+    const result = explain('apt install nginx postgresql');
+    expect(result.summary).toContain('nginx');
+    expect(result.summary).toContain('postgresql');
+  });
+
+  it('warns about remote-code execution', () => {
+    const result = explain('apt install nginx');
+    expect(hasWarningMatching(result.warnings, /remote repository|privileges of the installer/i)).toBe(true);
+  });
+});
+
+describe('TC-CE-196: apt remove / purge — service-interruption warning', () => {
+  it('summarises remove', () => {
+    const result = explain('apt remove nginx');
+    expect(result.summary).toMatch(/Removes/i);
+  });
+
+  it('purge keeps configuration-removal effect', () => {
+    const result = explain('apt purge nginx');
+    expect(hasEffectMatching(result.effects, /configuration files/i)).toBe(true);
+  });
+
+  it('warns about service interruption', () => {
+    const result = explain('apt remove nginx');
+    expect(hasWarningMatching(result.warnings, /service interruption|running daemon/i)).toBe(true);
+  });
+});
+
+describe('TC-CE-197: apt update — read-only metadata refresh, no warnings', () => {
+  it('summarises as a metadata refresh', () => {
+    const result = explain('apt update');
+    expect(result.summary).toMatch(/refreshes|index/i);
+  });
+
+  it('emits no warnings (does not install anything)', () => {
+    const result = explain('apt update');
+    expect(result.warnings).toHaveLength(0);
+  });
+});
+
+describe('TC-CE-198: apt upgrade / dist-upgrade — bulk-operation warning', () => {
+  it('warns about bulk operation on upgrade', () => {
+    const result = explain('apt upgrade');
+    expect(hasWarningMatching(result.warnings, /bulk operation/i)).toBe(true);
+  });
+
+  it('warns about -y / --yes when present', () => {
+    const result = explain('apt upgrade -y');
+    expect(hasWarningMatching(result.warnings, /-y|accepts every prompt/i)).toBe(true);
+  });
+
+  it('handles dist-upgrade in summary', () => {
+    const result = explain('apt dist-upgrade');
+    expect(result.summary).toMatch(/dist-upgrade|all packages/i);
+  });
+});
+
+describe('TC-CE-199: apt-get install routes to the same explainer as apt', () => {
+  it('apt-get install warns about remote-code execution', () => {
+    const result = explain('apt-get install nginx');
+    expect(hasWarningMatching(result.warnings, /remote repository|privileges of the installer/i)).toBe(true);
+  });
+});
+
+describe('TC-CE-200: apt — fallback for an unrecognised subcommand', () => {
+  it('summarises without warnings on an unknown subcommand', () => {
+    const result = explain('apt list --installed');
+    expect(result.summary).toMatch(/apt/i);
+    expect(result.warnings).toHaveLength(0);
+  });
+});
+
+describe('TC-CE-201: yum / dnf install — names packages and warns about remote-code execution', () => {
+  it('yum install warns about remote-code execution', () => {
+    const result = explain('yum install httpd');
+    expect(hasWarningMatching(result.warnings, /remote repository|privileges of the installer/i)).toBe(true);
+  });
+
+  it('dnf install warns about remote-code execution', () => {
+    const result = explain('dnf install httpd');
+    expect(hasWarningMatching(result.warnings, /remote repository|privileges of the installer/i)).toBe(true);
+  });
+
+  it('reports the package in the summary', () => {
+    const result = explain('dnf install httpd');
+    expect(result.summary).toContain('httpd');
+  });
+});
+
+describe('TC-CE-202: yum / dnf upgrade with -y — accept-every-prompt warning', () => {
+  it('warns about -y / --assumeyes', () => {
+    const result = explain('yum upgrade -y');
+    expect(hasWarningMatching(result.warnings, /-y|--assumeyes|accepts every prompt/i)).toBe(true);
+  });
+
+  it('warns about bulk-upgrade scope when no packages are listed', () => {
+    const result = explain('dnf upgrade');
+    expect(hasWarningMatching(result.warnings, /bulk operation/i)).toBe(true);
+  });
+
+  it('does not raise the bulk warning when explicit packages are upgraded', () => {
+    const result = explain('dnf upgrade httpd');
+    expect(hasWarningMatching(result.warnings, /bulk operation/i)).toBe(false);
+  });
+});
+
+describe('TC-CE-203: yum check-update — read-only metadata check', () => {
+  it('emits no warnings', () => {
+    const result = explain('yum check-update');
+    expect(result.warnings).toHaveLength(0);
+  });
+});
+
+describe('TC-CE-204: dpkg -i — flags installs, warns about repository bypass', () => {
+  it('summarises an .deb install', () => {
+    const result = explain('dpkg -i /tmp/pkg.deb');
+    expect(result.summary).toContain('/tmp/pkg.deb');
+  });
+
+  it('warns about apt-bypass', () => {
+    const result = explain('dpkg -i /tmp/pkg.deb');
+    expect(hasWarningMatching(result.warnings, /bypasses the apt repository|signature/i)).toBe(true);
+  });
+});
+
+describe('TC-CE-205: dpkg -r / -P — service-interruption warning', () => {
+  it('warns about service interruption on -r', () => {
+    const result = explain('dpkg -r nginx');
+    expect(hasWarningMatching(result.warnings, /service interruption/i)).toBe(true);
+  });
+
+  it('-P retains configuration-removal effect', () => {
+    const result = explain('dpkg -P nginx');
+    expect(hasEffectMatching(result.effects, /configuration files/i)).toBe(true);
+  });
+});
+
+describe('TC-CE-206: dpkg -l — read-only listing, no warnings', () => {
+  it('emits no warnings', () => {
+    const result = explain('dpkg -l');
+    expect(result.warnings).toHaveLength(0);
+  });
+});
+
+describe('TC-CE-207: snap install — interface-review warning', () => {
+  it('warns about declared plugs / interfaces', () => {
+    const result = explain('snap install vlc');
+    expect(hasWarningMatching(result.warnings, /interface|plugs/i)).toBe(true);
+  });
+});
+
+describe('TC-CE-208: snap remove — no warnings', () => {
+  it('emits no warnings (removal is benign)', () => {
+    const result = explain('snap remove vlc');
+    expect(result.warnings).toHaveLength(0);
+  });
+});
+
+describe('TC-CE-209: snap refresh — bulk-operation warning when no packages listed', () => {
+  it('warns about bulk operation on bare refresh', () => {
+    const result = explain('snap refresh');
+    expect(hasWarningMatching(result.warnings, /bulk operation/i)).toBe(true);
+  });
+
+  it('does not raise the bulk warning when refreshing a specific snap', () => {
+    const result = explain('snap refresh vlc');
+    expect(hasWarningMatching(result.warnings, /bulk operation/i)).toBe(false);
+  });
+});
+
+describe('TC-CE-210: brew install — remote-code-execution warning', () => {
+  it('warns about taps / privileges', () => {
+    const result = explain('brew install jq');
+    expect(hasWarningMatching(result.warnings, /tap|privileges of the installer/i)).toBe(true);
+  });
+});
+
+describe('TC-CE-211: brew uninstall / remove / rm — alias forms route the same way', () => {
+  it('brew uninstall summarises uninstall', () => {
+    const result = explain('brew uninstall jq');
+    expect(result.summary).toMatch(/Uninstalls/i);
+  });
+
+  it('brew remove summarises uninstall', () => {
+    const result = explain('brew remove jq');
+    expect(result.summary).toMatch(/Uninstalls/i);
+  });
+
+  it('brew rm summarises uninstall', () => {
+    const result = explain('brew rm jq');
+    expect(result.summary).toMatch(/Uninstalls/i);
+  });
+});
+
+describe('TC-CE-212: brew upgrade — bulk-operation warning when no packages listed', () => {
+  it('warns about bulk operation on bare upgrade', () => {
+    const result = explain('brew upgrade');
+    expect(hasWarningMatching(result.warnings, /bulk operation/i)).toBe(true);
+  });
+
+  it('does not raise the bulk warning when upgrading a specific package', () => {
+    const result = explain('brew upgrade jq');
+    expect(hasWarningMatching(result.warnings, /bulk operation/i)).toBe(false);
+  });
+});
+
+describe('TC-CE-213: brew update / list / cleanup — read-only-ish, no warnings', () => {
+  it('brew update emits no warnings', () => {
+    const result = explain('brew update');
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  it('brew list emits no warnings', () => {
+    const result = explain('brew list');
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  it('brew cleanup emits no warnings', () => {
+    const result = explain('brew cleanup');
+    expect(result.warnings).toHaveLength(0);
+  });
+});
+
+describe('TC-CE-214: pacman flag-driven dispatch', () => {
+  it('-S installs and warns about remote-code execution', () => {
+    const result = explain('pacman -S nginx');
+    expect(hasWarningMatching(result.warnings, /remote repository|privileges of the installer/i)).toBe(true);
+  });
+
+  it('-Syu summarises full system upgrade with bulk-operation warning', () => {
+    const result = explain('pacman -Syu');
+    expect(result.summary).toMatch(/upgrades all|synchronises/i);
+    expect(hasWarningMatching(result.warnings, /bulk operation/i)).toBe(true);
+  });
+
+  it('-R removes and warns about service interruption', () => {
+    const result = explain('pacman -R nginx');
+    expect(hasWarningMatching(result.warnings, /service interruption/i)).toBe(true);
+  });
+
+  it('-Q queries the local DB with no warnings', () => {
+    const result = explain('pacman -Q');
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  it('-U warns about local-archive signature bypass', () => {
+    const result = explain('pacman -U /tmp/local.pkg.tar.zst');
+    expect(hasWarningMatching(result.warnings, /signature|authenticity/i)).toBe(true);
+  });
+});
+
+describe('TC-CE-215: rule routing — apt vs apt-get vs yum vs dnf', () => {
+  it('"apt install" routes to aptExplain', () => {
+    const result = explain('apt install nginx');
+    expect(result.summary).toMatch(/apt packages/);
+  });
+
+  it('"apt-get install" routes to aptExplain (same regex prefix)', () => {
+    const result = explain('apt-get install nginx');
+    expect(result.summary).toMatch(/apt packages/);
+  });
+
+  it('"yum install" routes to yumDnfExplain with yum binary label', () => {
+    const result = explain('yum install httpd');
+    expect(result.summary).toMatch(/yum packages/);
+  });
+
+  it('"dnf install" routes to yumDnfExplain with dnf binary label', () => {
+    const result = explain('dnf install httpd');
+    expect(result.summary).toMatch(/dnf packages/);
   });
 });

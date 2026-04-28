@@ -88,6 +88,8 @@ describe('registry coverage — each action class resolves from at least one ali
     ['nmap',             'network.scan'],
     ['crontab',          'scheduling.persist'],
     ['rsync',            'network.transfer'],
+    ['apt',              'package.install'],
+    ['brew',              'package.install'],
     ['git_log',          'vcs.read'],
     ['git_add',          'vcs.write'],
     ['git_clone',        'vcs.remote'],
@@ -597,6 +599,42 @@ describe('network.transfer aliases and defaults', () => {
   it('intent_group propagates from sftp', () => {
     const result = normalize_action('sftp', {});
     expect(result.intent_group).toBe('data_exfiltration');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// package.install — bare-binary aliases (apt/yum/dnf/dpkg/snap/brew/pacman)
+// ---------------------------------------------------------------------------
+
+describe('package.install — distro / system package manager bare aliases', () => {
+  const cases: Array<[string, string]> = [
+    ['apt', 'apt'],
+    ['apt-get', 'apt-get'],
+    ['yum', 'yum'],
+    ['dnf', 'dnf'],
+    ['dpkg', 'dpkg'],
+    ['snap', 'snap'],
+    ['brew', 'brew'],
+    ['pacman', 'pacman'],
+  ];
+
+  for (const [_desc, alias] of cases) {
+    it(`${alias} → package.install with medium risk and per_request HITL`, () => {
+      const result = normalize_action(alias, {});
+      expect(result.action_class).toBe('package.install');
+      expect(result.risk).toBe('medium');
+      expect(result.hitl_mode).toBe('per_request');
+    });
+  }
+
+  it('APT (uppercase) → package.install via case-insensitive alias lookup', () => {
+    const result = normalize_action('APT', {});
+    expect(result.action_class).toBe('package.install');
+  });
+
+  it('apt-get (hyphenated alias) is matched verbatim', () => {
+    const result = normalize_action('apt-get', {});
+    expect(result.action_class).toBe('package.install');
   });
 });
 

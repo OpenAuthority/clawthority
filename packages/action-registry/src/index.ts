@@ -636,6 +636,17 @@ export const REGISTRY: readonly ActionRegistryEntry[] = [
       'apt_install',
       'brew_install',
       'add_package',
+      // Bare-binary aliases. Multi-subcommand binaries (install/remove/update/
+      // upgrade) all share package.install's medium / per_request tier;
+      // explainer dispatch per subcommand provides operator-readable detail.
+      'apt',
+      'apt-get',
+      'yum',
+      'dnf',
+      'dpkg',
+      'snap',
+      'brew',
+      'pacman',
     ],
   },
   {
