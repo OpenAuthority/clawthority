@@ -43,3 +43,7 @@ export type { ResolvedTelegramConfig, SendApprovalOpts, SendApprovalResult, Send
 // ─── Slack adapter ──────────────────────────────────────────────────────────
 export { SlackInteractionServer, sendSlackApprovalRequest, sendSlackConfirmation, resolveSlackConfig, verifySlackSignature } from './slack.js';
 export type { ResolvedSlackConfig, SlackSendApprovalOpts, SlackSendApprovalResult, SlackActionCommand } from './slack.js';
+
+// ─── Console adapter ─────────────────────────────────────────────────────────
+export { sendConsoleApprovalRequest } from './console.js';
+export type { ConsoleSendApprovalResult, ConsoleIo } from './console.js';
