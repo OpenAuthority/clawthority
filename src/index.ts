@@ -21,6 +21,8 @@ export type { Rule, RuleContext, Resource, Effect, RateLimit } from "./policy/ty
 export { default as defaultRules, mergeRules, OPEN_MODE_RULES } from "./policy/rules.js";
 export { resolveMode, modeToDefaultEffect } from "./policy/mode.js";
 export type { ClawMode } from "./policy/mode.js";
+export { resolveFeatureFlags } from "./features.js";
+export type { FeatureFlags } from "./features.js";
 
 // ─── Phase 2: Coverage tracking re-exports ───────────────────────────────────
 export { CoverageMap } from "./policy/coverage.js";
@@ -131,6 +133,7 @@ import { PolicyEngine as CedarPolicyEngine } from "./policy/engine.js";
 import type { Rule, RuleContext } from "./policy/types.js";
 import defaultRules, { OPEN_MODE_RULES } from "./policy/rules.js";
 import { resolveMode, modeToDefaultEffect, type ClawMode } from "./policy/mode.js";
+import { resolveFeatureFlags, type FeatureFlags } from "./features.js";
 import { startRulesWatcher, type WatcherHandle } from "./watcher.js";
 import { CoverageMap } from "./policy/coverage.js";
 import { checkAction, matchesActionPattern } from "./hitl/matcher.js";
@@ -344,6 +347,12 @@ function detectPromptInjection(messages?: unknown[]): boolean {
 const MODE: ClawMode = resolveMode();
 const DEFAULT_EFFECT: 'permit' | 'forbid' = modeToDefaultEffect(MODE);
 const ACTIVE_RULES: Rule[] = MODE === 'open' ? OPEN_MODE_RULES : defaultRules;
+
+/**
+ * Feature flags resolved once at module load.
+ * A plugin restart is required to change them.
+ */
+const FEATURES: FeatureFlags = resolveFeatureFlags();
 
 console.log(
   `[clawthority] mode: ${MODE.toUpperCase()} (${
@@ -742,7 +751,7 @@ async function dispatchHitlChannel(
     }
 
     const { token, promise } = approvalManager.createApprovalRequest({ toolName, agentId: auditAgent, channelId: auditChannel, policy });
-    const result = await sendSlackApprovalRequest(slackConfig, { token, toolName, agentId: auditAgent, policyName: policy.name, timeoutSeconds: policy.approval.timeout, verified: identity.verified });
+    const result = await sendSlackApprovalRequest(slackConfig, { token, toolName, agentId: auditAgent, policyName: policy.name, timeoutSeconds: policy.approval.timeout, verified: identity.verified, showApproveAlways: FEATURES.approveAlwaysEnabled });
 
     if (!result.ok) {
       approvalManager.cancel(token);
@@ -1105,10 +1114,14 @@ const beforeToolCallHandler: BeforeToolCallHandler = async ({ toolName, params, 
 
         if (hitlResult.requiresApproval && hitlResult.matchedPolicy) {
           const policy = hitlResult.matchedPolicy;
-          console.log(`[clawthority] │ [hitl] releasing ${pipelineDecision.stage ?? 'unknown'} HITL-gated forbid via policy "${policy.name}" (${policy.approval.channel})`);
-          const hitlChannelResult = await dispatchHitlChannel(policy, toolName, identity);
-          if (hitlChannelResult) return hitlChannelResult;
-          // Approved: fall through to the pre-existing HITL check and then ALLOWED.
+          if (approvalManager.isSessionAutoApproved(identity.auditChannel, normalizedAction.action_class)) {
+            console.log(`[clawthority] │ [hitl] ✓ session auto-approved (${normalizedAction.action_class}) — skipping HITL dispatch`);
+          } else {
+            console.log(`[clawthority] │ [hitl] releasing ${pipelineDecision.stage ?? 'unknown'} HITL-gated forbid via policy "${policy.name}" (${policy.approval.channel})`);
+            const hitlChannelResult = await dispatchHitlChannel(policy, toolName, identity);
+            if (hitlChannelResult) return hitlChannelResult;
+          }
+          // Approved (or auto-approved): fall through to the pre-existing HITL check and then ALLOWED.
         } else {
           const priority = pipelineDecision.priority;
           const ruleTag = pipelineDecision.rule;
@@ -1160,9 +1173,13 @@ const beforeToolCallHandler: BeforeToolCallHandler = async ({ toolName, params, 
 
     if (hitlResult.requiresApproval && hitlResult.matchedPolicy) {
       const policy = hitlResult.matchedPolicy;
-      console.log(`[clawthority] │ [hitl] matched policy "${policy.name}" — requesting approval via ${policy.approval.channel}`);
-      const hitlChannelResult = await dispatchHitlChannel(policy, toolName, identity);
-      if (hitlChannelResult) return hitlChannelResult;
+      if (approvalManager.isSessionAutoApproved(identity.auditChannel, normalizedAction.action_class)) {
+        console.log(`[clawthority] │ [hitl] ✓ session auto-approved (${normalizedAction.action_class}) — skipping HITL dispatch`);
+      } else {
+        console.log(`[clawthority] │ [hitl] matched policy "${policy.name}" — requesting approval via ${policy.approval.channel}`);
+        const hitlChannelResult = await dispatchHitlChannel(policy, toolName, identity);
+        if (hitlChannelResult) return hitlChannelResult;
+      }
     } else if (hitlConfig !== null) {
       console.log(`[clawthority] │ [hitl] ✓ no matching HITL policy`);
     }
@@ -1509,7 +1526,17 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
           slackConfig.interactionPort,
           slackConfig.signingSecret,
           (command, token) => {
-            const decision = command === 'approve' ? 'approved' as const : 'denied' as const;
+            if (command === 'approve_always' && FEATURES.approveAlwaysEnabled) {
+              // Register session auto-approval before resolving so future
+              // requests of the same action class in this channel skip HITL.
+              const pending = approvalManager.getPending(token);
+              if (pending) {
+                approvalManager.addSessionAutoApproval(pending.channelId, pending.action_class);
+                console.log(`[hitl-slack] session auto-approval registered: channel=${pending.channelId} action_class=${pending.action_class}`);
+              }
+            }
+            // approve_always resolves the current request as approved.
+            const decision = command === 'deny' ? 'denied' as const : 'approved' as const;
             const resolved = approvalManager.resolveApproval(token, decision);
             if (!resolved) {
               console.log(`[hitl-slack] unknown or expired token: ${token}`);

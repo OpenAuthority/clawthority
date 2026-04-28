@@ -658,6 +658,7 @@ Controls the plugin's policy posture at activation and the install-phase bypass 
 |---|---|---|
 | `OPENAUTH_FORCE_ACTIVE` | _(unset)_ | Set to `'1'` to suppress the install-phase enforcement bypass. Without this, enforcement is suspended while `npm_lifecycle_event` is one of `install`, `preinstall`, `postinstall`, or `prepare`. **Must be set to `'1'` in all production deployments.** See [Operator Security Guide — F-01](operator-security-guide.md#f-01-openauth_force_active-configuration). |
 | `CLAWTHORITY_MODE` | `open` | `open` — implicit permit with a critical-forbid safety net (six action classes: `shell.exec`, `code.execute`, `payment.initiate`, `credential.read`, `credential.write`, `unknown_sensitive_action`). `closed` — implicit deny, user adds explicit `permit` rules. Any other value logs a warning and falls back to `open`. Case- and whitespace-insensitive. Read once at module load — **restart the plugin to change modes.** |
+| `CLAWTHORITY_DISABLE_APPROVE_ALWAYS` | _(unset)_ | Set to `'1'` to hide the 🔁 "Approve Always" button in Slack HITL approval messages and prevent creation of new session-scoped auto-permits. Existing in-process auto-permits continue to be honoured — only creation of new ones is blocked. Read once at module load — **restart the plugin to change.** |
 
 Mode only affects Stage 2 policy evaluation and which default rule set is loaded. Stage 1 (capability gate, protected paths, HITL binding) fails closed in both modes regardless.
 

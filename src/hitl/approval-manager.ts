@@ -137,6 +137,18 @@ export class ApprovalManager {
   private readonly consumed = new Set<string>();
 
   /**
+   * Tracks session-scoped auto-approvals keyed by `channelId:action_class`.
+   *
+   * When an operator clicks 🔁 "Approve Always" in a Slack message, the
+   * corresponding key is added here so future requests of the same action
+   * class from the same channel are auto-approved without further HITL
+   * prompts.
+   *
+   * In-memory only — cleared on process restart.
+   */
+  private readonly sessionAutoApprovals = new Set<string>();
+
+  /**
    * Creates a new approval request and returns a handle with a token and
    * a promise that blocks until the request is resolved or expires.
    */
@@ -279,6 +291,29 @@ export class ApprovalManager {
     return count;
   }
 
+  /**
+   * Registers a session-scoped auto-approval for the given channel and
+   * action class. Once registered, `isSessionAutoApproved()` returns true
+   * for that `channelId:action_class` pair until the process restarts.
+   *
+   * Called when an operator clicks 🔁 "Approve Always" in a Slack message.
+   */
+  addSessionAutoApproval(channelId: string, actionClass: string): void {
+    this.sessionAutoApprovals.add(`${channelId}:${actionClass}`);
+  }
+
+  /**
+   * Returns true if a session-scoped auto-approval has been registered for
+   * the given channel and action class.
+   *
+   * Used by the HITL dispatch path to skip creating a new approval request
+   * when the operator has previously granted "Approve Always" for this
+   * channel+action_class combination.
+   */
+  isSessionAutoApproved(channelId: string, actionClass: string): boolean {
+    return this.sessionAutoApprovals.has(`${channelId}:${actionClass}`);
+  }
+
   /** Clears all pending approvals, resolving each as 'expired'. */
   shutdown(): void {
     for (const entry of this.pending.values()) {
@@ -287,5 +322,6 @@ export class ApprovalManager {
       entry.resolve('expired');
     }
     this.pending.clear();
+    this.sessionAutoApprovals.clear();
   }
 }

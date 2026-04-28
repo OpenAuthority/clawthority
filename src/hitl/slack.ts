@@ -36,6 +36,16 @@ export interface SlackSendApprovalOpts {
    * cannot confuse a spoofed agent with a registered one.
    */
   verified?: boolean;
+  /**
+   * When true (default), a 🔁 "Approve Always" button is included in the
+   * message. Operators can click it to approve this request and
+   * automatically approve all subsequent requests of the same action class
+   * in the same channel without further prompts.
+   *
+   * Set to false to hide the button (e.g. when
+   * `CLAWTHORITY_DISABLE_APPROVE_ALWAYS=1` is set).
+   */
+  showApproveAlways?: boolean;
 }
 
 export interface SlackSendApprovalResult {
@@ -80,6 +90,32 @@ export async function sendSlackApprovalRequest(
   if (opts.expires_at) sectionLines.push(`:stopwatch: *Expires at:* ${opts.expires_at}`);
   sectionLines.push(`:key: *Approval ID:* \`${opts.token}\``);
 
+  const showApproveAlways = opts.showApproveAlways !== false;
+  const actionElements: object[] = [
+    {
+      type: 'button',
+      text: { type: 'plain_text', text: 'Approve' },
+      style: 'primary',
+      action_id: 'hitl_approve',
+      value: `approve:${opts.token}`,
+    },
+  ];
+  if (showApproveAlways) {
+    actionElements.push({
+      type: 'button',
+      text: { type: 'plain_text', text: '\uD83D\uDD01 Approve Always' },
+      action_id: 'hitl_approve_always',
+      value: `approve_always:${opts.token}`,
+    });
+  }
+  actionElements.push({
+    type: 'button',
+    text: { type: 'plain_text', text: 'Deny' },
+    style: 'danger',
+    action_id: 'hitl_deny',
+    value: `deny:${opts.token}`,
+  });
+
   const blocks = [
     {
       type: 'section',
@@ -91,22 +127,7 @@ export async function sendSlackApprovalRequest(
     {
       type: 'actions',
       block_id: `hitl_${opts.token}`,
-      elements: [
-        {
-          type: 'button',
-          text: { type: 'plain_text', text: 'Approve' },
-          style: 'primary',
-          action_id: 'hitl_approve',
-          value: `approve:${opts.token}`,
-        },
-        {
-          type: 'button',
-          text: { type: 'plain_text', text: 'Deny' },
-          style: 'danger',
-          action_id: 'hitl_deny',
-          value: `deny:${opts.token}`,
-        },
-      ],
+      elements: actionElements,
     },
   ];
 
@@ -185,11 +206,11 @@ export async function sendSlackConfirmation(
 
 // ─── Slack interaction webhook server ───────────────────────────────────────
 
-export type SlackActionCommand = 'approve' | 'deny';
+export type SlackActionCommand = 'approve' | 'approve_always' | 'deny';
 
 // Tokens are UUID v7 (36 chars with hyphens) or session_approval keys
 // of the form "session_id:action_class" (may contain ':', '.').
-const ACTION_VALUE_RE = /^(approve|deny):([\w.:-]{6,128})$/;
+const ACTION_VALUE_RE = /^(approve|approve_always|deny):([\w.:-]{6,128})$/;
 
 /**
  * Verifies a Slack request signature.
