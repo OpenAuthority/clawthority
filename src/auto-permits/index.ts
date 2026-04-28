@@ -32,3 +32,12 @@ export type {
   AutoPermitStorageMode,
   ResolvedAutoPermitStoreConfig,
 } from './config.js';
+
+export {
+  compilePatternRegex,
+  FileAutoPermitChecker,
+} from './matcher.js';
+
+export type {
+  AutoPermitRuleChecker,
+} from './matcher.js';

@@ -20,10 +20,13 @@ export {
   DEFAULT_AUTO_PERMIT_STORE_PATH,
   RULES_FILE_PATH,
   resolveAutoPermitStoreConfig,
+  compilePatternRegex,
+  FileAutoPermitChecker,
 } from "./auto-permits/index.js";
 export type {
   AutoPermitStorageMode,
   ResolvedAutoPermitStoreConfig,
+  AutoPermitRuleChecker,
 } from "./auto-permits/index.js";
 
 // ─── Cedar-style engine re-exports ───────────────────────────────────────────
@@ -171,6 +174,8 @@ import { validateCapability } from "./enforcement/stage1-capability.js";
 import { createCombinedStage2 } from "./enforcement/stage2-policy.js";
 import { FileAuthorityAdapter } from "./adapter/file-adapter.js";
 import type { WatchHandle } from "./adapter/types.js";
+import { FileAutoPermitChecker, resolveAutoPermitStoreConfig } from "./auto-permits/index.js";
+import { isAutoPermit } from "./models/auto-permit.js";
 
 /**
  * Resolved identity view used by audit and HITL call sites. Derived from
@@ -422,6 +427,19 @@ const jsonRulesEngineRef: { current: CedarPolicyEngine | null } = {
 let adapterRef: FileAuthorityAdapter | null = null;
 
 /**
+ * File-based auto-permit rule checker. Loaded from the auto-permit store
+ * (data/auto-permits.json by default) during activate(). Undefined until
+ * loadAutoPermitRules() completes or when the store file does not exist yet.
+ *
+ * Re-created on each successful loadAutoPermitRules() call so that rules
+ * added to the store (e.g. via "Approve Always") are visible to subsequent
+ * tool calls without a plugin restart.
+ */
+const autoPermitCheckerRef: { current: FileAutoPermitChecker | undefined } = {
+  current: undefined,
+};
+
+/**
  * WatchHandle returned by adapterRef.watchPolicyBundle(). Stored so it can
  * be stopped in deactivate() to avoid leaked chokidar watchers.
  */
@@ -617,6 +635,63 @@ async function loadJsonRules(): Promise<void> {
     console.log(`[plugin:clawthority] loaded ${cedarRules.length} rule(s) from data/${activeFile}`);
   } catch (err) {
     console.error("[plugin:clawthority] failed to load rules file — JSON rules will not be enforced:", err);
+  }
+}
+
+// ─── Auto-permit rules loader ─────────────────────────────────────────────────
+
+/**
+ * Loads auto-permit rules from the configured store file and populates
+ * `autoPermitCheckerRef.current` with a `FileAutoPermitChecker` instance.
+ *
+ * The store path is resolved via `resolveAutoPermitStoreConfig()` which reads
+ * the `CLAWTHORITY_AUTO_PERMIT_STORE` env var (defaults to
+ * `data/auto-permits.json`). The file is optional — when absent the function
+ * returns silently and `autoPermitCheckerRef.current` remains undefined,
+ * meaning auto-permit matching is skipped for all subsequent tool calls.
+ *
+ * Invalid records (those that fail `isAutoPermit` validation) are skipped with
+ * a warning so a single corrupt entry does not discard the entire store.
+ */
+async function loadAutoPermitRules(): Promise<void> {
+  try {
+    const config = resolveAutoPermitStoreConfig();
+    const moduleDir = dirname(fileURLToPath(import.meta.url));
+    const storePath = resolve(moduleDir, "../../", config.path);
+
+    let raw: string;
+    try {
+      raw = await readFile(storePath, "utf-8");
+    } catch (readErr: unknown) {
+      const code = (readErr as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") {
+        // Store file does not exist yet — silently skip; auto-permit matching
+        // will be disabled until the file is created (e.g. on first approval).
+        return;
+      }
+      throw readErr;
+    }
+
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      console.warn("[plugin:clawthority] auto-permit store is not a JSON array — skipping rule load");
+      return;
+    }
+
+    const validRules = parsed.filter(isAutoPermit);
+    const skipped = parsed.length - validRules.length;
+    if (skipped > 0) {
+      console.warn(
+        `[plugin:clawthority] auto-permit store: ${skipped} invalid record(s) skipped (schema mismatch)`,
+      );
+    }
+
+    autoPermitCheckerRef.current = new FileAutoPermitChecker(validRules);
+    console.log(
+      `[plugin:clawthority] auto-permit rules loaded: ${validRules.length} rule(s) from ${config.path}`,
+    );
+  } catch (err) {
+    console.warn("[plugin:clawthority] failed to load auto-permit rules — matching will be skipped:", err);
   }
 }
 
@@ -1062,6 +1137,7 @@ const beforeToolCallHandler: BeforeToolCallHandler = async ({ toolName, params, 
     jsonRulesEngineRef.current,
     toolName,
     FEATURES.approveAlwaysEnabled ? approvalManager : undefined,
+    autoPermitCheckerRef.current,
   );
 
   // ── Route all tool calls through runPipeline ─────────────────────────────
@@ -1071,8 +1147,18 @@ const beforeToolCallHandler: BeforeToolCallHandler = async ({ toolName, params, 
   // by the HITL resolution stage below once the final disposition is known.
   const callEmitter = new EventEmitter();
   callEmitter.once('executionEvent', ({ decision }: { decision: CeeDecision }) => {
-    // Auto-permit: log with source tag so the auto-generated permit reason
-    // ('session_auto_approved') is visible in the operator log stream.
+    // File-based auto-permit rule match: log the matched pattern and record
+    // usage in the coverage map so the dashboard can track which rules fire.
+    if (decision.effect === 'permit' && decision.stage === 'auto-permit') {
+      const patternLabel = decision.rule ?? 'unknown';
+      console.log(
+        `[clawthority] │ [stage2/auto-permit] ✓ matched rule '${patternLabel}' (${normalizedAction.action_class})`,
+      );
+      coverageMap.record('command', patternLabel, 'permit');
+      return;
+    }
+    // Session auto-approval: log with source tag so the auto-generated permit
+    // reason ('session_auto_approved') is visible in the operator log stream.
     if (decision.effect === 'permit' && decision.reason === 'session_auto_approved') {
       console.log(
         `[clawthority] │ [stage2/auto-permit] ✓ session_auto_approved (${normalizedAction.action_class})`,
@@ -1440,6 +1526,16 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
       await loadJsonRules();
     } catch (err) {
       console.error("[plugin:clawthority] unexpected error in loadJsonRules:", err);
+    }
+
+    // Load file-based auto-permit rules from the auto-permit store.
+    // Awaited for the same reason as loadJsonRules() above — an unawaited load
+    // would race with the first tool call and silently skip the rules.
+    // The file is optional; absence is handled gracefully inside the function.
+    try {
+      await loadAutoPermitRules();
+    } catch (err) {
+      console.error("[plugin:clawthority] unexpected error in loadAutoPermitRules:", err);
     }
 
     // Instantiate the file-based authority adapter using the same rules file
