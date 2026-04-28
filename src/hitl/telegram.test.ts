@@ -634,8 +634,12 @@ describe('TelegramListener', () => {
     // Allow the fire-and-forget answerCallbackQuery to settle
     await new Promise((r) => setTimeout(r, 20));
 
-    const callUrls = vi.mocked(fetch).mock.calls.map((c) => c[0] as string);
-    expect(callUrls.some((url) => url.includes('answerCallbackQuery'))).toBe(true);
+    const answerCall = vi.mocked(fetch).mock.calls.find(
+      (c) => (c[0] as string).includes('answerCallbackQuery'),
+    );
+    expect(answerCall).toBeDefined();
+    const answerBody = JSON.parse(answerCall![1]?.body as string);
+    expect(answerBody.callback_query_id).toBe('cq-answer-test');
   });
 
   it('ignores callback_query with invalid callback_data', async () => {
@@ -1158,6 +1162,7 @@ describe('TelegramListener — duplicate callback_query alert', () => {
     );
     expect(answerCall).toBeDefined();
     const answerBody = JSON.parse(answerCall![1]?.body as string);
+    expect(answerBody.callback_query_id).toBe('cq-dup');
     expect(answerBody.text).toBe('Already decided');
     expect(answerBody.show_alert).toBe(true);
   });
@@ -1187,6 +1192,7 @@ describe('TelegramListener — duplicate callback_query alert', () => {
     );
     expect(answerCall).toBeDefined();
     const answerBody = JSON.parse(answerCall![1]?.body as string);
+    expect(answerBody.callback_query_id).toBe('cq-ok');
     expect(answerBody.text).toBeUndefined();
     expect(answerBody.show_alert).toBeUndefined();
   });
