@@ -901,6 +901,49 @@ function warnIfPermitOnUnknownToolsWithoutHitl(
   );
 }
 
+/**
+ * Logs an info-level recommendation when the plugin is running in OPEN mode
+ * without any protection for `unknown_sensitive_action`.
+ *
+ * In OPEN mode the `unknown_sensitive_action` forbid is intentionally absent
+ * from the active rule set — unrecognised tool names fall through to the
+ * implicit permit. When no operator-supplied forbid rule and no HITL policy
+ * cover `unknown_sensitive_action`, the agent can invoke any unregistered tool
+ * with no gate at all. This function surfaces that gap at activation time so
+ * operators can make an informed decision about their posture.
+ *
+ * Only runs in OPEN mode; CLOSED mode carries an implicit deny that already
+ * covers unknown tools. Logged at most once per startup — the `activated`
+ * guard in `activate()` ensures this path is reached at most once per
+ * plugin lifecycle.
+ */
+function logOpenModeRecommendation(
+  mode: ClawMode,
+  jsonRules: readonly Rule[] | null,
+  hitlConfig: HitlPolicyConfig | null,
+): void {
+  if (mode !== 'open') return;
+
+  // Operator has an explicit forbid rule covering unknown_sensitive_action.
+  const hasForbidRule = jsonRules !== null && jsonRules.some(
+    (r) => r.effect === 'forbid' && r.action_class === 'unknown_sensitive_action',
+  );
+  if (hasForbidRule) return;
+
+  // A HITL policy covers unknown_sensitive_action (exact or wildcard match).
+  const hitlCovers = hitlConfig?.policies.some((p) =>
+    p.actions.some((a) => matchesActionPattern(a, 'unknown_sensitive_action')),
+  ) ?? false;
+  if (hitlCovers) return;
+
+  console.log(
+    `[plugin:clawthority] ℹ OPEN mode: unrecognised tool calls are implicitly permitted — ` +
+    `no forbid rule or HITL policy covers "unknown_sensitive_action". ` +
+    `Add a forbid rule in data/rules.json or a HITL policy in hitl-policy.yaml to gate ` +
+    `unknown tools. See docs/configuration.md#install-mode for recommended bootstrap configuration.`,
+  );
+}
+
 /** Mutable ref for the loaded HITL policy config. null until loaded. */
 const hitlConfigRef: { current: HitlPolicyConfig | null } = { current: null };
 let hitlWatcher: HitlWatcherHandle | null = null;
@@ -2131,6 +2174,17 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
         hitlConfigRef.current,
       );
     }
+
+    // Mode recommendation: surface open-mode gap when no protection exists
+    // for unknown_sensitive_action (neither a forbid rule nor a HITL policy).
+    // Passes null when no JSON rules are loaded so the function treats that as
+    // "no operator forbid" — correct because an absent rules.json means no
+    // operator-supplied constraints at all.
+    logOpenModeRecommendation(
+      MODE,
+      jsonRulesEngineRef.current?.rules ?? null,
+      hitlConfigRef.current,
+    );
 
     console.log("[plugin:clawthority] activated – lifecycle hooks registered");
   },
