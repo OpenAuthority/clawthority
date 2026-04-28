@@ -15,6 +15,8 @@
  *   TC-CE-67 – TC-CE-68 : git branch/remote detection
  *   TC-CE-69 – TC-CE-71 : eslint patterns
  *   TC-CE-72 – TC-CE-75 : prettier patterns
+ *   TC-CE-100 – TC-CE-121: service / host-lifecycle patterns
+ *                          (systemctl, service, reboot, shutdown, init)
  */
 
 import { describe, it, expect } from 'vitest';
@@ -1148,5 +1150,275 @@ describe('TC-CE-99: curl — fallback with no URL specified', () => {
   it('falls back gracefully when no URL is given', () => {
     const result = explain('curl');
     expect(result.summary).toMatch(/fetch|content/i);
+  });
+});
+
+// ── TC-CE-100 – TC-CE-115 : service / host-lifecycle management ───────────────
+
+describe('TC-CE-100: systemctl start — names the unit in the summary', () => {
+  it('produces a summary that mentions starting the named service', () => {
+    const result = explain('systemctl start nginx');
+    expect(result.summary).toMatch(/start/i);
+    expect(result.summary).toContain('nginx');
+  });
+
+  it('emits no warnings on a normal start', () => {
+    const result = explain('systemctl start nginx');
+    expect(result.warnings).toHaveLength(0);
+  });
+});
+
+describe('TC-CE-101: systemctl stop — disconnect warning', () => {
+  it('warns that active service users will be disconnected', () => {
+    const result = explain('systemctl stop nginx');
+    expect(hasWarningMatching(result.warnings, /disconnect/i)).toBe(true);
+  });
+});
+
+describe('TC-CE-102: systemctl restart — downtime warning', () => {
+  it('warns about brief downtime during restart', () => {
+    const result = explain('systemctl restart nginx');
+    expect(hasWarningMatching(result.warnings, /downtime|restart/i)).toBe(true);
+  });
+});
+
+describe('TC-CE-103: systemctl reload — no downtime warning', () => {
+  it('does not warn about downtime for reload (SIGHUP only)', () => {
+    const result = explain('systemctl reload nginx');
+    expect(hasWarningMatching(result.warnings, /downtime/i)).toBe(false);
+  });
+
+  it('mentions SIGHUP or configuration in the effect line', () => {
+    const result = explain('systemctl reload nginx');
+    expect(hasEffectMatching(result.effects, /sighup|configuration|reload/i)).toBe(true);
+  });
+});
+
+describe('TC-CE-104: systemctl enable — persistence warning', () => {
+  it('warns that the change survives reboot', () => {
+    const result = explain('systemctl enable nginx');
+    expect(hasWarningMatching(result.warnings, /persist|reboot|survives/i)).toBe(true);
+  });
+});
+
+describe('TC-CE-105: systemctl disable — persistence warning', () => {
+  it('warns that the change survives reboot', () => {
+    const result = explain('systemctl disable nginx');
+    expect(hasWarningMatching(result.warnings, /persist|reboot|survives/i)).toBe(true);
+  });
+});
+
+describe('TC-CE-106: systemctl mask — start-blocked warning', () => {
+  it('warns the service cannot be started until unmasked', () => {
+    const result = explain('systemctl mask nginx');
+    expect(hasWarningMatching(result.warnings, /unmask|cannot be started/i)).toBe(true);
+  });
+});
+
+describe('TC-CE-107: systemctl reboot/poweroff/halt — host-disruption warning', () => {
+  it('warns about host-level disruption on reboot', () => {
+    const result = explain('systemctl reboot');
+    expect(hasWarningMatching(result.warnings, /host|disruption|connections/i)).toBe(true);
+  });
+
+  it('warns about host-level disruption on poweroff', () => {
+    const result = explain('systemctl poweroff');
+    expect(hasWarningMatching(result.warnings, /host|disruption|connections/i)).toBe(true);
+  });
+
+  it('warns about host-level disruption on halt', () => {
+    const result = explain('systemctl halt');
+    expect(hasWarningMatching(result.warnings, /host|disruption|connections/i)).toBe(true);
+  });
+});
+
+describe('TC-CE-108: systemctl status — no warnings (read-only)', () => {
+  it('emits no warnings for a status query', () => {
+    const result = explain('systemctl status nginx');
+    expect(result.warnings).toHaveLength(0);
+  });
+});
+
+describe('TC-CE-109: systemctl daemon-reload — summary', () => {
+  it('mentions reloading systemd unit files', () => {
+    const result = explain('systemctl daemon-reload');
+    expect(result.summary).toMatch(/systemd|unit files/i);
+  });
+});
+
+describe('TC-CE-110: systemctl — fallback with no subcommand', () => {
+  it('falls back gracefully when no subcommand is given', () => {
+    const result = explain('systemctl');
+    expect(result.summary).toMatch(/systemctl/i);
+    expect(result.warnings).toHaveLength(0);
+  });
+});
+
+describe('TC-CE-111: service — SysV-style start/stop/restart', () => {
+  it('summarises `service nginx start`', () => {
+    const result = explain('service nginx start');
+    expect(result.summary).toMatch(/start/i);
+    expect(result.summary).toContain('nginx');
+  });
+
+  it('warns about disconnects on `service nginx stop`', () => {
+    const result = explain('service nginx stop');
+    expect(hasWarningMatching(result.warnings, /disconnect/i)).toBe(true);
+  });
+
+  it('warns about downtime on `service nginx restart`', () => {
+    const result = explain('service nginx restart');
+    expect(hasWarningMatching(result.warnings, /downtime|restart/i)).toBe(true);
+  });
+});
+
+describe('TC-CE-112: reboot — host-disruption warning', () => {
+  it('warns about host-level disruption', () => {
+    const result = explain('reboot');
+    expect(hasWarningMatching(result.warnings, /host|disruption|connections/i)).toBe(true);
+  });
+});
+
+describe('TC-CE-113: shutdown — host-disruption warning and scheduled time', () => {
+  it('warns about host-level disruption with default args', () => {
+    const result = explain('shutdown -h now');
+    expect(hasWarningMatching(result.warnings, /host|disruption|connections/i)).toBe(true);
+  });
+
+  it('reports the scheduled time in the summary', () => {
+    const result = explain('shutdown -h +10');
+    expect(result.summary).toContain('+10');
+  });
+
+  it('treats -r as a reboot rather than a power-off', () => {
+    const result = explain('shutdown -r now');
+    expect(result.summary).toMatch(/reboot/i);
+  });
+
+  it('treats -c as a cancel — emits no host-disruption warning', () => {
+    const result = explain('shutdown -c');
+    expect(result.summary).toMatch(/cancel/i);
+    expect(hasWarningMatching(result.warnings, /host|disruption/i)).toBe(false);
+  });
+});
+
+describe('TC-CE-114: init — runlevel-specific summaries', () => {
+  it('treats `init 0` as host poweroff with disruption warning', () => {
+    const result = explain('init 0');
+    expect(result.summary).toMatch(/power off|poweroff|runlevel 0/i);
+    expect(hasWarningMatching(result.warnings, /host|disruption/i)).toBe(true);
+  });
+
+  it('treats `init 6` as host reboot with disruption warning', () => {
+    const result = explain('init 6');
+    expect(result.summary).toMatch(/reboot|runlevel 6/i);
+    expect(hasWarningMatching(result.warnings, /host|disruption/i)).toBe(true);
+  });
+
+  it('treats `init 1` as single-user mode', () => {
+    const result = explain('init 1');
+    expect(result.summary).toMatch(/single-user/i);
+  });
+
+  it('falls back gracefully when no runlevel is given', () => {
+    const result = explain('init');
+    expect(result.summary).toMatch(/init/i);
+  });
+});
+
+describe('TC-CE-115: systemctl start — no unit specified falls back gracefully', () => {
+  it('summarises without a unit name when none is provided', () => {
+    const result = explain('systemctl start');
+    expect(result.summary).toMatch(/start/i);
+    expect(result.warnings).toHaveLength(0);
+  });
+});
+
+describe('TC-CE-116: systemctl unmask — removes /dev/null symlink', () => {
+  it('mentions unmasking in the summary', () => {
+    const result = explain('systemctl unmask nginx');
+    expect(result.summary).toMatch(/unmask/i);
+    expect(result.summary).toContain('nginx');
+  });
+});
+
+describe('TC-CE-117: systemctl suspend / hibernate — host-disruption warning', () => {
+  it('warns about disruption on suspend', () => {
+    const result = explain('systemctl suspend');
+    expect(hasWarningMatching(result.warnings, /host|disruption|connections/i)).toBe(true);
+  });
+
+  it('warns about disruption on hibernate', () => {
+    const result = explain('systemctl hibernate');
+    expect(hasWarningMatching(result.warnings, /host|disruption|connections/i)).toBe(true);
+  });
+
+  it('warns about disruption on kexec', () => {
+    const result = explain('systemctl kexec');
+    expect(hasWarningMatching(result.warnings, /host|disruption|connections/i)).toBe(true);
+  });
+});
+
+describe('TC-CE-118: systemctl unknown subcommand — falls back gracefully with no warnings', () => {
+  it('echoes the subcommand in the summary without warnings', () => {
+    const result = explain('systemctl is-active nginx');
+    expect(result.summary).toContain('is-active');
+    expect(result.warnings).toHaveLength(0);
+  });
+});
+
+describe('TC-CE-119: service — fallback paths (no unit, no action, reload, status, unknown)', () => {
+  it('falls back gracefully when no unit is given', () => {
+    const result = explain('service');
+    expect(result.summary).toMatch(/service/i);
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  it('summarises a unit-only invocation without an action', () => {
+    const result = explain('service nginx');
+    expect(result.summary).toContain('nginx');
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  it('emits a SIGHUP-style effect on reload', () => {
+    const result = explain('service nginx reload');
+    expect(hasEffectMatching(result.effects, /sighup|configuration|reload/i)).toBe(true);
+  });
+
+  it('emits no warnings on status (read-only)', () => {
+    const result = explain('service nginx status');
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  it('falls back gracefully on an unknown action', () => {
+    const result = explain('service nginx try-restart');
+    expect(result.summary).toContain('try-restart');
+    expect(result.warnings).toHaveLength(0);
+  });
+});
+
+describe('TC-CE-120: shutdown — bare invocation without time argument', () => {
+  it('summarises a host-shutdown without a scheduled time', () => {
+    const result = explain('shutdown');
+    expect(result.summary).toMatch(/shut\s*s?\s*down/i);
+    expect(hasWarningMatching(result.warnings, /host|disruption/i)).toBe(true);
+  });
+});
+
+describe('TC-CE-121: init — single-user (S) and unknown runlevels', () => {
+  it('treats `init S` as single-user mode (uppercase)', () => {
+    const result = explain('init S');
+    expect(result.summary).toMatch(/single-user/i);
+  });
+
+  it('treats `init s` as single-user mode (lowercase)', () => {
+    const result = explain('init s');
+    expect(result.summary).toMatch(/single-user/i);
+  });
+
+  it('reports an unknown runlevel without a host-disruption warning', () => {
+    const result = explain('init 3');
+    expect(result.summary).toMatch(/runlevel 3/i);
+    expect(hasWarningMatching(result.warnings, /host|disruption/i)).toBe(false);
   });
 });

@@ -60,6 +60,10 @@ const COVERAGE_EXEMPT = new Set<string>([
   ActionClass.MemoryRead,
   ActionClass.MemoryWrite,
   ActionClass.PaymentInitiate,
+  // v1.3.2: typed tools for systemctl/service/reboot/shutdown/init.
+  // v1.3.1 ships only the registry alias + explainer pattern (Layers 1+2);
+  // typed tool wrappers land in v1.3.2 once HITL volume is measured.
+  ActionClass.SystemService,
 ]);
 
 // ─── Scanning helpers ──────────────────────────────────────────────────────────

@@ -618,6 +618,218 @@ function ncExplain(args: string[]): ExplainResult {
   return { summary, effects: ['Establishes a network connection'], warnings: [] };
 }
 
+// ── Service management detectors ───────────────────────────────────────────────
+
+function systemctlExplain(args: string[]): ExplainResult {
+  const sub = args[0];
+  const unit = positionalArgs(args.slice(1))[0];
+  const unitLabel = unit !== undefined && unit.length > 0 ? ` ${unit}` : '';
+
+  switch (sub) {
+    case undefined:
+      return { summary: 'Runs systemctl', effects: [], warnings: [] };
+    case 'start':
+      return {
+        summary: `Starts service${unitLabel}`,
+        effects: ['Starts a system service'],
+        warnings: [],
+      };
+    case 'stop':
+      return {
+        summary: `Stops service${unitLabel}`,
+        effects: ['Stops a running service'],
+        warnings: ['Active service users will be disconnected'],
+      };
+    case 'restart':
+      return {
+        summary: `Restarts service${unitLabel}`,
+        effects: ['Stops then starts a service'],
+        warnings: ['Brief downtime during restart'],
+      };
+    case 'reload':
+      return {
+        summary: `Reloads configuration for service${unitLabel}`,
+        effects: ['Triggers SIGHUP on the service'],
+        warnings: [],
+      };
+    case 'enable':
+      return {
+        summary: `Enables service${unitLabel} at boot`,
+        effects: ['Adds boot-time start hook'],
+        warnings: ['Persistent — survives reboot'],
+      };
+    case 'disable':
+      return {
+        summary: `Disables service${unitLabel} at boot`,
+        effects: ['Removes boot-time start hook'],
+        warnings: ['Persistent — survives reboot'],
+      };
+    case 'mask':
+      return {
+        summary: `Masks service${unitLabel}`,
+        effects: ['Symlinks the unit file to /dev/null'],
+        warnings: ['Service cannot be started until unmasked'],
+      };
+    case 'unmask':
+      return {
+        summary: `Unmasks service${unitLabel}`,
+        effects: ['Removes the /dev/null symlink'],
+        warnings: [],
+      };
+    case 'daemon-reload':
+      return {
+        summary: 'Reloads systemd unit files',
+        effects: ['Re-reads /etc/systemd/system/'],
+        warnings: [],
+      };
+    case 'status':
+      return {
+        summary: `Shows status for service${unitLabel}`,
+        effects: [],
+        warnings: [],
+      };
+    case 'reboot':
+    case 'poweroff':
+    case 'halt':
+    case 'kexec':
+    case 'suspend':
+    case 'hibernate':
+      return {
+        summary: `${sub === 'reboot' ? 'Reboots' : sub === 'poweroff' ? 'Powers off' : sub === 'halt' ? 'Halts' : sub === 'kexec' ? 'Kexec-restarts' : sub === 'suspend' ? 'Suspends' : 'Hibernates'} the host`,
+        effects: ['Terminates or pauses all running processes'],
+        warnings: ['Host-level disruption — all connections drop'],
+      };
+    default:
+      return {
+        summary: `Runs systemctl ${sub}${unitLabel}`,
+        effects: [],
+        warnings: [],
+      };
+  }
+}
+
+function serviceExplain(args: string[]): ExplainResult {
+  // SysV-style `service <unit> <action>` — args[0] is the unit, args[1] is the action.
+  const unit = args[0];
+  const action = args[1];
+  if (unit === undefined) {
+    return { summary: 'Runs service', effects: [], warnings: [] };
+  }
+  if (action === undefined) {
+    return {
+      summary: `Runs service ${unit}`,
+      effects: [],
+      warnings: [],
+    };
+  }
+  switch (action) {
+    case 'start':
+      return {
+        summary: `Starts service ${unit}`,
+        effects: ['Starts a system service'],
+        warnings: [],
+      };
+    case 'stop':
+      return {
+        summary: `Stops service ${unit}`,
+        effects: ['Stops a running service'],
+        warnings: ['Active service users will be disconnected'],
+      };
+    case 'restart':
+      return {
+        summary: `Restarts service ${unit}`,
+        effects: ['Stops then starts a service'],
+        warnings: ['Brief downtime during restart'],
+      };
+    case 'reload':
+      return {
+        summary: `Reloads configuration for service ${unit}`,
+        effects: ['Triggers SIGHUP on the service'],
+        warnings: [],
+      };
+    case 'status':
+      return {
+        summary: `Shows status for service ${unit}`,
+        effects: [],
+        warnings: [],
+      };
+    default:
+      return {
+        summary: `Runs service ${unit} ${action}`,
+        effects: [],
+        warnings: [],
+      };
+  }
+}
+
+function rebootExplain(_args: string[]): ExplainResult {
+  return {
+    summary: 'Reboots the host',
+    effects: ['Terminates all running processes'],
+    warnings: ['Host-level disruption — all connections drop'],
+  };
+}
+
+function shutdownExplain(args: string[]): ExplainResult {
+  // `shutdown -r now` reboots; `shutdown -h now` (or default) powers off; `shutdown -c` cancels.
+  const flags = args.filter(a => a.startsWith('-'));
+  const positional = positionalArgs(args);
+  const time = positional[0]; // 'now', '+10', '23:30', etc.
+
+  if (flags.includes('-c')) {
+    return {
+      summary: 'Cancels a pending shutdown',
+      effects: ['Aborts the scheduled host shutdown'],
+      warnings: [],
+    };
+  }
+  const isReboot = flags.includes('-r');
+  const verb = isReboot ? 'Reboots' : 'Shuts down';
+  const summary = time !== undefined && time.length > 0
+    ? `${verb} the host (scheduled: ${time})`
+    : `${verb} the host`;
+  return {
+    summary,
+    effects: ['Terminates all running processes'],
+    warnings: ['Host-level disruption — all connections drop'],
+  };
+}
+
+function initExplain(args: string[]): ExplainResult {
+  const level = args[0];
+  // `init 0` powers off; `init 6` reboots; `init 1` is single-user; `init 3`/`5` are multi-user.
+  switch (level) {
+    case '0':
+      return {
+        summary: 'Switches to runlevel 0 — powers off the host',
+        effects: ['Terminates all running processes'],
+        warnings: ['Host-level disruption — all connections drop'],
+      };
+    case '6':
+      return {
+        summary: 'Switches to runlevel 6 — reboots the host',
+        effects: ['Terminates all running processes'],
+        warnings: ['Host-level disruption — all connections drop'],
+      };
+    case '1':
+    case 'S':
+    case 's':
+      return {
+        summary: `Switches to single-user mode (runlevel ${level})`,
+        effects: ['Stops most system services'],
+        warnings: ['Network and multi-user services will be unavailable'],
+      };
+    case undefined:
+      return { summary: 'Runs init', effects: [], warnings: [] };
+    default:
+      return {
+        summary: `Switches to runlevel ${level}`,
+        effects: [],
+        warnings: ['Service availability may change'],
+      };
+  }
+}
+
 // ── Rule table ─────────────────────────────────────────────────────────────────
 
 interface CommandRule {
@@ -651,6 +863,12 @@ const rules: CommandRule[] = [
   { match: /^ssh\b/,             explain: sshExplain },
   { match: /^scp\b/,             explain: scpExplain },
   { match: /^(nc|netcat)\b/,     explain: ncExplain },
+  // Service / host-lifecycle management
+  { match: /^systemctl\b/,       explain: systemctlExplain },
+  { match: /^service\b/,         explain: serviceExplain },
+  { match: /^reboot\b/,          explain: rebootExplain },
+  { match: /^shutdown\b/,        explain: shutdownExplain },
+  { match: /^init\b/,            explain: initExplain },
 ];
 
 // ── Public API ─────────────────────────────────────────────────────────────────
