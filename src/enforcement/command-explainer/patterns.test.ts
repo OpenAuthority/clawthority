@@ -42,6 +42,7 @@
  *                          xz, unxz, 7z)
  *   TC-CE-276 – TC-CE-285: cleanup explainers — grep / rmdir / unlink / shred,
  *                          mv-as-deletion detection
+ *   TC-CE-286 – TC-CE-291: network.shell additions — mosh / telnet
  */
 
 import { describe, it, expect } from 'vitest';
@@ -3767,4 +3768,88 @@ describe('TC-CE-285: bare invocations do not crash', () => {
       expect(result.summary.length).toBeGreaterThan(0);
     },
   );
+});
+
+// ── TC-CE-286 – TC-CE-291 : network.shell additions (mosh, telnet) ──────────
+
+describe('TC-CE-286: mosh — names host', () => {
+  it('reports the host in the summary', () => {
+    const result = explain('mosh alice@host.example.com');
+    expect(result.summary).toMatch(/mosh session/i);
+    expect(result.summary).toContain('alice@host.example.com');
+  });
+});
+
+describe('TC-CE-287: mosh — long-running session warning', () => {
+  it('warns about persistent state across network failures', () => {
+    const result = explain('mosh alice@host.example.com');
+    expect(hasWarningMatching(result.warnings, /Long-running|persists across|outlives/i)).toBe(true);
+  });
+
+  it('always warns about interactive remote access', () => {
+    const result = explain('mosh alice@host.example.com');
+    expect(hasWarningMatching(result.warnings, /interactive access/i)).toBe(true);
+  });
+});
+
+describe('TC-CE-288: telnet — unencrypted-protocol warning', () => {
+  it('warns about plaintext credentials and content', () => {
+    const result = explain('telnet host.example.com');
+    expect(hasWarningMatching(result.warnings, /unencrypted|plaintext|in plaintext/i)).toBe(true);
+  });
+
+  it('reports the host in the summary', () => {
+    const result = explain('telnet host.example.com 23');
+    expect(result.summary).toContain('host.example.com');
+  });
+});
+
+describe('TC-CE-289: rule routing — ssh vs mosh vs telnet', () => {
+  it('"ssh host" routes to sshExplain', () => {
+    const result = explain('ssh alice@host');
+    expect(result.summary).toMatch(/secure shell/i);
+  });
+
+  it('"mosh host" routes to moshExplain (not ssh)', () => {
+    const result = explain('mosh alice@host');
+    expect(result.summary).toMatch(/mosh session/i);
+    expect(result.summary).not.toMatch(/secure shell/i);
+  });
+
+  it('"telnet host" routes to telnetExplain (not ssh)', () => {
+    const result = explain('telnet host');
+    expect(result.summary).toMatch(/telnet/i);
+    expect(result.summary).not.toMatch(/secure shell/i);
+  });
+});
+
+describe('TC-CE-290: bare invocations do not crash (network.shell)', () => {
+  it.each(['ssh', 'mosh', 'telnet'])(
+    '"%s" produces a non-empty summary without throwing',
+    (cmd) => {
+      const result = explain(cmd);
+      expect(result.summary.length).toBeGreaterThan(0);
+    },
+  );
+});
+
+describe('TC-CE-291: bare docker — explainer dispatch unchanged after L1 alias', () => {
+  // Adding `docker` as a code.execute L1 alias does not change the rule-table
+  // dispatch — the bare `docker` token still hits the docker rule, which
+  // dispatches by subcommand. These tests pin that behaviour.
+  it('"docker run --rm ubuntu" still dispatches to dockerRunExplain', () => {
+    const result = explain('docker run --rm ubuntu');
+    // dockerRunExplain summary mentions "container".
+    expect(result.summary).toMatch(/container/i);
+  });
+
+  it('"docker ps" still dispatches to dockerPsExplain', () => {
+    const result = explain('docker ps');
+    expect(result.summary).toMatch(/running containers/i);
+  });
+
+  it('"docker push myorg/myapp:1.0" still dispatches to dockerPushExplain', () => {
+    const result = explain('docker push myorg/myapp:1.0');
+    expect(result.summary).toContain('myorg/myapp:1.0');
+  });
 });

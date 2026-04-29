@@ -77,6 +77,7 @@ export const ActionClass = {
   NetworkScan: 'network.scan',
   SchedulingPersist: 'scheduling.persist',
   NetworkTransfer: 'network.transfer',
+  NetworkShell: 'network.shell',
   ClusterManage: 'cluster.manage',
   VcsRead: 'vcs.read',
   VcsWrite: 'vcs.write',
@@ -96,7 +97,7 @@ export const ActionClass = {
 export type ActionClassValue = (typeof ActionClass)[keyof typeof ActionClass];
 
 // ---------------------------------------------------------------------------
-// Registry — 41 entries, aliases stored lowercase
+// Registry — 42 entries, aliases stored lowercase
 // ---------------------------------------------------------------------------
 
 export const REGISTRY: readonly ActionRegistryEntry[] = [
@@ -434,6 +435,13 @@ export const REGISTRY: readonly ActionRegistryEntry[] = [
       'code_runner',
       'docker_run',
       'docker_exec',
+      // Bare docker binary. Multi-subcommand (run / build / push / ps / exec /
+      // ...) — most concerning subcommand is `docker run` which is arbitrary
+      // code execution, so the bare alias inherits code.execute's high /
+      // per_request tier. Explainer dispatches per-subcommand for messaging
+      // detail; read-only `docker ps` inherits the conservative tier as a
+      // trade-off until typed-tool wrappers split the modes.
+      'docker',
     ],
   },
   {
@@ -591,6 +599,16 @@ export const REGISTRY: readonly ActionRegistryEntry[] = [
       'sftp',
     ],
     intent_group: 'data_exfiltration',
+  },
+  {
+    action_class: ActionClass.NetworkShell,
+    default_risk: 'high',
+    default_hitl_mode: 'per_request',
+    aliases: [
+      'ssh',
+      'mosh',
+      'telnet',
+    ],
   },
   {
     action_class: ActionClass.ClusterManage,

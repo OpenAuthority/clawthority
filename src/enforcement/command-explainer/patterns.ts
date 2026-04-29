@@ -2272,6 +2272,31 @@ function sshExplain(args: string[]): ExplainResult {
   };
 }
 
+function moshExplain(args: string[]): ExplainResult {
+  const host = positionalArgs(args)[0] ?? '<host>';
+  return {
+    summary: `Opens a mosh session to ${host}`,
+    effects: ['Establishes a UDP-based remote terminal that persists across network changes'],
+    warnings: [
+      'Grants interactive access to a remote system',
+      'Long-running session — mosh state outlives transient network failures',
+    ],
+  };
+}
+
+function telnetExplain(args: string[]): ExplainResult {
+  const positional = positionalArgs(args);
+  const host = positional[0] ?? '<host>';
+  return {
+    summary: `Opens a telnet connection to ${host}`,
+    effects: ['Establishes an unencrypted remote terminal connection'],
+    warnings: [
+      'Grants interactive access to a remote system',
+      'Telnet is unencrypted — credentials and session content cross the network in plaintext',
+    ],
+  };
+}
+
 function scpExplain(args: string[]): ExplainResult {
   const pos = positionalArgs(args);
   const src = pos[0] ?? '<source>';
@@ -2601,6 +2626,8 @@ const rules: CommandRule[] = [
   { match: /^curl\b/,            explain: curlExplain },
   { match: /^wget\b/,            explain: wgetExplain },
   { match: /^ssh\b/,             explain: sshExplain },
+  { match: /^mosh\b/,            explain: moshExplain },
+  { match: /^telnet\b/,          explain: telnetExplain },
   { match: /^scp\b/,             explain: scpExplain },
   { match: /^sftp\b/,            explain: sftpExplain },
   { match: /^(nc|netcat)\b/,     explain: ncExplain },

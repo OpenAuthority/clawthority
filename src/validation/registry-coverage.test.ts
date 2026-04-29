@@ -100,6 +100,12 @@ const COVERAGE_EXEMPT = new Set<string>([
   // get typed wrappers. v1.3.1 ships only the registry alias + explainer +
   // per_request HITL.
   ActionClass.ClusterManage,
+  // v1.4: typed tool wrappers for ssh / mosh / telnet would constrain the
+  // remote-host endpoint to a configured allowlist (analogous to web.fetch's
+  // `allowed_domains`). Interactive remote shells also fall into the
+  // long-running-streams bucket — see the v1.4 RFC. v1.3.1 ships only the
+  // registry alias + explainer + per_request HITL.
+  ActionClass.NetworkShell,
 ]);
 
 // ─── Scanning helpers ──────────────────────────────────────────────────────────

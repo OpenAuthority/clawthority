@@ -118,6 +118,10 @@ describe('registry coverage — each action class resolves from at least one ali
     ['bunzip2',          'archive.extract'],
     ['unxz',             'archive.extract'],
     ['install',          'filesystem.write'],
+    ['ssh',              'network.shell'],
+    ['mosh',             'network.shell'],
+    ['telnet',           'network.shell'],
+    ['docker',           'code.execute'],
     ['git_log',          'vcs.read'],
     ['git_add',          'vcs.write'],
     ['git_clone',        'vcs.remote'],
@@ -704,6 +708,62 @@ describe('system.service — virsh alias', () => {
   it('VIRSH (uppercase) → system.service via case-insensitive alias lookup', () => {
     const result = normalize_action('VIRSH', {});
     expect(result.action_class).toBe('system.service');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// network.shell action class — ssh / mosh / telnet
+// ---------------------------------------------------------------------------
+
+describe('network.shell aliases and defaults', () => {
+  it('ssh → network.shell with high risk and per_request HITL', () => {
+    const result = normalize_action('ssh', {});
+    expect(result.action_class).toBe('network.shell');
+    expect(result.risk).toBe('high');
+    expect(result.hitl_mode).toBe('per_request');
+  });
+
+  it('mosh → network.shell', () => {
+    const result = normalize_action('mosh', {});
+    expect(result.action_class).toBe('network.shell');
+  });
+
+  it('telnet → network.shell', () => {
+    const result = normalize_action('telnet', {});
+    expect(result.action_class).toBe('network.shell');
+  });
+
+  it('SSH (uppercase) → network.shell via case-insensitive alias lookup', () => {
+    const result = normalize_action('SSH', {});
+    expect(result.action_class).toBe('network.shell');
+  });
+
+  it('no intent_group on network.shell', () => {
+    const result = normalize_action('ssh', {});
+    expect(result.intent_group).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// code.execute — bare docker alias
+// ---------------------------------------------------------------------------
+
+describe('code.execute — bare docker alias', () => {
+  it('docker → code.execute with high risk and per_request HITL', () => {
+    const result = normalize_action('docker', {});
+    expect(result.action_class).toBe('code.execute');
+    expect(result.risk).toBe('high');
+    expect(result.hitl_mode).toBe('per_request');
+  });
+
+  it('docker_run (typed-tool name) still routes to code.execute', () => {
+    const result = normalize_action('docker_run', {});
+    expect(result.action_class).toBe('code.execute');
+  });
+
+  it('DOCKER (uppercase) → code.execute via case-insensitive alias lookup', () => {
+    const result = normalize_action('DOCKER', {});
+    expect(result.action_class).toBe('code.execute');
   });
 });
 
