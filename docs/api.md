@@ -1,13 +1,21 @@
 # API Reference
 
-> **Status: Reference spec — not yet implemented.**
+> **⚠️ This API does not exist in v1.3.1. This document is design-target only.**
 >
-> This document describes the target REST + Server-Sent Events surface for a
-> Clawthority management API. **No HTTP server currently ships with the plugin.**
-> The endpoints below are the agreed contract for upcoming dashboard and
-> control-plane work (see [roadmap.md](roadmap.md) — *Firma Remote Adapter* and
-> the *Control Plane API* under Future). Until that work lands, treat this page
-> as a design document, not operational documentation.
+> This page describes the target REST + Server-Sent Events surface for a
+> future Clawthority management API. **No HTTP server ships with the plugin
+> in v1.3.1 (or any earlier release).** The endpoints below are the agreed
+> contract for upcoming dashboard and control-plane work — see
+> [roadmap.md](roadmap.md) under *Firma Remote Adapter* and the *Control
+> Plane API* in Future. Until that work lands, treat this page as a design
+> document, not operational documentation.
+>
+> **What v1.3.1 actually provides:**
+> - Audit access: tail / query [`data/audit.jsonl`](configuration.md#audit-logging)
+> - Rule management: edit `data/rules.json` (hot-reload via watcher)
+> - Auto-permit management: `npm run list-auto-permits` / `revoke-auto-permit` etc.
+> - HITL approval routing: `hitl-policy.yaml` (hot-reload)
+> - Programmatic enforcement: register the plugin via OpenClaw's `before_tool_call` hook
 
 The UI dashboard will expose a REST API for managing rules and querying the audit log, plus a Server-Sent Events (SSE) endpoint for live audit streaming.
 

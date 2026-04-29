@@ -21,7 +21,7 @@ Agent tool call  ─►  Clawthority  ─►  Allow  │  Deny  │  Ask human  
 ```
 
 > [!NOTE]
-> **v1.x - stable API.** The plugin API and policy bundle schema follow [semantic versioning](https://semver.org); breaking changes ship in a future major release. The version badge above reflects the current release (1.2.1).
+> **v1.x - stable API.** The plugin API and policy bundle schema follow [semantic versioning](https://semver.org); breaking changes ship in a future major release. The version badge above reflects the current release (1.3.1).
 
 ---
 
@@ -145,7 +145,7 @@ Agent picks a tool → Clawthority intercepts
 │    • untrusted source + high risk → deny                 │
 │                                                          │
 │  Stage 2: Constraint Enforcement Engine                  │
-│    • protected path check (~/.ssh, /etc/, .env, ...)       │
+│    • protected path check (~/.ssh, /etc/, .env, ...)     │
 │    • trusted domain check (communication.external.send)  │
 │    • PolicyEngine.evaluateByActionClass(...)             │
 │                                                          │
@@ -188,24 +188,42 @@ Full table: [docs/action-registry.md](docs/action-registry.md).
 
 ## Human-in-the-loop
 
-High-risk action classes route to a human for approval via Telegram or Slack. Approvals are:
+High-risk action classes route to a human for approval via Telegram, Slack, or a console fallback. Approvals are:
 
 - **Payload-bound** - SHA-256 of `(action_class | target | payload_hash)` is stored with the approval and re-verified at consumption. Any parameter change invalidates the token.
-- **One-time** (`approve_once`) or **session-scoped** (`session`) - session approvals keyed on `${session_id}:${action_class}`.
-- **TTL-limited** - default 120 seconds, configurable.
+- **One-time** (Approve Once), **session-scoped** (Approve Always), or denied (Deny) - operators choose with a button tap, no command typing.
+- **TTL-limited** - default 120 seconds, configurable per HITL policy.
 - **UUID v7 IDs** - time-sortable, safe to log.
 
-Example approval message:
+Approval messages are rendered in MarkdownV2 (Telegram) / Block Kit (Slack) / a colored console block. The body includes the raw command, an explainer summary, structured effects and warnings, an optional agent intent hint, and three inline buttons:
 
 ```
-Action:  communication.external.send
-Target:  user@partner.com
-Summary: communication.external.send → user@partner.com
-Expires: 2026-04-14T12:34:56Z
-Token:   01f2e4b8-...
+🛠️  ACTION REQUIRES APPROVAL
+
+Agent:  main          Tool: exec       Risk: 🔴 HIGH
+Expires in: 120s
+
+📌 What will run:
+  docker run -it --rm -v /:/host ubuntu bash -c "setup.sh"
+
+📋 What this does:
+  • Starts a container
+  • Mounts your full filesystem (/) into the container
+  • Executes a shell script inside the container
+
+⚠️ Warnings:
+  • Full disk access (host filesystem mounted at /host)
+  • Potential system modification
+
+❓ Why this is happening:
+  The agent is trying to install project dependencies.
+
+[ ✅ Approve once ] [ 🔁 Approve always ] [ ❌ Deny ]
 ```
 
-Channel setup, retry/backoff, and fallback behaviour: [docs/human-in-the-loop.md](docs/human-in-the-loop.md).
+🔁 **Approve Always** derives a permit pattern from the command, persists it to `data/auto-permits.json`, and the next matching call bypasses HITL entirely. Manage stored permits with `npm run list-auto-permits` / `revoke-auto-permit`.
+
+Channel setup, retry/backoff, fallback behaviour, and the legacy `/approve <token>` text-command path (kept for one release): [docs/human-in-the-loop.md](docs/human-in-the-loop.md).
 
 ---
 
