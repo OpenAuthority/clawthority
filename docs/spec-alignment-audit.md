@@ -2,8 +2,8 @@
 
 > **Purpose.** This document provides a formal checklist confirming that the Clawthority plugin implementation satisfies every requirement in the Integration Spec (architecture.md §10) and the Framework for Enforced Plugins (FEP). Each requirement is cross-referenced to its implementation location and verification mechanism.
 >
-> **Last audited:** 2026-04-22
-> **Automated verification:** `npm run validate:spec` (runs `SpecAlignmentValidator` — 15 checks, 0 failures)
+> **Last audited:** 2026-04-29 (v1.3.1 release)
+> **Automated verification:** `npm run validate:spec` (runs `SpecAlignmentValidator` — 17 checks, 0 failures)
 
 ---
 
@@ -15,7 +15,7 @@
 | FEP §2 — ExecutionEnvelope | 2 | SA-F-01, SA-F-08 | All pass |
 | FEP §4.2 — Typed Intent | 6 | SA-F-02 – SA-F-07 | All pass |
 | FEP Shell Prohibition | 2 | SA-S-01, SA-S-02 | All pass |
-| **Total** | **17** | **15 automated** | **Compliant** |
+| **Total** | **17** | **17 automated** | **Compliant** |
 
 ---
 
@@ -27,7 +27,7 @@ Source: `docs/architecture.md §10` + enforcement pipeline invariants
 
 | Req | Requirement | Check | Implementation | Status |
 |---|---|---|---|---|
-| §A.8.1 | Action normalization layer must translate raw tool names to canonical `action_class` identifiers | SA-I-01 | `src/enforcement/normalize.ts` — `normalize_action()` function; 19 action classes + fail-closed catch-all | PASS |
+| §A.8.1 | Action normalization layer must translate raw tool names to canonical `action_class` identifiers | SA-I-01 | `src/enforcement/normalize.ts` — `normalize_action()` function; 42 action classes + fail-closed `unknown_sensitive_action` catch-all (frozen v2 taxonomy as of v1.3.1) | PASS |
 | §A.8.2 | Two-stage pipeline: Stage 1 must perform capability gate before any policy evaluation | SA-I-02 | `src/enforcement/stage1-capability.ts` — 7 capability gate checks including binding hash validation and expiry | PASS |
 | §A.8.3 | Two-stage pipeline: Stage 2 must perform Cedar-style policy evaluation against normalized `action_class` | SA-I-03 | `src/enforcement/stage2-policy.ts` — `PolicyEngine` evaluation with forbid-wins semantics and rate limiting | PASS |
 | §A.8.4 | Authority backend must be decoupled via `IAuthorityAdapter` interface to support swapping between file and remote (Firma) adapters | SA-I-04 | `src/adapter/types.ts` — `IAuthorityAdapter` interface with `issueCapability()`, `watchPolicyBundle()`, `watchRevocations()` | PASS |

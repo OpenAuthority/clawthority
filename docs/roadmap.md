@@ -2,7 +2,7 @@
 
 > **What this page is for.** What Clawthority has shipped, what is in progress, and what comes next. Updated as work completes.
 
-Last updated: April 2026
+Last updated: April 2026 (v1.3.1 release)
 
 ---
 
@@ -14,7 +14,7 @@ These features are built, tested, and working in the current codebase.
 - Canonical `ExecutionEnvelope` data structure wrapping every agent action (intent, capability, metadata, provenance)
 - Canonical factory in `src/envelope.ts`: `buildEnvelope`, `uuidv7`, `computePayloadHash`, `computeContextHash`, `sortedJsonStringify`
 - Stable SHA-256 payload hashing (shallow-sorted keys) and context hashing (`action_class|target|summary`)
-- Metadata fields for tracing: `session_id`, `approval_id`, `trace_id`, `bundle_version`, `source_trust_level`
+- Metadata fields for tracing: `session_id`, `approval_id`, `trace_id`, `bundle_version`, `source_trust_level`, optional `intent_hint` (v1.3.0+)
 
 ### Two-Stage Enforcement Pipeline
 - `runPipeline()` orchestrator in `src/enforcement/pipeline.ts` with HITL pre-check
@@ -24,13 +24,13 @@ These features are built, tested, and working in the current codebase.
 - `executionEvent` emitter for downstream observers
 
 ### Action Normalization & Registry
-- Static registry of canonical action classes with case-insensitive alias index (`src/enforcement/normalize.ts`)
-- Web action coverage with full alias set (DuckDuckGo, HTTP method variants, `web.search`, `web.fetch`, `browser.scrape`)
-- Destructive filesystem aliases (`filesystem.delete`) and `intent_group` classification (e.g. `destructive_fs`)
+- Static registry of canonical action classes with case-insensitive alias index (`packages/action-registry/src/index.ts`)
+- **42 named action classes + fail-closed `unknown_sensitive_action` sentinel (frozen v2 taxonomy as of v1.3.1)** — see [`docs/action-taxonomy.md`](action-taxonomy.md) and [`docs/action-registry.md`](action-registry.md)
+- Coverage spans filesystem, web, browser, shell, communication, memory, credential, code, payment, system, permissions, process, network (diagnose / scan / transfer / shell), cluster, scheduling, vcs, package, build, archive
 - Reclassification rules: `filesystem.write` with URL target → `web.post`; shell metacharacter in params raises risk to `critical`
-- Ordered target extraction (`path → file → url → destination → to → recipient → email`)
+- Ordered target extraction with per-class overrides (filesystem / vcs / package / build / archive / shell.exec / code.execute)
 - Fail-closed `unknown_sensitive_action` catch-all for unregistered tools
-- 19 web action classes documented in `action-registry.md`
+- v1.3.1 closed the 16-category exec-command coverage gap by adding ~80 bare-binary aliases (e.g. `cat`, `chmod`, `kubectl`, `apt`, `tar`, `systemctl`) so commands invoked via a generic shell-exec tool also classify correctly
 
 ### Cedar-Style Policy Engine
 - Forbid-wins semantics (explicit forbid overrides any permit)
@@ -97,8 +97,14 @@ These features are built, tested, and working in the current codebase.
 - JSON and YAML policy file parser with schema validation
 - Hot-reload watcher (debounced, atomic swap)
 - In-memory `ApprovalManager` with token generation, TTL expiry, and concurrent request support
-- **Telegram adapter**: long-polling listener, `/approve` and `/deny` command parsing
-- **Slack adapter**: Block Kit interactive buttons, webhook server with signature verification, message update on decision
+- **`runWithHitl` wrapper** (`src/enforcement/hitl-dispatch.ts`) handles the dispatch + re-run loop on top of `runPipeline` — operator approves, capability is issued, pipeline re-runs with the capability bound
+- **Telegram adapter**: long-polling listener with `callback_query` support; **inline buttons (v1.3.0)** for Approve Once / Approve Always / Deny; MarkdownV2 message body with explainer-driven sections; legacy `/approve <token>` text-command path retained as a fallback for v1.3.x
+- **Slack adapter**: Block Kit with three interactive buttons (Approve Once / Approve Always / Deny), webhook server with HMAC-SHA256 signature verification + 5-minute timestamp window, message update on decision
+- **Console adapter** (v1.3.0): rich text + ANSI colour rendering for local development and CI; `[a] / [s] / [d]` keystroke prompt
+- **Approve Always** (v1.3.0): pattern derivation from the original command, persisted to `data/auto-permits.json` (hot-reloadable, separate from `data/rules.json`); CLI helpers (`npm run list-auto-permits`, `revoke-auto-permit`, etc.)
+- **Command explainer** (v1.3.0+): rule-based engine in `src/enforcement/command-explainer/patterns.ts` produces summary / effects / warnings for HITL message bodies. ~100 explainer functions covering filesystem / git / package / network / scheduling / containers / archives / process / permissions / system / read-utility commands; v1.3.1 closed the 16-category exec-command coverage gap
+- **`intent_hint` metadata** (v1.3.0): agent-supplied "Why this is happening" line surfaced in HITL messages; truncated to 200 characters
+- **Three feature flags**: `CLAWTHORITY_DISABLE_APPROVE_ALWAYS`, `CLAWTHORITY_APPROVE_ALWAYS_AUTO_CONFIRM`, `CLAWTHORITY_HITL_MINIMAL`
 - Wired into `before_tool_call` after the Cedar policy engine
 - Fail-safe: channel unreachable or not configured applies policy fallback; evaluation errors fail closed
 - **Retry resilience**: exponential backoff and circuit breaker for rate-limit recovery (`src/hitl/retry.ts`)

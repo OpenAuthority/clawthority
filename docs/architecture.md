@@ -123,8 +123,11 @@ interface Metadata {
   bundle_version: number;  // Policy bundle version in effect
   trace_id: string;        // Distributed trace identifier
   source_trust_level: string; // 'user' | 'agent' | 'untrusted'
+  intent_hint?: string;    // Optional, agent-supplied (v1.3.0+)
 }
 ```
+
+`intent_hint` (v1.3.0+) is an optional plain-text rationale supplied by the agent at tool-call time. The HITL adapters render it as the "Why this is happening" section of the approval message body so operators can see *why* the agent is requesting an action, not just what it's requesting. The plugin sanitises and truncates the hint at 200 characters before display; longer values are truncated with an ellipsis. Absent or empty hints suppress the section entirely. Read by `beforeToolCallHandler` from `ctx.metadata.intent_hint` and threaded through `dispatchHitlChannel` to all three channel adapters (Telegram, Slack, console).
 
 ### Building an Envelope
 
@@ -302,6 +305,58 @@ const stage2 = createStage2(engine);
 // Wire into the pipeline:
 const result = await runPipeline(ctx, stage1, stage2, emitter);
 ```
+
+### HITL Dispatch Wrapper
+
+`runPipeline` itself is synchronous from the caller's perspective: it walks Stage 1 → Stage 2 and returns a single `CeeDecision`. When the result is a HITL-gated forbid (priority < 100, with a matching HITL policy), the decision is **not** the final answer — it's a signal to dispatch an approval request and re-run the pipeline with a freshly-issued capability.
+
+`runWithHitl` (added in v1.2.1; expanded in v1.3.0) wraps `runPipeline` to handle this loop:
+
+```
+runWithHitl(ctx, stage1, stage2, emitter, opts)
+        │
+        ▼
+First pass: runPipeline(ctx with hitl_mode='none', ...)
+        │
+        ├── permit? ────────────────────────────► return permit
+        │
+        ├── forbid (priority >= 100)? ──────────► return forbid (unconditional)
+        │
+        └── forbid (priority < 100, HITL-gated)?
+                │
+                ▼
+        checkAction(hitlConfig, action_class)
+                │
+                ├── no policy match? ───────────► return forbid (uphold)
+                │
+                └── policy match
+                        │
+                        ▼
+                opts.manager.createApprovalRequest(...)
+                        │
+                        ▼
+                dispatchHitlChannel — Telegram / Slack / console
+                  (renders MarkdownV2 / Block Kit / colored text
+                   from explainer summary, effects, warnings,
+                   intent_hint, command. v1.3.0+)
+                        │
+                        ▼
+                await handle.promise — operator decision
+                        │
+                        ├── denied / expired? ──► return forbid (decision-bound reason)
+                        │
+                        └── approved
+                                │
+                                ▼
+                        opts.issueCapability(action_class, target, payload_hash)
+                                │
+                                ▼
+                        Re-run: runPipeline(ctx with approval_id, hitl_mode='per_request', ...)
+                          The wrapped Stage 2 converts priority < 100 forbids to permits
+                          (the operator has already approved); priority >= 100 still blocks.
+```
+
+The Approve Always button (v1.3.0+) is handled in the `dispatchHitlChannel` branch: tapping it triggers a confirmation flow that derives a permit pattern, persists it to `data/auto-permits.json`, registers a session-scoped auto-approval on the `ApprovalManager`, and resolves the original approval as approved. The next call whose command matches the saved pattern is short-circuited at the top of Stage 2 (before Cedar even runs) with `effect: 'permit', stage: 'auto-permit'`. See [docs/human-in-the-loop.md — Approve Always](human-in-the-loop.md#approve-always) for the full feature lifecycle.
 
 ---
 
