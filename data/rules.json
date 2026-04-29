@@ -26,6 +26,14 @@
   },
 
   {
+    "effect": "forbid",
+    "action_class": "permissions.elevate",
+    "priority": 92,
+    "reason": "permissions.elevate (sudo / su / doas / passwd) is forbidden by default in v1.3.2. Privilege elevation has unbounded blast radius once root is granted; the v1.3.2 typed-tool roadmap (docs/release-plans/v1.3.2.md §2.2) deliberately ships NO typed wrapper for these binaries. Operators who need privilege escalation must either lower the priority of this rule for their environment, or use unsafe_admin_exec under the documented escape-hatch protocol (CLAWTHORITY_ENABLE_UNSAFE_ADMIN_EXEC + per-call HITL + audit log).",
+    "tags": ["permissions", "elevation", "security", "v1.3.2"]
+  },
+
+  {
     "effect": "permit",
     "action_class": "vcs.remote",
     "priority": 60,

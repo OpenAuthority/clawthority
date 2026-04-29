@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.2] — 2026-04-29
+
+Typed-tool depth release: closes the per-tool injection-surface gap that v1.3.1's breadth pass left open. v1.3.1 added registry aliases (Layer 1) and explainer patterns (Layer 2) so policy and HITL could *target* high-risk commands; v1.3.2 adds typed-tool wrappers (Layer 3) so agents that opt in get a structured execution path with no shell interpretation. Defense-in-depth on top of v1.3.1, not a replacement — the existing `bash`/`exec` path still works, the typed tools are additional.
+
+### Added
+
+#### 13 typed-tool wrappers for high-risk admin commands
+
+Each wrapper invokes a single fixed external binary via `spawnSync` with an explicit argv array and `{ shell: false }`. Pre-flight validators reject shell metacharacters at the parameter level so a malicious value can never reach the binary, even in the absence of a shell.
+
+| Tool | Action class | Notes |
+|---|---|---|
+| `systemctl_unit_action` | `system.service` | `unit` regex `^[a-zA-Z0-9._@-]+$`; `action` enum start/stop/restart/reload/enable/disable/mask/unmask/status/is-active/is-enabled |
+| `reboot` | `system.service` | mandatory `confirm: true` structural barrier |
+| `shutdown` | `system.service` | modes poweroff/reboot/cancel; tight schedule regex (`now`, `+<minutes>`, `HH:MM`); cancel forbids time |
+| `chmod_path` | `permissions.modify` | numeric or symbolic mode; recursive flag |
+| `chown_path` | `permissions.modify` | POSIX-portable user/group; numeric uid/gid; recursive flag |
+| `kill_process` | `process.signal` | curated signal allowlist; default TERM (KILL must be explicit) |
+| `pkill_pattern` | `process.signal` | curated regex metachars permitted; shell injection rejected |
+| `kubectl_get` | `cluster.read` | only kubectl_* tool on the read class |
+| `kubectl_apply` | `cluster.write` | manifest_path + optional namespace + dry_run |
+| `kubectl_delete` | `cluster.write` | resource AND name required (no bulk-delete escape hatch) |
+| `kubectl_rollout` | `cluster.write` | actions: status / restart / undo |
+| `docker_push` | `cluster.write` | optional registry prefix; `--all-tags` mutually exclusive with tagged ref |
+| `crontab_list` | `scheduling.persist` | read-only `crontab -l` |
+| `crontab_install_from_file` | `scheduling.persist` | mandatory `replace_confirm: true`; replaces user's entire crontab |
+| `crontab_remove` | `scheduling.persist` | `crontab -r [-u user]` |
+
+(Total 15 tools across the 13 binaries — `kubectl_*` is four tools.)
+
+Notably **not** wrapped: `crontab -e` (interactive editor — out of scope; use `unsafe_admin_exec`), `kubectl exec` / `kubectl port-forward` (long-running streams — deferred to v1.4), and any `permissions.elevate` binary (`sudo` / `su` / `passwd` / `doas`) — see below.
+
+#### Default-forbid rule on `permissions.elevate`
+
+`data/rules.json` ships a new forbid rule at priority 92 against `permissions.elevate`. v1.3.1 added the action class; v1.3.2 makes the block-by-default posture concrete. Operators who need privilege elevation either lower the rule's priority for their environment or use `unsafe_admin_exec` under the documented escape-hatch protocol. This resolves the open question §14.4 of the v1.3.2 release plan.
+
+### Changed
+
+#### `cluster.manage` split into `cluster.read` and `cluster.write` — taxonomy bumped v2 → v3
+
+The single `cluster.manage` class added in v1.3.1 conflated read-heavy operator volume (`kubectl get`) with workload-scale destructive writes (`kubectl apply` / `delete` / `rollout`), producing HITL fatigue on reads and training rubber-stamping that weakened the gate for writes. RFC-003 splits the class:
+
+- **`cluster.read`** (low / per_request) — bound by `kubectl_get` only. No bare-binary alias.
+- **`cluster.write`** (high / per_request) — bound by `kubectl_apply` / `kubectl_delete` / `kubectl_rollout` / `docker_push` and the bare `kubectl` alias.
+
+The bare `kubectl` alias maps to `cluster.write` because free-form `bash kubectl ...` cannot be parsed for read-vs-write at the alias level — the safer default is to assume write. The typed `kubectl_get` tool restores read precision.
+
+**Migration:** Operators with rules targeting `cluster.manage` see them become inert. Rewrite as `cluster.write` for the equivalent "block kubectl writes" intent, or both classes for parity with the prior behaviour.
+
+### Governance
+
+- RFC-001..RFC-004 filed retroactively against the action classes the v1.3.2 typed tools bind to: `process.signal`, `permissions.modify`, `cluster.manage` → `cluster.read`/`cluster.write` split, `scheduling.persist`. Closes the v1.3.1 governance gap for these classes. Six other v1.3.1-era classes (`system.service`, `permissions.elevate`, `network.*`) remain pending RFC backfill — see [docs/rfc/README.md](docs/rfc/README.md).
+- `docs/action-taxonomy.md` and `docs/action-registry.md` updated for the cluster split (v3 taxonomy header, renumbered table, namespace description).
+- `SpecAlignmentValidator.CHILD_PROCESS_ALLOWLIST` extended for the 13 v1.3.2 typed-tool directories so each tool's `spawnSync(binary, argv, { shell: false })` call passes SA-S-01 / SA-S-02.
+
+### Tests
+
+- ~290 new unit tests across the 13 typed-tool directories (validators + manifest sanity + spawn integration where safe).
+- 5 new E2E suites — `tools-systemctl.e2e.ts`, `tools-reboot-shutdown.e2e.ts`, `tools-permissions.e2e.ts`, `tools-process-signal.e2e.ts`, `tools-kubectl.e2e.ts` — exercising HITL → approve → permit → typed-tool pre-flight for each tool.
+
 ## [1.3.1] — 2026-04-29
 
 Coverage release: closes the classification gap for the 16-category exec command audit. Every common shell command an agent can invoke now has either a registry alias (Layer 1) so policies and HITL gates can target it specifically, or an explainer pattern (Layer 2) so HITL approval messages explain what's about to run in plain English — and almost all have both.
