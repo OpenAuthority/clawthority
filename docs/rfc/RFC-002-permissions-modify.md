@@ -1,7 +1,8 @@
 # RFC-002: Action class `permissions.modify`
 
-**Status:** open
+**Status:** implemented
 **Filed:** 2026-04-29
+**Resolved:** 2026-04-29 (implemented in v1.3.2 — `chmod_path` and `chown_path` typed tools bind to this class)
 **Requestor:** @paolo
 **SLA deadline:** 2026-05-13 (14 days from filing)
 

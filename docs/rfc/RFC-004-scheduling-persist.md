@@ -1,7 +1,8 @@
 # RFC-004: Action class `scheduling.persist`
 
-**Status:** open
+**Status:** implemented
 **Filed:** 2026-04-29
+**Resolved:** 2026-04-29 (implemented in v1.3.2 — `crontab_list`, `crontab_install_from_file`, `crontab_remove` typed tools bind to this class)
 **Requestor:** @paolo
 **SLA deadline:** 2026-05-13 (14 days from filing)
 

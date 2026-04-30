@@ -1,7 +1,8 @@
 # RFC-003: Cluster namespace — split `cluster.manage` into `cluster.read` / `cluster.write`
 
-**Status:** open
+**Status:** implemented
 **Filed:** 2026-04-29
+**Resolved:** 2026-04-29 (implemented in v1.3.2 — taxonomy bumped v2 → v3; `kubectl_get` binds to `cluster.read`; `kubectl_apply` / `kubectl_delete` / `kubectl_rollout` / `docker_push` and the bare `kubectl` alias bind to `cluster.write`)
 **Requestor:** @paolo
 **SLA deadline:** 2026-05-13 (14 days from filing)
 
