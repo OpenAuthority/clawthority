@@ -20,9 +20,14 @@ Numbers are assigned at submission time in filing order. Numbers are never reuse
 
 | RFC | Title | Status | Filed | Resolved |
 |-----|-------|--------|-------|----------|
-| — | *No RFCs filed yet* | — | — | — |
+| [RFC-001](RFC-001-process-signal.md) | Action class `process.signal` | implemented | 2026-04-29 | 2026-04-29 (v1.3.2) |
+| [RFC-002](RFC-002-permissions-modify.md) | Action class `permissions.modify` | implemented | 2026-04-29 | 2026-04-29 (v1.3.2) |
+| [RFC-003](RFC-003-cluster-manage.md) | Cluster namespace — split `cluster.manage` into `cluster.read` / `cluster.write` | implemented | 2026-04-29 | 2026-04-29 (v1.3.2) |
+| [RFC-004](RFC-004-scheduling-persist.md) | Action class `scheduling.persist` | implemented | 2026-04-29 | 2026-04-29 (v1.3.2) |
 
-> **Pending RFC:** `browser.navigate` action class (deferred from v1 taxonomy design review, Thread 5). File as RFC-001 when a concrete browser navigation tool implementation exists in a shipped skill. See `docs/action-taxonomy.md` §Design Review Record, Thread 5.
+> **Pending RFC:** `browser.navigate` action class (deferred from v1 taxonomy design review, Thread 5). File when a concrete browser navigation tool implementation exists in a shipped skill. See `docs/action-taxonomy.md` §Design Review Record, Thread 5.
+>
+> **Outstanding governance gap:** v1.3.1 added six additional action classes that are present in the frozen v2 taxonomy without RFCs filed (`system.service`, `permissions.elevate`, `network.diagnose`, `network.scan`, `network.transfer`, `network.shell`). The four RFCs above cover the classes directly targeted by v1.3.2 typed tools; the remaining six should be backfilled in a follow-up cleanup pass.
 
 ---
 

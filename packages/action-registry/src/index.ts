@@ -78,7 +78,8 @@ export const ActionClass = {
   SchedulingPersist: 'scheduling.persist',
   NetworkTransfer: 'network.transfer',
   NetworkShell: 'network.shell',
-  ClusterManage: 'cluster.manage',
+  ClusterRead: 'cluster.read',
+  ClusterWrite: 'cluster.write',
   VcsRead: 'vcs.read',
   VcsWrite: 'vcs.write',
   VcsRemote: 'vcs.remote',
@@ -522,6 +523,11 @@ export const REGISTRY: readonly ActionRegistryEntry[] = [
       // virsh manages libvirt VM lifecycles — same operational tier as
       // systemctl: lifecycle ops on resources that other workloads depend on.
       'virsh',
+      // v1.3.2 typed-tool aliases. The typed tools wrap the same binaries
+      // with structured argv; the registry alias makes the typed-tool names
+      // route to the same action class so policy rules targeting
+      // system.service apply uniformly to bare-binary and typed-tool calls.
+      'systemctl_unit_action',
     ],
   },
   {
@@ -533,6 +539,9 @@ export const REGISTRY: readonly ActionRegistryEntry[] = [
       'chown',
       'chgrp',
       'umask',
+      // v1.3.2 typed-tool aliases.
+      'chmod_path',
+      'chown_path',
     ],
   },
   {
@@ -554,6 +563,9 @@ export const REGISTRY: readonly ActionRegistryEntry[] = [
       'kill',
       'pkill',
       'killall',
+      // v1.3.2 typed-tool aliases.
+      'kill_process',
+      'pkill_pattern',
     ],
   },
   {
@@ -587,6 +599,12 @@ export const REGISTRY: readonly ActionRegistryEntry[] = [
       'batch',
       'atq',
       'atrm',
+      // v1.3.2 typed-tool aliases. `crontab_list` is read-leaning but
+      // kept on scheduling.persist for policy-targeting consistency;
+      // operators can downgrade to system.read via reclassification.
+      'crontab_list',
+      'crontab_install_from_file',
+      'crontab_remove',
     ],
   },
   {
@@ -611,11 +629,34 @@ export const REGISTRY: readonly ActionRegistryEntry[] = [
     ],
   },
   {
-    action_class: ActionClass.ClusterManage,
+    action_class: ActionClass.ClusterRead,
+    default_risk: 'low',
+    default_hitl_mode: 'per_request',
+    aliases: [
+      // v1.3.2 typed-tool alias. Bare `kubectl` does NOT alias here —
+      // see RFC-003: free-form `bash kubectl ...` cannot be parsed for
+      // read-vs-write at alias level and routes to cluster.write as a
+      // conservative default.
+      'kubectl_get',
+    ],
+  },
+  {
+    action_class: ActionClass.ClusterWrite,
     default_risk: 'high',
     default_hitl_mode: 'per_request',
     aliases: [
+      // Bare-binary fallback: free-form `bash kubectl ...` cannot be parsed
+      // for read-vs-write at alias level, so we route it to the destructive
+      // class as a conservative default. Typed tools (kubectl_get etc.)
+      // declare cluster.read or cluster.write at the manifest level for
+      // precision. See RFC-003.
       'kubectl',
+      // v1.3.2 typed-tool aliases for kubectl write subcommands and
+      // image-distribution operations.
+      'kubectl_apply',
+      'kubectl_delete',
+      'kubectl_rollout',
+      'docker_push',
     ],
   },
   {

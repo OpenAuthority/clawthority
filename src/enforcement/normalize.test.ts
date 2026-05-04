@@ -90,7 +90,7 @@ describe('registry coverage — each action class resolves from at least one ali
     ['rsync',            'network.transfer'],
     ['apt',              'package.install'],
     ['brew',              'package.install'],
-    ['kubectl',          'cluster.manage'],
+    ['kubectl',          'cluster.write'],
     ['virsh',            'system.service'],
     // Bare-binary aliases for read-only utilities (added v1.3.1 final pass).
     ['cat',              'filesystem.read'],
@@ -671,23 +671,23 @@ describe('package.install — distro / system package manager bare aliases', () 
 });
 
 // ---------------------------------------------------------------------------
-// cluster.manage action class — kubectl alias
+// cluster.read / cluster.write — kubectl alias (cluster namespace)
 // ---------------------------------------------------------------------------
 
-describe('cluster.manage aliases and defaults', () => {
-  it('kubectl → cluster.manage with high risk and per_request HITL', () => {
+describe('cluster.write aliases and defaults', () => {
+  it('kubectl → cluster.write with high risk and per_request HITL (conservative bare-binary fallback per RFC-003)', () => {
     const result = normalize_action('kubectl', {});
-    expect(result.action_class).toBe('cluster.manage');
+    expect(result.action_class).toBe('cluster.write');
     expect(result.risk).toBe('high');
     expect(result.hitl_mode).toBe('per_request');
   });
 
-  it('KUBECTL (uppercase) → cluster.manage via case-insensitive alias lookup', () => {
+  it('KUBECTL (uppercase) → cluster.write via case-insensitive alias lookup', () => {
     const result = normalize_action('KUBECTL', {});
-    expect(result.action_class).toBe('cluster.manage');
+    expect(result.action_class).toBe('cluster.write');
   });
 
-  it('no intent_group on cluster.manage', () => {
+  it('no intent_group on cluster.write', () => {
     const result = normalize_action('kubectl', {});
     expect(result.intent_group).toBeUndefined();
   });

@@ -58,20 +58,21 @@ The registry recognises both **tool-name** aliases (e.g. `read_file`, `git_log`,
 | 27 | `network.scan` | high | per_request | — | **v1.3.1** |
 | 28 | `network.transfer` | high | per_request | `data_exfiltration` | **v1.3.1** |
 | 29 | `network.shell` | high | per_request | — | **v1.3.1** |
-| 30 | `cluster.manage` | high | per_request | — | **v1.3.1** |
-| 31 | `scheduling.persist` | high | per_request | — | **v1.3.1** |
-| 32 | `vcs.read` | low | none | — | v1 |
-| 33 | `vcs.write` | medium | per_request | — | v1 |
-| 34 | `vcs.remote` | medium | per_request | — | v1 |
-| 35 | `package.install` | medium | per_request | — | v1 |
-| 36 | `package.run` | medium | per_request | — | v1.2.x |
-| 37 | `package.read` | low | none | — | v1.2.x |
-| 38 | `build.compile` | medium | per_request | — | v1 |
-| 39 | `build.test` | low | none | — | v1 |
-| 40 | `build.lint` | low | none | — | v1 |
-| 41 | `archive.create` | medium | per_request | — | v1.2.x |
-| 42 | `archive.extract` | medium | per_request | — | v1.2.x |
-| 43 | `archive.read` | low | none | — | v1.2.x |
+| 30 | `cluster.read` | low | per_request | — | **v1.3.2** |
+| 31 | `cluster.write` | high | per_request | — | **v1.3.2** |
+| 32 | `scheduling.persist` | high | per_request | — | **v1.3.1** |
+| 33 | `vcs.read` | low | none | — | v1 |
+| 34 | `vcs.write` | medium | per_request | — | v1 |
+| 35 | `vcs.remote` | medium | per_request | — | v1 |
+| 36 | `package.install` | medium | per_request | — | v1 |
+| 37 | `package.run` | medium | per_request | — | v1.2.x |
+| 38 | `package.read` | low | none | — | v1.2.x |
+| 39 | `build.compile` | medium | per_request | — | v1 |
+| 40 | `build.test` | low | none | — | v1 |
+| 41 | `build.lint` | low | none | — | v1 |
+| 42 | `archive.create` | medium | per_request | — | v1.2.x |
+| 43 | `archive.extract` | medium | per_request | — | v1.2.x |
+| 44 | `archive.read` | low | none | — | v1.2.x |
 | — | `unknown_sensitive_action` | critical | per_request | — | v1 (sentinel) |
 
 ---
@@ -93,7 +94,7 @@ Risk levels determine how seriously the enforcement pipeline treats a given acti
 
 **Medium (recoverable writes)** — `filesystem.write`, `web.search`, `web.fetch`, `web.post`, `browser.scrape`, `communication.slack`, `communication.webhook`, `memory.write`, `vcs.write`, `vcs.remote`, `package.install`, `package.run`, `build.compile`, `archive.create`, `archive.extract`. These produce side effects (modifying files, calling endpoints, posting messages, installing dependencies) but blast radius is bounded and the operation is generally reversible. Memory writes are medium because memory is agent-internal state with no direct external footprint. Web fetch / scrape are medium (not low) because they can retrieve sensitive resources, exfiltrate data via URL parameters, or be weaponised for SSRF.
 
-**High (irreversible / externally visible)** — `filesystem.delete`, `shell.exec`, `communication.email`, `credential.read`, `credential.list`, `code.execute`, `permissions.modify`, `process.signal`, `network.scan`, `network.transfer`, `network.shell`, `cluster.manage`, `scheduling.persist`. Each carries meaningful irreversibility or external exposure:
+**High (irreversible / externally visible)** — `filesystem.delete`, `shell.exec`, `communication.email`, `credential.read`, `credential.list`, `code.execute`, `permissions.modify`, `process.signal`, `network.scan`, `network.transfer`, `network.shell`, `cluster.write`, `scheduling.persist`. Each carries meaningful irreversibility or external exposure:
 - `filesystem.delete` destroys data with no undo path.
 - `shell.exec` and `code.execute` grant arbitrary OS / runtime access.
 - `communication.email` sends content to external parties who may act before correction is possible.
@@ -103,7 +104,7 @@ Risk levels determine how seriously the enforcement pipeline treats a given acti
 - `network.scan` (nmap) actively probes remote hosts and may trigger IDS / violate AUP.
 - `network.transfer` (rsync/scp/sftp) moves data off-host — `data_exfiltration` intent group.
 - `network.shell` (ssh/mosh/telnet) opens a remote shell — lateral movement to a different host.
-- `cluster.manage` (kubectl) modifies cluster state.
+- `cluster.write` (kubectl apply/delete/rollout, docker push) modifies cluster state. Reads (`kubectl get`) live under `cluster.read` (low) because they only disclose state.
 - `scheduling.persist` (crontab/at) creates work that runs unattended.
 
 **Critical (system-wide impact)** — `credential.write`, `credential.rotate`, `payment.initiate`, `system.service`, `permissions.elevate`, `unknown_sensitive_action`. These carry the highest stakes:
@@ -416,11 +417,21 @@ Interactive remote shell access. Distinct from `code.execute` (local) and `netwo
 
 ---
 
-### Cluster management *(v1.3.1)*
+### Cluster management *(v1.3.1, split in v1.3.2)*
 
-#### `cluster.manage` — high / per_request
+`cluster.manage` was introduced in v1.3.1 as a single class and **split in v1.3.2** into `cluster.read` and `cluster.write` per [RFC-003](rfc/RFC-003-cluster-manage.md). Read-vs-write was the dominant operator-fatigue dimension and follows the precedent of `filesystem.read` / `filesystem.write` and `vcs.read` / `vcs.write`.
 
-Kubernetes / cluster orchestration. The explainer dispatches by subcommand (`apply` / `delete` / `get` / `describe` / `logs` / `exec` / `port-forward` / `rollout` / `scale`); the namespace flag (`-n` / `--namespace=`) propagates into every applicable summary. `kubectl exec -it` and `port-forward` carry additional warnings about interactive / long-running sessions (they fit the v1.4 streams design more than the synchronous model).
+#### `cluster.read` — low / per_request
+
+Cluster reads disclose workload state without modifying it. Bound to the typed `kubectl_get` tool. No bare-binary alias — free-form `bash kubectl get ...` cannot be parsed for read-vs-write at the alias level and routes to `cluster.write` (the conservative default).
+
+**Aliases:** — (none — only the typed `kubectl_get` tool)
+
+#### `cluster.write` — high / per_request
+
+Cluster writes modify cluster state. Bound to the typed `kubectl_apply`, `kubectl_delete`, `kubectl_rollout` (W5) and `docker_push` (W6) tools, plus the bare `kubectl` alias as a conservative fallback for free-form shell calls.
+
+The explainer dispatches by subcommand (`apply` / `delete` / `get` / `describe` / `logs` / `exec` / `port-forward` / `rollout` / `scale`); the namespace flag (`-n` / `--namespace=`) propagates into every applicable summary. `kubectl exec -it` and `port-forward` carry additional warnings about interactive / long-running sessions (they fit the v1.4 streams design more than the synchronous model).
 
 **Aliases:** `kubectl`
 
@@ -593,7 +604,7 @@ The `target` field in a `NormalizedAction` identifies the resource the action op
 
 The target is embedded in the HITL approval token binding via `SHA-256(action_class | target | payload_hash)`. An approval issued for `filesystem.delete` on `/tmp/scratch.txt` cannot be replayed against `/home/user/.ssh/id_rsa`.
 
-> **Action classes added in v1.3.1** (`system.service`, `permissions.*`, `process.signal`, `network.*`, `cluster.manage`, `scheduling.persist`) currently use the generic fallback for target extraction. Future passes may add per-class overrides as concrete typed-tool wrappers ship.
+> **Action classes added in v1.3.1 / v1.3.2** (`system.service`, `permissions.*`, `process.signal`, `network.*`, `cluster.read`, `cluster.write`, `scheduling.persist`) currently use the generic fallback for target extraction. Future passes may add per-class overrides as concrete typed-tool wrappers ship.
 
 ---
 
@@ -712,7 +723,8 @@ policies:
 | `network.scan` | high | — |
 | `network.transfer` | high | `data_exfiltration` |
 | `network.shell` | high | — |
-| `cluster.manage` | high | — |
+| `cluster.read` | low | — |
+| `cluster.write` | high | — |
 | `scheduling.persist` | high | — |
 | `vcs.write` | medium | — |
 | `vcs.remote` | medium | — |

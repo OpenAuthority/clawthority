@@ -1,6 +1,6 @@
 # OpenClaw Action Taxonomy
 
-> **Status: frozen v2** (released with v1.3.1)
+> **Status: frozen v3** (released with v1.3.2)
 >
 > This taxonomy is the stable contract for policy authoring, tool manifests, and HITL routing. Action class names, risk defaults, HITL defaults, and intent groups are **immutable** until a formal RFC is approved per the process below.
 >
@@ -10,9 +10,9 @@
 
 ## Overview
 
-Every tool call an agent makes is normalised to a canonical **action class** before policy evaluation. The taxonomy defines 41 named action classes plus the fail-closed `unknown_sensitive_action` sentinel, organised into functional namespaces.
+Every tool call an agent makes is normalised to a canonical **action class** before policy evaluation. The taxonomy defines 44 named action classes plus the fail-closed `unknown_sensitive_action` sentinel, organised into functional namespaces.
 
-The frozen v2 taxonomy is the source of truth for:
+The frozen v3 taxonomy is the source of truth for:
 - Policy authoring (`action_class` and `intent_group` values in YAML and JSON rules)
 - Tool manifest declarations (`action_class` field in `ToolManifest`)
 - HITL enforcement (default `risk_tier` and `default_hitl_mode` alignment requirements)
@@ -52,20 +52,21 @@ The frozen v2 taxonomy is the source of truth for:
 | 27 | `network.scan` | network | high | per_request | — | **v1.3.1** |
 | 28 | `network.transfer` | network | high | per_request | `data_exfiltration` | **v1.3.1** |
 | 29 | `network.shell` | network | high | per_request | — | **v1.3.1** |
-| 30 | `cluster.manage` | cluster | high | per_request | — | **v1.3.1** |
-| 31 | `scheduling.persist` | scheduling | high | per_request | — | **v1.3.1** |
-| 32 | `vcs.read` | vcs | low | none | — | v1 |
-| 33 | `vcs.write` | vcs | medium | per_request | — | v1 |
-| 34 | `vcs.remote` | vcs | medium | per_request | — | v1 |
-| 35 | `package.install` | package | medium | per_request | — | v1 |
-| 36 | `package.run` | package | medium | per_request | — | v1.2.x |
-| 37 | `package.read` | package | low | none | — | v1.2.x |
-| 38 | `build.compile` | build | medium | per_request | — | v1 |
-| 39 | `build.test` | build | low | none | — | v1 |
-| 40 | `build.lint` | build | low | none | — | v1 |
-| 41 | `archive.create` | archive | medium | per_request | — | v1.2.x |
-| 42 | `archive.extract` | archive | medium | per_request | — | v1.2.x |
-| 43 | `archive.read` | archive | low | none | — | v1.2.x |
+| 30 | `cluster.read` | cluster | low | per_request | — | **v1.3.2** |
+| 31 | `cluster.write` | cluster | high | per_request | — | **v1.3.2** |
+| 32 | `scheduling.persist` | scheduling | high | per_request | — | **v1.3.1** |
+| 33 | `vcs.read` | vcs | low | none | — | v1 |
+| 34 | `vcs.write` | vcs | medium | per_request | — | v1 |
+| 35 | `vcs.remote` | vcs | medium | per_request | — | v1 |
+| 36 | `package.install` | package | medium | per_request | — | v1 |
+| 37 | `package.run` | package | medium | per_request | — | v1.2.x |
+| 38 | `package.read` | package | low | none | — | v1.2.x |
+| 39 | `build.compile` | build | medium | per_request | — | v1 |
+| 40 | `build.test` | build | low | none | — | v1 |
+| 41 | `build.lint` | build | low | none | — | v1 |
+| 42 | `archive.create` | archive | medium | per_request | — | v1.2.x |
+| 43 | `archive.extract` | archive | medium | per_request | — | v1.2.x |
+| 44 | `archive.read` | archive | low | none | — | v1.2.x |
 | — | `unknown_sensitive_action` | — | critical | per_request | — | v1 (sentinel) |
 
 ---
@@ -87,7 +88,7 @@ The frozen v2 taxonomy is the source of truth for:
 | `permissions` | modify, elevate | File mode / ownership changes; privilege elevation (sudo / su / passwd) |
 | `process` | signal | Signal delivery to running processes (kill / pkill / killall) |
 | `network` | diagnose, scan, transfer, shell | Network diagnostics, port scanning, file-transfer protocols, interactive remote shells |
-| `cluster` | manage | Kubernetes-style cluster management |
+| `cluster` | read, write | Kubernetes-style cluster management — reads (kubectl get) vs. writes (apply / delete / rollout) |
 | `scheduling` | persist | Persistent unattended job scheduling (cron / at / batch) |
 | `vcs` | read, write, remote | Version control system operations |
 | `package` | install, run, read | Dependency installation, script execution, package metadata |

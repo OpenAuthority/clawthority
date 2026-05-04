@@ -447,6 +447,13 @@ export class SpecAlignmentValidator {
     // invokes a single fixed external binary (npm, pip, make, docker, pytest)
     // with structured arguments derived from typed parameters.
     /^src\/tools\/(?:npm_install|npm_run|pip_install|make_run|docker_run|pytest)\/[a-z-]+\.ts$/,
+    // v1.3.2 typed-tool wrappers for high-risk admin commands. Same safe-
+    // pattern category as the package/build wrappers above: each tool
+    // invokes a single fixed external binary (systemctl, reboot, shutdown,
+    // chmod, chown, kill, pkill, kubectl, docker, crontab) with explicit
+    // argv arrays and { shell: false }. Pre-flight validators reject shell
+    // metacharacters at the parameter level. See docs/release-plans/v1.3.2.md.
+    /^src\/tools\/(?:systemctl_unit_action|reboot|shutdown|chmod_path|chown_path|kill_process|pkill_pattern|kubectl_apply|kubectl_get|kubectl_delete|kubectl_rollout|docker_push|crontab_list|crontab_install_from_file|crontab_remove)\/[a-z-]+\.ts$/,
     // Meta-level validators that must reference the forbidden API names
     // as strings/regex sources to detect them in other files.
     /^src\/validation\/spec-alignment-validator\.ts$/,

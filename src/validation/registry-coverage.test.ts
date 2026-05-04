@@ -94,12 +94,14 @@ const COVERAGE_EXEMPT = new Set<string>([
   // ships only the registry alias + explainer + per_request HITL, with the
   // data_exfiltration intent_group so a single rule can cover all transports.
   ActionClass.NetworkTransfer,
-  // v1.3.2: typed tools for kubectl (apply / get / delete / rollout — see
-  // release-plan §7). kubectl exec / port-forward are in the "long-running /
-  // separate process" bucket and need the v1.4 streams design before they
-  // get typed wrappers. v1.3.1 ships only the registry alias + explainer +
-  // per_request HITL.
-  ActionClass.ClusterManage,
+  // v1.3.2 ships typed tools for kubectl (apply / get / delete / rollout)
+  // and docker_push. cluster.read is covered by kubectl_get; cluster.write
+  // is covered by kubectl_apply / kubectl_delete / kubectl_rollout /
+  // docker_push. kubectl exec / port-forward remain deferred to v1.4
+  // (long-running streams). When the W5/W6 typed tools land their manifests
+  // remove these exemptions.
+  ActionClass.ClusterRead,
+  ActionClass.ClusterWrite,
   // v1.4: typed tool wrappers for ssh / mosh / telnet would constrain the
   // remote-host endpoint to a configured allowlist (analogous to web.fetch's
   // `allowed_domains`). Interactive remote shells also fall into the
