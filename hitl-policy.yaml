@@ -1,0 +1,35 @@
+version: "1"
+
+telegram:
+  botToken: "8694602059:AAEdfGSqt2N-AAuISGkVtOXniUVegP-KgYM"
+  chatId: "408983788"
+
+policies:
+  - name: destructive-actions
+    description: Require approval before deleting files
+    actions:
+      - "filesystem.delete"
+    approval:
+      channel: telegram
+      timeout: 120
+      fallback: deny
+
+  - name: external-communication
+    description: Require approval before sending external messages
+    actions:
+      - "communication.email"
+      - "communication.slack"
+      - "communication.webhook"
+    approval:
+      channel: telegram
+      timeout: 120
+      fallback: deny
+
+  - name: payment-namespace
+    description: All payment actions need explicit sign-off
+    actions:
+      - "payment.initiate"
+    approval:
+      channel: telegram
+      timeout: 300
+      fallback: deny

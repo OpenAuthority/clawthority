@@ -6,7 +6,7 @@ export type { ResolvedTelegramConfig } from './config.js';
 export { resolveTelegramConfig } from './config.js';
 
 const TELEGRAM_API = 'https://api.telegram.org';
-const POLL_TIMEOUT_SECONDS = 30;
+const POLL_TIMEOUT_SECONDS = 5;
 const RETRY_DELAY_MS = 5_000;
 const POLL_RATE_LIMIT_DELAY_MS = 30_000;
 /** Maximum character count for command explanation text before truncation. */
@@ -441,16 +441,67 @@ export class TelegramListener {
     ) => string | void,
   ) {}
 
+  /** Masked token for safe logging (shows first 8 chars + …). */
+  private get maskedToken(): string {
+    return this.botToken.length > 8 ? this.botToken.slice(0, 8) + '…' : '***';
+  }
+
   /** Starts the long-polling loop. Safe to call multiple times (no-op if already running). */
   start(): void {
     if (this.running) return;
     this.running = true;
-    this.poll().catch((err) => {
-      if (this.running) {
-        console.error('[hitl-telegram] poll loop exited unexpectedly:', err);
-      }
+    console.log(`[hitl-telegram] listener starting — token=${this.maskedToken}`);
+    // Close any in-flight getUpdates from a previous instance before starting.
+    // closeOtherSessions terminates all active long-poll connections on Telegram's
+    // side, preventing the 409 Conflict that occurs when two pollers race.
+    // We then wait 2s for the termination to propagate before polling.
+    this.closeOtherSessions().then(() => new Promise(resolve => setTimeout(resolve, 2_000))).then(() => {
+      this.poll().catch((err) => {
+        if (this.running) {
+          console.error('[hitl-telegram] poll loop exited unexpectedly:', err);
+        }
+      });
+      console.log(`[hitl-telegram] listener started — token=${this.maskedToken}`);
     });
-    console.log('[hitl-telegram] listener started');
+  }
+
+  /**
+   * Terminates any active getUpdates sessions from previous instances.
+   * Calls getUpdates with timeout=0 to take over the session from Telegram,
+   * then calls deleteWebhook to clear any stale webhook registration.
+   * This is the standard pattern to resolve 409 Conflict on startup.
+   */
+  private async closeOtherSessions(): Promise<void> {
+    try {
+      // A timeout=0 getUpdates call immediately terminates any other active
+      // long-poll session Telegram has open for this bot token.
+      const kickUrl = `${TELEGRAM_API}/bot${this.botToken}/getUpdates?offset=-1&timeout=0&limit=1`;
+      const kickRes = await fetch(kickUrl);
+      if (kickRes.ok) {
+        console.log(`[hitl-telegram] session takeover OK — token=${this.maskedToken}`);
+      } else {
+        const body = await kickRes.json() as { description?: string };
+        console.warn(`[hitl-telegram] session takeover returned ${kickRes.status}: ${body.description ?? ''} — token=${this.maskedToken}`);
+      }
+    } catch (err) {
+      console.warn('[hitl-telegram] session takeover error (non-fatal):', err);
+    }
+    await this.deleteWebhook();
+  }
+
+  /** Attempts to delete any registered webhook before starting long-polling. */
+  private async deleteWebhook(): Promise<void> {
+    try {
+      const res = await fetch(`${TELEGRAM_API}/bot${this.botToken}/deleteWebhook`, { method: 'POST' });
+      const body = await res.json() as { ok: boolean; description?: string };
+      if (res.ok && body.ok) {
+        console.log(`[hitl-telegram] deleteWebhook OK — token=${this.maskedToken}`);
+      } else {
+        console.warn(`[hitl-telegram] deleteWebhook failed: ${res.status} — ${body.description ?? 'no description'} — token=${this.maskedToken}`);
+      }
+    } catch (err) {
+      console.warn('[hitl-telegram] deleteWebhook error (non-fatal):', err);
+    }
   }
 
   /** Stops the polling loop and aborts any in-flight fetch. */
@@ -472,13 +523,23 @@ export class TelegramListener {
         const res = await fetch(url, { signal: this.abortController.signal });
 
         if (res.status === 429) {
-          console.warn('[hitl-telegram] getUpdates rate-limited (429) — backing off');
+          console.warn(`[hitl-telegram] getUpdates rate-limited (429) — backing off — token=${this.maskedToken}`);
           await this.delay(POLL_RATE_LIMIT_DELAY_MS);
           continue;
         }
 
+        if (res.status === 409) {
+          let description = '';
+          try { description = ((await res.json()) as { description?: string }).description ?? ''; } catch { /* ignore */ }
+          console.error(`[hitl-telegram] getUpdates conflict (409) — another poller is active — token=${this.maskedToken} — ${description}`);
+          await this.delay(POLL_RATE_LIMIT_DELAY_MS); // 30s backoff for conflicts
+          continue;
+        }
+
         if (!res.ok) {
-          console.error(`[hitl-telegram] getUpdates failed: ${res.status}`);
+          let description = '';
+          try { description = ((await res.json()) as { description?: string }).description ?? ''; } catch { /* ignore */ }
+          console.error(`[hitl-telegram] getUpdates failed: ${res.status} — ${description} — token=${this.maskedToken}`);
           await this.delay(RETRY_DELAY_MS);
           continue;
         }
