@@ -41,3 +41,6 @@ src/build-info.ts
 
 # Claude
 .claude/
+
+# Local HITL policy — user-specific, not committed
+hitl-policy.yaml
