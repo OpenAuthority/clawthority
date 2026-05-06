@@ -190,6 +190,7 @@ import type { WatchHandle } from "./adapter/types.js";
 import { FileAutoPermitChecker, resolveAutoPermitStoreConfig, loadAutoPermitRulesFromFile, saveAutoPermitRules, watchAutoPermitStore, derivePattern, compilePatternRegex } from "./auto-permits/index.js";
 import type { AutoPermitWatchHandle } from "./auto-permits/index.js";
 import type { AutoPermit } from "./models/auto-permit.js";
+import { deleteFile, DeleteFileError } from "./tools/delete_file/delete-file.js";
 
 /**
  * Resolved identity view used by audit and HITL call sites. Derived from
@@ -310,6 +311,8 @@ export interface OpenclawPlugin {
 }
 
 export interface OpenclawPluginContext {
+  /** Register a callable agent tool when running on the native OpenClaw plugin API. */
+  registerTool?: (tool: OpenclawAgentTool, options?: { name?: string; names?: string[]; optional?: boolean }) => void;
   /** Register a handler for a lifecycle hook (legacy — pushes to registry.hooks only). */
   registerHook(hookName: "before_tool_call", handler: BeforeToolCallHandler, options?: { name?: string; description?: string }): void;
   registerHook(hookName: "before_prompt_build", handler: BeforePromptBuildHandler, options?: { name?: string; description?: string }): void;
@@ -318,6 +321,31 @@ export interface OpenclawPluginContext {
   on(hookName: "before_tool_call", handler: BeforeToolCallHandler, options?: { name?: string; description?: string }): void;
   on(hookName: "before_prompt_build", handler: BeforePromptBuildHandler, options?: { name?: string; description?: string }): void;
   on(hookName: "before_model_resolve", handler: BeforeModelResolveHandler, options?: { name?: string; description?: string }): void;
+}
+
+interface OpenclawToolResult {
+  content: Array<{ type: "text"; text: string }>;
+  details?: unknown;
+}
+
+interface OpenclawAgentTool {
+  name: string;
+  label?: string;
+  description: string;
+  parameters: Record<string, unknown>;
+  execute(toolCallId: string, params: Record<string, unknown>): Promise<OpenclawToolResult> | OpenclawToolResult;
+}
+
+function jsonToolResult(details: unknown): OpenclawToolResult {
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(details, null, 2),
+      },
+    ],
+    details,
+  };
 }
 
 // ─── Prompt injection detection ───────────────────────────────────────────────
@@ -1791,6 +1819,73 @@ function isInstalled(): boolean {
   return existsSync(resolve(pluginRoot, "data", ".installed"));
 }
 
+function registerDeleteFileTool(api: OpenclawPluginContext): void {
+  if (typeof api.registerTool !== "function") {
+    console.warn("[plugin:clawthority] registerTool unavailable — delete_file tool not registered in this OpenClaw runtime");
+    return;
+  }
+
+  api.registerTool({
+    name: "delete_file",
+    label: "Delete File",
+    description:
+      "Delete a file or directory at a specified path. Non-empty directories require recursive=true. Protected system paths are refused.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "Path of the file or directory to delete.",
+        },
+        recursive: {
+          type: "boolean",
+          description:
+            "When true, recursively delete a non-empty directory and all its contents. Omit or set false to allow only files and empty directories.",
+        },
+      },
+      required: ["path"],
+      additionalProperties: false,
+    },
+    async execute(_toolCallId, params) {
+      try {
+        const normalizedParams = params !== null && typeof params === "object" && !Array.isArray(params)
+          ? params
+          : {};
+        const path = typeof normalizedParams.path === "string" ? normalizedParams.path : "";
+        if (path.length === 0) {
+          return jsonToolResult({
+            status: "failed",
+            code: "invalid-params",
+            message: "delete_file requires a non-empty string path.",
+          });
+        }
+
+        const result = deleteFile({
+          path,
+          ...(normalizedParams.recursive === true ? { recursive: true } : {}),
+        });
+        return jsonToolResult({
+          status: "deleted",
+          ...result,
+        });
+      } catch (err) {
+        if (err instanceof DeleteFileError) {
+          return jsonToolResult({
+            status: "failed",
+            code: err.code,
+            message: err.message,
+          });
+        }
+        return jsonToolResult({
+          status: "failed",
+          code: "fs-error",
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+    },
+  }, { name: "delete_file" });
+}
+
 const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void } = {
   name: "clawthority",
   // Single source of truth: package.json (read by getVersionInfo at activation).
@@ -1807,6 +1902,8 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
    * Cedar engine is already populated at module load time with ACTIVE_RULES.
    */
   register(api: OpenclawPluginContext) {
+    registerDeleteFileTool(api);
+
     // 1. Register hooks synchronously — the Cedar engine is already populated.
     api.on("before_tool_call", beforeToolCallHandler, { name: "clawthority:before_tool_call" });
     api.on("before_prompt_build", beforePromptBuildHandler, { name: "clawthority:before_prompt_build" });
