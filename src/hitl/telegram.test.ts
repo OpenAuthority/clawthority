@@ -141,7 +141,7 @@ describe('sendApprovalRequest', () => {
   });
 
   it('returns ok:true with no messageId when result is absent', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.mocked(fetch).mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     const result = await sendApprovalRequest(config, opts);
     expect(result.ok).toBe(true);
@@ -149,7 +149,7 @@ describe('sendApprovalRequest', () => {
   });
 
   it('uses MarkdownV2 parse mode', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.mocked(fetch).mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     await sendApprovalRequest(config, opts);
 
@@ -159,7 +159,7 @@ describe('sendApprovalRequest', () => {
   });
 
   it('includes inline keyboard in reply_markup', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.mocked(fetch).mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     await sendApprovalRequest(config, opts);
 
@@ -170,7 +170,7 @@ describe('sendApprovalRequest', () => {
   });
 
   it('shows three buttons by default (Approve Once, Approve Always, Deny)', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.mocked(fetch).mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     await sendApprovalRequest(config, opts);
 
@@ -185,7 +185,7 @@ describe('sendApprovalRequest', () => {
   });
 
   it('shows two buttons when showApproveAlways is false', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.mocked(fetch).mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     await sendApprovalRequest(config, { ...opts, showApproveAlways: false });
 
@@ -200,7 +200,7 @@ describe('sendApprovalRequest', () => {
   });
 
   it('shows three buttons when showApproveAlways is true', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.mocked(fetch).mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     await sendApprovalRequest(config, { ...opts, showApproveAlways: true });
 
@@ -213,7 +213,7 @@ describe('sendApprovalRequest', () => {
   });
 
   it('includes riskLevel in message when provided', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.mocked(fetch).mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     await sendApprovalRequest(config, { ...opts, riskLevel: 'high' });
 
@@ -223,7 +223,7 @@ describe('sendApprovalRequest', () => {
   });
 
   it('omits risk section when riskLevel is not provided', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.mocked(fetch).mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     await sendApprovalRequest(config, opts);
 
@@ -233,7 +233,7 @@ describe('sendApprovalRequest', () => {
   });
 
   it('includes explanation in message when provided', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.mocked(fetch).mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     await sendApprovalRequest(config, { ...opts, explanation: 'Sends an email to the recipient.' });
 
@@ -244,7 +244,7 @@ describe('sendApprovalRequest', () => {
   });
 
   it('omits explanation section when explanation is not provided', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.mocked(fetch).mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     await sendApprovalRequest(config, opts);
 
@@ -254,7 +254,7 @@ describe('sendApprovalRequest', () => {
   });
 
   it('truncates explanation at 500 characters with ellipsis', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.mocked(fetch).mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     const longExplanation = 'x'.repeat(600);
     await sendApprovalRequest(config, { ...opts, explanation: longExplanation });
@@ -267,7 +267,7 @@ describe('sendApprovalRequest', () => {
   });
 
   it('displays effects as a bullet list', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.mocked(fetch).mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     await sendApprovalRequest(config, { ...opts, effects: ['Sends email', 'Marks as read'] });
 
@@ -279,7 +279,7 @@ describe('sendApprovalRequest', () => {
   });
 
   it('omits effects section when effects is empty', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.mocked(fetch).mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     await sendApprovalRequest(config, { ...opts, effects: [] });
 
@@ -289,7 +289,7 @@ describe('sendApprovalRequest', () => {
   });
 
   it('displays warnings as a bullet list', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.mocked(fetch).mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     await sendApprovalRequest(config, { ...opts, warnings: ['Irreversible action', 'Notifies recipient'] });
 
@@ -301,7 +301,7 @@ describe('sendApprovalRequest', () => {
   });
 
   it('omits warnings section when warnings is empty', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.mocked(fetch).mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     await sendApprovalRequest(config, { ...opts, warnings: [] });
 
@@ -311,7 +311,7 @@ describe('sendApprovalRequest', () => {
   });
 
   it('escapes MarkdownV2 special chars in policyName', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.mocked(fetch).mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     await sendApprovalRequest(config, { ...opts, policyName: 'Policy v1.0' });
 
@@ -322,7 +322,7 @@ describe('sendApprovalRequest', () => {
   });
 
   it('escapes MarkdownV2 special chars in explanation', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.mocked(fetch).mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     await sendApprovalRequest(config, { ...opts, explanation: 'Deletes file.txt!' });
 
@@ -332,7 +332,7 @@ describe('sendApprovalRequest', () => {
   });
 
   it('escapes MarkdownV2 special chars in effect and warning items', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.mocked(fetch).mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     await sendApprovalRequest(config, {
       ...opts,
@@ -347,7 +347,7 @@ describe('sendApprovalRequest', () => {
   });
 
   it('prepends unverified agent warning when verified is false', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.mocked(fetch).mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     await sendApprovalRequest(config, { ...opts, verified: false });
 
@@ -358,7 +358,7 @@ describe('sendApprovalRequest', () => {
   });
 
   it('does not prepend unverified warning when verified is true', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.mocked(fetch).mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     await sendApprovalRequest(config, { ...opts, verified: true });
 
@@ -368,7 +368,7 @@ describe('sendApprovalRequest', () => {
   });
 
   it('includes optional action_class and target when provided', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.mocked(fetch).mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     await sendApprovalRequest(config, { ...opts, action_class: 'email.send', target: 'user@example.com' });
 
@@ -379,7 +379,7 @@ describe('sendApprovalRequest', () => {
   });
 
   it('includes unknown-action summary when provided', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.mocked(fetch).mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     await sendApprovalRequest(config, {
       ...opts,
@@ -398,7 +398,7 @@ describe('sendApprovalRequest', () => {
   });
 
   it('includes expires_at in footer when provided', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.mocked(fetch).mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     await sendApprovalRequest(config, { ...opts, expires_at: '2024-04-28T10:45:00Z' });
 
@@ -586,7 +586,7 @@ describe('TelegramListener', () => {
 
     vi.mocked(fetch)
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
-      .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+      .mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
@@ -605,7 +605,7 @@ describe('TelegramListener', () => {
 
     vi.mocked(fetch)
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
-      .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+      .mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
@@ -624,7 +624,7 @@ describe('TelegramListener', () => {
 
     vi.mocked(fetch)
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
-      .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+      .mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
@@ -643,7 +643,7 @@ describe('TelegramListener', () => {
 
     vi.mocked(fetch)
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
-      .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+      .mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
@@ -710,7 +710,7 @@ describe('TelegramListener', () => {
 
     vi.mocked(fetch)
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
-      .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+      .mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
@@ -788,7 +788,7 @@ describe('TelegramListener', () => {
 
     vi.mocked(fetch)
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
-      .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+      .mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
@@ -881,7 +881,7 @@ describe('TelegramListener', () => {
 
     vi.mocked(fetch)
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
-      .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+      .mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
@@ -915,7 +915,7 @@ describe('TelegramListener', () => {
 
     vi.mocked(fetch)
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
-      .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+      .mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
@@ -938,7 +938,7 @@ describe('TelegramListener', () => {
 
     vi.mocked(fetch)
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
-      .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+      .mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
@@ -958,7 +958,7 @@ describe('TelegramListener', () => {
 
     vi.mocked(fetch)
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
-      .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+      .mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
@@ -977,7 +977,7 @@ describe('TelegramListener', () => {
 
     vi.mocked(fetch)
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
-      .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+      .mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
@@ -1018,7 +1018,7 @@ describe('sendApproveAlwaysConfirmation', () => {
   });
 
   it('uses MarkdownV2 parse mode', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.mocked(fetch).mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     await sendApproveAlwaysConfirmation(config, opts);
 
@@ -1028,7 +1028,7 @@ describe('sendApproveAlwaysConfirmation', () => {
   });
 
   it('includes the pattern and original command in the message body', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.mocked(fetch).mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     await sendApproveAlwaysConfirmation(config, opts);
 
@@ -1042,7 +1042,7 @@ describe('sendApproveAlwaysConfirmation', () => {
   });
 
   it('includes Save and Cancel inline keyboard buttons', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.mocked(fetch).mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     await sendApproveAlwaysConfirmation(config, opts);
 
@@ -1072,7 +1072,7 @@ describe('sendApproveAlwaysConfirmation', () => {
 
   it('respects an injected circuit breaker', async () => {
     const breaker = new CircuitBreaker();
-    vi.mocked(fetch).mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.mocked(fetch).mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     const result = await sendApproveAlwaysConfirmation(config, opts, breaker);
     expect(result).toEqual({ ok: true });
@@ -1093,7 +1093,7 @@ describe('editMessageDecision', () => {
   });
 
   it('sends a POST to editMessageText endpoint with approved decision', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.mocked(fetch).mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     await editMessageDecision(config, { messageId: 42, token: 'abc12345', decision: 'approved', toolName: 'email.send' });
 
@@ -1112,7 +1112,7 @@ describe('editMessageDecision', () => {
   });
 
   it('sends a POST to editMessageText endpoint with denied decision', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.mocked(fetch).mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     await editMessageDecision(config, { messageId: 7, token: 'abc12345', decision: 'denied', toolName: 'shell.exec' });
 
@@ -1122,7 +1122,7 @@ describe('editMessageDecision', () => {
   });
 
   it('omits reply_markup so inline keyboard buttons are removed', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.mocked(fetch).mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     await editMessageDecision(config, { messageId: 1, token: 'tok', decision: 'approved', toolName: 'tool' });
 
@@ -1154,7 +1154,7 @@ describe('editApproveAlwaysConfirmation', () => {
   });
 
   it('edits the confirmation message and removes inline buttons after save', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.mocked(fetch).mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     await editApproveAlwaysConfirmation(config, {
       messageId: 77,
@@ -1201,7 +1201,7 @@ describe('TelegramListener — duplicate callback_query alert', () => {
 
     vi.mocked(fetch)
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
-      .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+      .mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
@@ -1232,7 +1232,7 @@ describe('TelegramListener — duplicate callback_query alert', () => {
 
     vi.mocked(fetch)
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
-      .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+      .mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();

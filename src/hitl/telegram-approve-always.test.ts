@@ -199,7 +199,7 @@ describe('Approve Always — confirmation step workflow', () => {
           status: 200,
         }),
       )
-      .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+      .mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     listener = new TelegramListener('test-bot-token', onCommand, { takeOverSession: false });
     listener.start();
@@ -249,7 +249,7 @@ describe('Approve Always — confirmation step workflow', () => {
   });
 
   it('sendApproveAlwaysConfirmation message shows the derived pattern', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.mocked(fetch).mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     await sendApproveAlwaysConfirmation(config, {
       token: 'tok',
@@ -344,7 +344,7 @@ describe('Approve Always — session auto-approval registration (auto-permit cre
           { status: 200 },
         ),
       )
-      .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+      .mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     listener = new TelegramListener('test-bot-token', onCommand, { takeOverSession: false });
     listener.start();
@@ -399,7 +399,7 @@ describe('Approve Always — session auto-approval registration (auto-permit cre
           { status: 200 },
         ),
       )
-      .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+      .mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     listener = new TelegramListener('test-bot-token', onCommand, { takeOverSession: false });
     listener.start();
@@ -446,7 +446,7 @@ describe('Approve Always — session auto-approval registration (auto-permit cre
           { status: 200 },
         ),
       )
-      .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+      .mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     listener = new TelegramListener('test-bot-token', onCommand, { takeOverSession: false });
     listener.start();
@@ -506,7 +506,7 @@ describe('Approve Always — cancel workflow', () => {
           { status: 200 },
         ),
       )
-      .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+      .mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     listener = new TelegramListener('test-bot-token', onCommand, { takeOverSession: false });
     listener.start();
@@ -563,7 +563,7 @@ describe('Approve Always — cancel workflow', () => {
 
     vi.mocked(fetch)
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
-      .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+      .mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     listener = new TelegramListener('test-bot-token', onCommand, { takeOverSession: false });
     listener.start();
@@ -634,7 +634,7 @@ describe('Approve Always — auto-confirm path (approveAlwaysAutoConfirm)', () =
           { status: 200 },
         ),
       )
-      .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+      .mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     listener = new TelegramListener('test-bot-token', onCommand, { takeOverSession: false });
     listener.start();
@@ -678,7 +678,7 @@ describe('Approve Always — auto-confirm path (approveAlwaysAutoConfirm)', () =
           { status: 200 },
         ),
       )
-      .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+      .mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     listener = new TelegramListener('test-bot-token', onCommand, { takeOverSession: false });
     listener.start();
@@ -747,7 +747,7 @@ describe('Approve Always — operator identity capture', () => {
 
     vi.mocked(fetch)
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
-      .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+      .mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     listener = new TelegramListener('test-bot-token', onCommand, { takeOverSession: false });
     listener.start();
@@ -811,7 +811,7 @@ describe('Approve Always — operator identity capture', () => {
 
     vi.mocked(fetch)
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
-      .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+      .mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     listener = new TelegramListener('test-bot-token', onCommand, { takeOverSession: false });
     listener.start();
@@ -858,7 +858,7 @@ describe('Approve Always — operator identity capture', () => {
 
     vi.mocked(fetch)
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
-      .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+      .mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     listener = new TelegramListener('test-bot-token', onCommand, { takeOverSession: false });
     listener.start();
@@ -915,7 +915,7 @@ describe('Approve Always — error handling in callback processing', () => {
           { status: 200 },
         ),
       )
-      .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+      .mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     listener = new TelegramListener('test-bot-token', onCommand, { takeOverSession: false });
     listener.start();
@@ -959,7 +959,7 @@ describe('Approve Always — error handling in callback processing', () => {
           { status: 200 },
         ),
       )
-      .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+      .mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     listener = new TelegramListener('test-bot-token', onCommand, { takeOverSession: false });
     listener.start();
@@ -992,7 +992,7 @@ describe('Approve Always — error handling in callback processing', () => {
           { status: 200 },
         ),
       )
-      .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+      .mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     listener = new TelegramListener('test-bot-token', onCommand, { takeOverSession: false });
     listener.start();
@@ -1033,7 +1033,7 @@ describe('Approve Always — error handling in callback processing', () => {
           { status: 200 },
         ),
       )
-      .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+      .mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     listener = new TelegramListener('test-bot-token', onCommand, { takeOverSession: false });
     listener.start();
@@ -1072,7 +1072,7 @@ describe('Approve Always — error handling in callback processing', () => {
           { status: 200 },
         ),
       )
-      .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+      .mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
 
     listener = new TelegramListener('test-bot-token', onCommand, { takeOverSession: false });
     listener.start();
