@@ -225,6 +225,11 @@ function resolveIdentity(agentId: string | undefined, channelId: string | undefi
 export interface HookContext {
   agentId?: string;
   channelId?: string;
+  /** Session key supplied by newer OpenClaw hook contexts. Used for chat-visible system events. */
+  sessionKey?: string;
+  /** Ephemeral session UUID supplied by newer OpenClaw hook contexts. */
+  sessionId?: string;
+  runId?: string;
   /**
    * Arbitrary metadata provided by the caller. When present,
    * `intent_hint` (string) carries the agent's stated rationale for the
@@ -311,6 +316,15 @@ export interface OpenclawPlugin {
 }
 
 export interface OpenclawPluginContext {
+  /** Trusted native runtime surface supplied by newer OpenClaw hosts. */
+  runtime?: {
+    system?: {
+      enqueueSystemEvent?: (
+        text: string,
+        options: { sessionKey: string; contextKey?: string | null; trusted?: boolean },
+      ) => boolean;
+    };
+  };
   /** Register a callable agent tool when running on the native OpenClaw plugin API. */
   registerTool?: (tool: OpenclawAgentTool, options?: { name?: string; names?: string[]; optional?: boolean }) => void;
   /** Register a handler for a lifecycle hook (legacy — pushes to registry.hooks only). */
@@ -1006,6 +1020,30 @@ const telegramMessageIds = new Map<string, number>();
 /** Tokens resolved through an operator's Approve Always action. */
 const approveAlwaysTokens = new Set<string>();
 
+type OpenClawSystemRuntime = NonNullable<OpenclawPluginContext['runtime']>['system'];
+
+let openClawSystemRuntime: OpenClawSystemRuntime | null = null;
+let openClawSystemEventsModulePromise: Promise<OpenClawSystemRuntime | null> | null = null;
+
+function captureOpenClawRuntime(ctx: OpenclawPluginContext): void {
+  openClawSystemRuntime = ctx.runtime?.system ?? openClawSystemRuntime;
+}
+
+async function loadOpenClawSystemEventsModule(): Promise<OpenClawSystemRuntime | null> {
+  if (openClawSystemEventsModulePromise !== null) return openClawSystemEventsModulePromise;
+  openClawSystemEventsModulePromise = (async () => {
+    try {
+      const dynamicImport = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<unknown>;
+      const mod = await dynamicImport('openclaw/plugin-sdk/infra-runtime') as OpenClawSystemRuntime | null;
+      return typeof mod?.enqueueSystemEvent === 'function' ? mod : null;
+    } catch (err) {
+      console.warn(`[openclaw-hitl] chat status bridge unavailable: ${String(err)}`);
+      return null;
+    }
+  })();
+  return openClawSystemEventsModulePromise;
+}
+
 /**
  * How long (ms) an Approve Always confirmation waits for a Save/Cancel
  * response before timing out.  After timeout the confirmation is silently
@@ -1074,17 +1112,64 @@ function formatHitlTarget(target: string): string {
   return targetText.length > 160 ? `${targetText.slice(0, 159)}...` : targetText;
 }
 
-function logOpenClawHitlStatus(
-  status: 'APPROVED ONCE' | 'APPROVED ALWAYS' | 'AUTO-APPROVED' | 'DENIED' | 'EXPIRED DENIED' | 'EXPIRED AUTO-APPROVED',
+type HitlStatusLabel = 'APPROVED ONCE' | 'APPROVED ALWAYS' | 'AUTO-APPROVED' | 'DENIED' | 'EXPIRED DENIED' | 'EXPIRED AUTO-APPROVED';
+
+function formatHitlChatStatus(
+  status: HitlStatusLabel,
+  token: string,
+  toolName: string,
+  action_class: string,
+  target: string,
+): string {
+  const tokenPart = token.length > 0 ? ` token=${token}` : '';
+  return `HITL ${status}: tool=${toolName} action=${action_class}${tokenPart} target="${formatHitlTarget(target)}"`;
+}
+
+function enqueueOpenClawHitlChatStatus(
+  ctx: HookContext | undefined,
+  status: HitlStatusLabel,
   token: string,
   toolName: string,
   action_class: string,
   target: string,
 ): void {
+  const sessionKey = ctx?.sessionKey?.trim();
+  if (!sessionKey) return;
+  const text = formatHitlChatStatus(status, token, toolName, action_class, target);
+  const contextKey = token.length > 0
+    ? `clawthority:hitl:${token}`
+    : `clawthority:hitl:${toolName}:${action_class}:${status}`;
+  const enqueue = openClawSystemRuntime?.enqueueSystemEvent;
+  if (typeof enqueue === 'function') {
+    try {
+      enqueue(text, { sessionKey, contextKey, trusted: true });
+      return;
+    } catch (err) {
+      console.warn(`[openclaw-hitl] failed to enqueue chat status via runtime: ${String(err)}`);
+    }
+  }
+  void loadOpenClawSystemEventsModule().then((mod) => {
+    try {
+      mod?.enqueueSystemEvent?.(text, { sessionKey, contextKey, trusted: true });
+    } catch (err) {
+      console.warn(`[openclaw-hitl] failed to enqueue chat status: ${String(err)}`);
+    }
+  });
+}
+
+function logOpenClawHitlStatus(
+  status: HitlStatusLabel,
+  token: string,
+  toolName: string,
+  action_class: string,
+  target: string,
+  ctx?: HookContext,
+): void {
   const tokenPart = token.length > 0 ? ` token=${token}` : '';
   console.log(
     `[openclaw-hitl] HITL ${status}${tokenPart} tool=${toolName} action=${action_class} target="${formatHitlTarget(target)}"`,
   );
+  enqueueOpenClawHitlChatStatus(ctx, status, token, toolName, action_class, target);
 }
 
 /**
@@ -1102,6 +1187,7 @@ async function dispatchHitlChannel(
   target: string,
   action_class: string,
   intentHint?: string,
+  hookCtx?: HookContext,
 ): Promise<BeforeToolCallResult | void> {
   const channel = policy.approval.channel;
   const auditAgent = identity.auditAgentId;
@@ -1180,7 +1266,7 @@ async function dispatchHitlChannel(
       } else {
         void sendConfirmation(telegramConfig, { token: t, decision, toolName });
       }
-    });
+    }, hookCtx);
   }
 
   if (channel === 'slack') {
@@ -1228,7 +1314,7 @@ async function dispatchHitlChannel(
       if (messageTs) {
         void sendSlackConfirmation(slackConfig, { token: t, decision, toolName, messageTs });
       }
-    });
+    }, hookCtx);
   }
 
   if (channel === 'console') {
@@ -1255,7 +1341,7 @@ async function dispatchHitlChannel(
     const decision: 'approved' | 'denied' = result.decision === 'denied' ? 'denied' : 'approved';
     approvalManager.resolveApproval(token, decision);
 
-    return await resolveHitlDecision(token, promise, policy, toolName, action_class, target, identity, () => { /* result already shown inline */ });
+    return await resolveHitlDecision(token, promise, policy, toolName, action_class, target, identity, () => { /* result already shown inline */ }, hookCtx);
   }
 
   // Unknown channel — no adapter available
@@ -1275,6 +1361,7 @@ async function resolveHitlDecision(
   target: string,
   identity: ResolvedIdentity,
   sendConfirmationFn: (token: string, decision: string) => void,
+  hookCtx?: HookContext,
 ): Promise<BeforeToolCallResult | void> {
   console.log(`[clawthority] │ [hitl] awaiting operator response for token=${token} (timeout=${policy.approval.timeout}s)`);
   const decision = await promise;
@@ -1285,7 +1372,7 @@ async function resolveHitlDecision(
     const approvedAlways = approveAlwaysTokens.delete(token);
     const status = approvedAlways ? 'APPROVED ALWAYS' : 'APPROVED ONCE';
     console.log(`[clawthority] │ [hitl] ${status} (token=${token})`);
-    logOpenClawHitlStatus(status, token, toolName, action_class, target);
+    logOpenClawHitlStatus(status, token, toolName, action_class, target, hookCtx);
     await logHitlDecision('approved', token, toolName, auditAgent, auditChannel, policy.name, policy.approval.timeout, identity.verified);
     sendConfirmationFn(token, approvedAlways ? 'approved always' : 'approved');
     return;
@@ -1293,7 +1380,7 @@ async function resolveHitlDecision(
 
   if (decision === 'denied') {
     console.log(`[clawthority] │ [hitl] ✕ DENIED (token=${token})`);
-    logOpenClawHitlStatus('DENIED', token, toolName, action_class, target);
+    logOpenClawHitlStatus('DENIED', token, toolName, action_class, target, hookCtx);
     await logHitlDecision('denied', token, toolName, auditAgent, auditChannel, policy.name, policy.approval.timeout, identity.verified);
     sendConfirmationFn(token, 'denied');
     console.log(`[clawthority] │ DECISION: ✕ BLOCKED (hitl/denied)`);
@@ -1307,13 +1394,13 @@ async function resolveHitlDecision(
   await logHitlDecision(auditDecision, token, toolName, auditAgent, auditChannel, policy.name, policy.approval.timeout, identity.verified);
   if (policy.approval.fallback === 'deny') {
     sendConfirmationFn(token, 'expired (denied)');
-    logOpenClawHitlStatus('EXPIRED DENIED', token, toolName, action_class, target);
+    logOpenClawHitlStatus('EXPIRED DENIED', token, toolName, action_class, target, hookCtx);
     console.log(`[clawthority] │ DECISION: ✕ BLOCKED (hitl/expired-deny)`);
     console.log(`[clawthority] └──────────────────────────────────────────────────────`);
     return { block: true, blockReason: 'HITL: Approval timed out — denied by policy fallback' };
   }
   sendConfirmationFn(token, 'expired (auto-approved)');
-  logOpenClawHitlStatus('EXPIRED AUTO-APPROVED', token, toolName, action_class, target);
+  logOpenClawHitlStatus('EXPIRED AUTO-APPROVED', token, toolName, action_class, target, hookCtx);
   return;
 }
 
@@ -1680,10 +1767,10 @@ const beforeToolCallHandler: BeforeToolCallHandler = async ({ toolName, params, 
           const policy = hitlResult.matchedPolicy;
           if (approvalManager.isSessionAutoApproved(identity.auditChannel, normalizedAction.action_class)) {
             console.log(`[clawthority] │ [hitl] AUTO-APPROVED by prior Approve Always (${normalizedAction.action_class}) — skipping HITL dispatch`);
-            logOpenClawHitlStatus('AUTO-APPROVED', '', toolName, normalizedAction.action_class, normalizedAction.target);
+            logOpenClawHitlStatus('AUTO-APPROVED', '', toolName, normalizedAction.action_class, normalizedAction.target, ctx);
           } else {
             console.log(`[clawthority] │ [hitl] releasing ${pipelineDecision.stage ?? 'unknown'} HITL-gated forbid via policy "${policy.name}" (${policy.approval.channel})`);
-            const hitlChannelResult = await dispatchHitlChannel(policy, toolName, identity, normalizedAction.target, normalizedAction.action_class, intentHint);
+            const hitlChannelResult = await dispatchHitlChannel(policy, toolName, identity, normalizedAction.target, normalizedAction.action_class, intentHint, ctx);
             if (hitlChannelResult) return hitlChannelResult;
           }
           // Approved (or auto-approved): fall through to the pre-existing HITL check and then ALLOWED.
@@ -1740,10 +1827,10 @@ const beforeToolCallHandler: BeforeToolCallHandler = async ({ toolName, params, 
       const policy = hitlResult.matchedPolicy;
       if (approvalManager.isSessionAutoApproved(identity.auditChannel, normalizedAction.action_class)) {
         console.log(`[clawthority] │ [hitl] AUTO-APPROVED by prior Approve Always (${normalizedAction.action_class}) — skipping HITL dispatch`);
-        logOpenClawHitlStatus('AUTO-APPROVED', '', toolName, normalizedAction.action_class, normalizedAction.target);
+        logOpenClawHitlStatus('AUTO-APPROVED', '', toolName, normalizedAction.action_class, normalizedAction.target, ctx);
       } else {
         console.log(`[clawthority] │ [hitl] matched policy "${policy.name}" — requesting approval via ${policy.approval.channel}`);
-        const hitlChannelResult = await dispatchHitlChannel(policy, toolName, identity, normalizedAction.target, normalizedAction.action_class, intentHint);
+        const hitlChannelResult = await dispatchHitlChannel(policy, toolName, identity, normalizedAction.target, normalizedAction.action_class, intentHint, ctx);
         if (hitlChannelResult) return hitlChannelResult;
       }
     } else if (hitlConfig !== null) {
@@ -1974,6 +2061,7 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
    * Cedar engine is already populated at module load time with ACTIVE_RULES.
    */
   register(api: OpenclawPluginContext) {
+    captureOpenClawRuntime(api);
     registerDeleteFileTool(api);
 
     // 1. Register hooks synchronously — the Cedar engine is already populated.
@@ -1989,6 +2077,7 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
   },
 
   async activate(ctx: OpenclawPluginContext) {
+    captureOpenClawRuntime(ctx);
     // ── Install lifecycle gate ────────────────────────────────────────────────
     // Policy enforcement is deferred until install completes (indicated by
     // data/.installed). This prevents bootstrap commands from being blocked
