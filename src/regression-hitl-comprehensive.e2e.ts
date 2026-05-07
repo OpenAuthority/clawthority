@@ -194,8 +194,10 @@ class ComprehensiveHitlHarness {
   /** Creates and wires a TelegramListener to this harness's dispatch logic. */
   createListener(): TelegramListener {
     const self = this;
-    this.listener = new TelegramListener(BOT_TOKEN, (command, token, from) =>
-      self.handleCommand(command, token, from),
+    this.listener = new TelegramListener(
+      BOT_TOKEN,
+      (command, token, from) => self.handleCommand(command, token, from),
+      { takeOverSession: false },
     );
     return this.listener;
   }
@@ -376,7 +378,7 @@ describe('HITL comprehensive E2E regression', () => {
             status: 200,
           }),
         )
-        .mockResolvedValue(new Response(EMPTY_UPDATES, { status: 200 }));
+        .mockImplementation(emptyUpdatesImpl());
 
       const listener = harness.createListener();
       listener.start();
@@ -517,7 +519,7 @@ describe('HITL comprehensive E2E regression', () => {
             status: 200,
           }),
         )
-        .mockResolvedValue(new Response(EMPTY_UPDATES, { status: 200 }));
+        .mockImplementation(emptyUpdatesImpl());
 
       const listener = harness.createListener();
       listener.start();
@@ -630,7 +632,7 @@ describe('HITL comprehensive E2E regression', () => {
             { status: 200 },
           ),
         )
-        .mockResolvedValue(new Response(EMPTY_UPDATES, { status: 200 }));
+        .mockImplementation(emptyUpdatesImpl());
 
       const listener = harness.createListener();
       listener.start();
@@ -665,7 +667,7 @@ describe('HITL comprehensive E2E regression', () => {
         .mockResolvedValueOnce(
           new Response(makeTextUpdate(60, `/approve ${tokenA}`), { status: 200 }),
         )
-        .mockResolvedValue(new Response(EMPTY_UPDATES, { status: 200 }));
+        .mockImplementation(emptyUpdatesImpl());
 
       const listenerA = harness.createListener();
       listenerA.start();
@@ -747,7 +749,7 @@ describe('HITL comprehensive E2E regression', () => {
             status: 200,
           }),
         )
-        .mockResolvedValue(new Response(EMPTY_UPDATES, { status: 200 }));
+        .mockImplementation(emptyUpdatesImpl());
 
       const listener = harness.createListener();
       listener.start();

@@ -121,6 +121,7 @@ export {
   sendConfirmation,
   editMessageDecision,
   sendApproveAlwaysConfirmation,
+  editApproveAlwaysConfirmation,
   resolveTelegramConfig,
   SlackInteractionServer,
   sendSlackApprovalRequest,
@@ -143,8 +144,12 @@ export type {
   ResolvedTelegramConfig,
   SendApprovalOpts,
   SendApproveAlwaysConfirmationOpts,
+  SendApproveAlwaysConfirmationResult,
   TelegramCommand,
+  TelegramManagementCommand,
+  TelegramManagementRequest,
   TelegramOperatorInfo,
+  TelegramListenerOptions,
   ResolvedSlackConfig,
   SlackSendApprovalOpts,
   SlackSendApprovalResult,
@@ -166,8 +171,8 @@ import { parseHitlPolicyFile } from "./hitl/parser.js";
 import { startHitlPolicyWatcher, type HitlWatcherHandle } from "./hitl/watcher.js";
 import type { HitlPolicyConfig } from "./hitl/types.js";
 import { ApprovalManager } from "./hitl/approval-manager.js";
-import { TelegramListener, sendApprovalRequest, sendConfirmation, editMessageDecision, sendApproveAlwaysConfirmation, resolveTelegramConfig } from "./hitl/telegram.js";
-import type { TelegramOperatorInfo } from "./hitl/telegram.js";
+import { TelegramListener, sendApprovalRequest, sendConfirmation, editMessageDecision, sendApproveAlwaysConfirmation, editApproveAlwaysConfirmation, resolveTelegramConfig } from "./hitl/telegram.js";
+import type { SendApproveAlwaysConfirmationResult, TelegramManagementRequest, TelegramOperatorInfo } from "./hitl/telegram.js";
 import { SlackInteractionServer, sendSlackApprovalRequest, sendSlackConfirmation, resolveSlackConfig } from "./hitl/slack.js";
 import { sendConsoleApprovalRequest } from "./hitl/console.js";
 import { explainCommand } from "./hitl/command-explainer.js";
@@ -190,6 +195,7 @@ import type { WatchHandle } from "./adapter/types.js";
 import { FileAutoPermitChecker, resolveAutoPermitStoreConfig, loadAutoPermitRulesFromFile, saveAutoPermitRules, watchAutoPermitStore, derivePattern, compilePatternRegex } from "./auto-permits/index.js";
 import type { AutoPermitWatchHandle } from "./auto-permits/index.js";
 import type { AutoPermit } from "./models/auto-permit.js";
+import { deleteFile, DeleteFileError } from "./tools/delete_file/delete-file.js";
 
 /**
  * Resolved identity view used by audit and HITL call sites. Derived from
@@ -224,6 +230,11 @@ function resolveIdentity(agentId: string | undefined, channelId: string | undefi
 export interface HookContext {
   agentId?: string;
   channelId?: string;
+  /** Session key supplied by newer OpenClaw hook contexts. Used for chat-visible system events. */
+  sessionKey?: string;
+  /** Ephemeral session UUID supplied by newer OpenClaw hook contexts. */
+  sessionId?: string;
+  runId?: string;
   /**
    * Arbitrary metadata provided by the caller. When present,
    * `intent_hint` (string) carries the agent's stated rationale for the
@@ -310,6 +321,17 @@ export interface OpenclawPlugin {
 }
 
 export interface OpenclawPluginContext {
+  /** Trusted native runtime surface supplied by newer OpenClaw hosts. */
+  runtime?: {
+    system?: {
+      enqueueSystemEvent?: (
+        text: string,
+        options: { sessionKey: string; contextKey?: string | null; trusted?: boolean },
+      ) => boolean;
+    };
+  };
+  /** Register a callable agent tool when running on the native OpenClaw plugin API. */
+  registerTool?: (tool: OpenclawAgentTool, options?: { name?: string; names?: string[]; optional?: boolean }) => void;
   /** Register a handler for a lifecycle hook (legacy — pushes to registry.hooks only). */
   registerHook(hookName: "before_tool_call", handler: BeforeToolCallHandler, options?: { name?: string; description?: string }): void;
   registerHook(hookName: "before_prompt_build", handler: BeforePromptBuildHandler, options?: { name?: string; description?: string }): void;
@@ -318,6 +340,31 @@ export interface OpenclawPluginContext {
   on(hookName: "before_tool_call", handler: BeforeToolCallHandler, options?: { name?: string; description?: string }): void;
   on(hookName: "before_prompt_build", handler: BeforePromptBuildHandler, options?: { name?: string; description?: string }): void;
   on(hookName: "before_model_resolve", handler: BeforeModelResolveHandler, options?: { name?: string; description?: string }): void;
+}
+
+interface OpenclawToolResult {
+  content: Array<{ type: "text"; text: string }>;
+  details?: unknown;
+}
+
+interface OpenclawAgentTool {
+  name: string;
+  label?: string;
+  description: string;
+  parameters: Record<string, unknown>;
+  execute(toolCallId: string, params: Record<string, unknown>): Promise<OpenclawToolResult> | OpenclawToolResult;
+}
+
+function jsonToolResult(details: unknown): OpenclawToolResult {
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(details, null, 2),
+      },
+    ],
+    details,
+  };
 }
 
 // ─── Prompt injection detection ───────────────────────────────────────────────
@@ -527,8 +574,9 @@ async function loadJsonRules(): Promise<void> {
     // present; this mirrors the watcher resolveActiveJsonRulesFile() logic.
     // `CLAWTHORITY_RULES_FILE` overrides both for non-standard install layouts
     // and for tests that need to inject a fixture.
-    const bundleFilePath = resolve(moduleDir, "../../data/bundle.json");
-    const rulesFilePath = resolve(moduleDir, "../../data/rules.json");
+    const pluginRoot = resolve(moduleDir, "..");
+    const bundleFilePath = resolve(pluginRoot, "data/bundle.json");
+    const rulesFilePath = resolve(pluginRoot, "data/rules.json");
     const rulesPath = process.env['CLAWTHORITY_RULES_FILE']
       ?? (existsSync(bundleFilePath) ? bundleFilePath : rulesFilePath);
 
@@ -655,7 +703,7 @@ async function loadJsonRules(): Promise<void> {
     const apConfig = resolveAutoPermitStoreConfig();
     if (apConfig.mode === 'separate') {
       try {
-        const apPath = resolve(moduleDir, '../../', apConfig.path);
+        const apPath = resolve(pluginRoot, apConfig.path);
         const apResult = await loadAutoPermitRulesFromFile(apPath);
         if (apResult.found) {
           if (apResult.skipped > 0) {
@@ -723,7 +771,8 @@ async function loadAutoPermitRules(): Promise<void> {
   try {
     const config = resolveAutoPermitStoreConfig();
     const moduleDir = dirname(fileURLToPath(import.meta.url));
-    const storePath = resolve(moduleDir, "../../", config.path);
+    const pluginRoot = resolve(moduleDir, "..");
+    const storePath = resolve(pluginRoot, config.path);
 
     const result = await loadAutoPermitRulesFromFile(storePath);
 
@@ -827,7 +876,8 @@ async function persistAutoPermitPattern(
   try {
     const config = resolveAutoPermitStoreConfig();
     const moduleDir = dirname(fileURLToPath(import.meta.url));
-    const storePath = resolve(moduleDir, "../../", config.path);
+    const pluginRoot = resolve(moduleDir, "..");
+    const storePath = resolve(pluginRoot, config.path);
 
     const existing = await loadAutoPermitRulesFromFile(storePath);
     const nextVersion = existing.version + 1;
@@ -864,6 +914,155 @@ async function persistAutoPermitPattern(
     }
   } catch (err) {
     console.warn(`[hitl-${channel}] failed to save auto-permit rule: ${(err as Error).message}`);
+  }
+}
+
+// ─── Telegram approval-management commands ──────────────────────────────────
+
+function resolveAutoPermitStorePath(): string {
+  const config = resolveAutoPermitStoreConfig();
+  const moduleDir = dirname(fileURLToPath(import.meta.url));
+  const pluginRoot = resolve(moduleDir, "..");
+  return resolve(pluginRoot, config.path);
+}
+
+function formatDuration(ms: number): string {
+  const seconds = Math.max(0, Math.ceil(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remSeconds = seconds % 60;
+  if (minutes < 60) return remSeconds > 0 ? `${minutes}m ${remSeconds}s` : `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remMinutes = minutes % 60;
+  return remMinutes > 0 ? `${hours}h ${remMinutes}m` : `${hours}h`;
+}
+
+function formatTelegramHelp(): string {
+  return [
+    'OpenClaw HITL commands',
+    '',
+    '/help - show this help',
+    '/approvals - list pending HITL approval requests',
+    '/approve TOKEN - approve a request once',
+    '/deny TOKEN - deny a request',
+    '/approve_always TOKEN - approve a request and remember the pattern',
+    '/approve_always - list saved approve-always rules',
+    '/revoke N - revoke approve-always rule number N from /approve_always',
+    '/revoke PATTERN - revoke a saved approve-always rule by exact pattern',
+  ].join('\n');
+}
+
+function formatPendingApprovalsForTelegram(): string {
+  const pending = approvalManager.listPending();
+  if (pending.length === 0) {
+    return 'No pending HITL approvals.';
+  }
+
+  const now = Date.now();
+  const lines = [`Pending HITL approvals (${pending.length})`];
+  pending.forEach((approval, index) => {
+    const expiresIn = approval.createdAt + approval.timeoutMs - now;
+    const target = formatHitlTarget(approval.target);
+    lines.push(
+      '',
+      `${index + 1}. ${approval.token}`,
+      `Tool: ${approval.toolName}`,
+      `Action: ${approval.action_class}`,
+      `Policy: ${approval.policyName}`,
+      `Target: ${target}`,
+      `Expires in: ${formatDuration(expiresIn)}`,
+      `Approve: /approve ${approval.token}`,
+      `Deny: /deny ${approval.token}`,
+    );
+  });
+  return lines.join('\n');
+}
+
+function formatAutoPermitsForTelegram(rules: AutoPermit[]): string {
+  if (rules.length === 0) {
+    return 'No saved approve-always rules.';
+  }
+
+  const lines = [`Saved approve-always rules (${rules.length})`];
+  rules.forEach((rule, index) => {
+    const created = rule.created_at ?? new Date(rule.createdAt).toISOString();
+    const createdBy = rule.created_by ?? 'unknown';
+    lines.push(
+      '',
+      `${index + 1}. ${rule.pattern}`,
+      `From: ${formatHitlTarget(rule.originalCommand)}`,
+      `Method: ${rule.method}`,
+      `Created: ${created}`,
+      `By: ${createdBy}`,
+      `Revoke: /revoke ${index + 1}`,
+    );
+  });
+  return lines.join('\n');
+}
+
+async function listAutoPermitsForTelegram(): Promise<string> {
+  const storePath = resolveAutoPermitStorePath();
+  const result = await loadAutoPermitRulesFromFile(storePath);
+  return formatAutoPermitsForTelegram(result.rules);
+}
+
+async function revokeAutoPermitForTelegram(args: string): Promise<string> {
+  const selector = args.trim();
+  if (selector.length === 0) {
+    return 'Usage: /revoke N\nRun /approve_always to see rule numbers.';
+  }
+
+  const storePath = resolveAutoPermitStorePath();
+  const existing = await loadAutoPermitRulesFromFile(storePath);
+  if (existing.rules.length === 0) {
+    return 'No saved approve-always rules to revoke.';
+  }
+
+  const numeric = /^[0-9]+$/.test(selector) ? Number(selector) : NaN;
+  const index = Number.isInteger(numeric)
+    ? numeric - 1
+    : existing.rules.findIndex((rule) => rule.pattern === selector);
+
+  if (index < 0 || index >= existing.rules.length) {
+    return `No approve-always rule matches "${selector}". Run /approve_always to see valid entries.`;
+  }
+
+  const revoked = existing.rules[index]!;
+  const remaining = existing.rules.filter((_, i) => i !== index);
+  const nextVersion = existing.version + 1;
+  await saveAutoPermitRules(storePath, remaining, nextVersion);
+  await loadAutoPermitRules();
+  await loadJsonRules();
+  const cleared = approvalManager.clearSessionAutoApprovals();
+
+  return [
+    `✅ Revoked approve-always rule #${index + 1}`,
+    `Pattern: ${revoked.pattern}`,
+    `Store version: ${nextVersion}`,
+    `Cleared session auto-approvals: ${cleared}`,
+  ].join('\n');
+}
+
+async function handleTelegramManagementCommand(request: TelegramManagementRequest, configuredChatId: string): Promise<string | void> {
+  if (String(request.chatId) !== String(configuredChatId)) {
+    console.warn(`[hitl-telegram] ignoring management command from unconfigured chat ${request.chatId}`);
+    return;
+  }
+
+  try {
+    switch (request.command) {
+      case 'help':
+        return formatTelegramHelp();
+      case 'approvals':
+        return formatPendingApprovalsForTelegram();
+      case 'approve_always_list':
+        return await listAutoPermitsForTelegram();
+      case 'revoke_approve_always':
+        return await revokeAutoPermitForTelegram(request.args);
+    }
+  } catch (err) {
+    console.warn(`[hitl-telegram] management command failed: ${(err as Error).message}`);
+    return `❌ Failed to run /${request.rawText.replace(/^\//, '').split(/\s+/, 1)[0] ?? request.command}: ${(err as Error).message}`;
   }
 }
 
@@ -972,6 +1171,33 @@ const slackMessageTimestamps = new Map<string, string>();
 /** Maps HITL token → Telegram message_id for editMessageText on decision. */
 const telegramMessageIds = new Map<string, number>();
 
+/** Tokens resolved through an operator's Approve Always action. */
+const approveAlwaysTokens = new Set<string>();
+
+type OpenClawSystemRuntime = NonNullable<OpenclawPluginContext['runtime']>['system'];
+
+let openClawSystemRuntime: OpenClawSystemRuntime | null = null;
+let openClawSystemEventsModulePromise: Promise<OpenClawSystemRuntime | null> | null = null;
+
+function captureOpenClawRuntime(ctx: OpenclawPluginContext): void {
+  openClawSystemRuntime = ctx.runtime?.system ?? openClawSystemRuntime;
+}
+
+async function loadOpenClawSystemEventsModule(): Promise<OpenClawSystemRuntime | null> {
+  if (openClawSystemEventsModulePromise !== null) return openClawSystemEventsModulePromise;
+  openClawSystemEventsModulePromise = (async () => {
+    try {
+      const dynamicImport = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<unknown>;
+      const mod = await dynamicImport('openclaw/plugin-sdk/infra-runtime') as OpenClawSystemRuntime | null;
+      return typeof mod?.enqueueSystemEvent === 'function' ? mod : null;
+    } catch (err) {
+      console.warn(`[openclaw-hitl] chat status bridge unavailable: ${String(err)}`);
+      return null;
+    }
+  })();
+  return openClawSystemEventsModulePromise;
+}
+
 /**
  * How long (ms) an Approve Always confirmation waits for a Save/Cancel
  * response before timing out.  After timeout the confirmation is silently
@@ -985,6 +1211,7 @@ interface PendingApproveAlwaysConfirmation {
   method: string;
   operatorId: string | undefined;
   agentId: string;
+  messageId?: number | undefined;
   timer: ReturnType<typeof setTimeout>;
 }
 
@@ -994,6 +1221,12 @@ interface PendingApproveAlwaysConfirmation {
  * message is sent.  Cleared on Save, Cancel, or timeout.
  */
 const pendingApproveAlwaysConfirmations = new Map<string, PendingApproveAlwaysConfirmation>();
+
+/**
+ * Remembers recently-settled Approve Always confirmations so duplicate
+ * Telegram callback deliveries/taps get a clear idempotent response.
+ */
+const settledApproveAlwaysConfirmations = new Map<string, 'saved' | 'cancelled'>();
 
 /** JSONL audit logger for HITL decisions — initialised in activate(). */
 let hitlAuditLogger: JsonlAuditLogger | null = null;
@@ -1024,6 +1257,82 @@ function formatMatchedRule(rule: { effect: string; resource?: string; action_cla
   return `${rule.effect} ${scope}:${truncMatch}${cond}`;
 }
 
+function buildHitlSummary(toolName: string, action_class: string, target: string): string | undefined {
+  if (action_class !== 'unknown_sensitive_action') return undefined;
+  const targetText = target.trim();
+  if (targetText.length > 0) {
+    const truncatedTarget = targetText.length > 120 ? `${targetText.slice(0, 119)}...` : targetText;
+    return `Unregistered tool "${toolName}" wants approval for: ${truncatedTarget}`;
+  }
+  return `Unregistered tool "${toolName}" wants approval, but no target or command was provided.`;
+}
+
+function formatHitlTarget(target: string): string {
+  const targetText = target.trim();
+  if (targetText.length === 0) return '(no target)';
+  return targetText.length > 160 ? `${targetText.slice(0, 159)}...` : targetText;
+}
+
+type HitlStatusLabel = 'APPROVED ONCE' | 'APPROVED ALWAYS' | 'AUTO-APPROVED' | 'DENIED' | 'EXPIRED DENIED' | 'EXPIRED AUTO-APPROVED';
+
+function formatHitlChatStatus(
+  status: HitlStatusLabel,
+  token: string,
+  toolName: string,
+  action_class: string,
+  target: string,
+): string {
+  const tokenPart = token.length > 0 ? ` token=${token}` : '';
+  return `HITL ${status}: tool=${toolName} action=${action_class}${tokenPart} target="${formatHitlTarget(target)}"`;
+}
+
+function enqueueOpenClawHitlChatStatus(
+  ctx: HookContext | undefined,
+  status: HitlStatusLabel,
+  token: string,
+  toolName: string,
+  action_class: string,
+  target: string,
+): void {
+  const sessionKey = ctx?.sessionKey?.trim();
+  if (!sessionKey) return;
+  const text = formatHitlChatStatus(status, token, toolName, action_class, target);
+  const contextKey = token.length > 0
+    ? `clawthority:hitl:${token}`
+    : `clawthority:hitl:${toolName}:${action_class}:${status}`;
+  const enqueue = openClawSystemRuntime?.enqueueSystemEvent;
+  if (typeof enqueue === 'function') {
+    try {
+      enqueue(text, { sessionKey, contextKey, trusted: true });
+      return;
+    } catch (err) {
+      console.warn(`[openclaw-hitl] failed to enqueue chat status via runtime: ${String(err)}`);
+    }
+  }
+  void loadOpenClawSystemEventsModule().then((mod) => {
+    try {
+      mod?.enqueueSystemEvent?.(text, { sessionKey, contextKey, trusted: true });
+    } catch (err) {
+      console.warn(`[openclaw-hitl] failed to enqueue chat status: ${String(err)}`);
+    }
+  });
+}
+
+function logOpenClawHitlStatus(
+  status: HitlStatusLabel,
+  token: string,
+  toolName: string,
+  action_class: string,
+  target: string,
+  ctx?: HookContext,
+): void {
+  const tokenPart = token.length > 0 ? ` token=${token}` : '';
+  console.log(
+    `[openclaw-hitl] HITL ${status}${tokenPart} tool=${toolName} action=${action_class} target="${formatHitlTarget(target)}"`,
+  );
+  enqueueOpenClawHitlChatStatus(ctx, status, token, toolName, action_class, target);
+}
+
 /**
  * Dispatches a HITL approval request to the appropriate channel adapter
  * (Telegram, Slack, or console). Calls `explainCommand` on `target` and
@@ -1039,6 +1348,7 @@ async function dispatchHitlChannel(
   target: string,
   action_class: string,
   intentHint?: string,
+  hookCtx?: HookContext,
 ): Promise<BeforeToolCallResult | void> {
   const channel = policy.approval.channel;
   const auditAgent = identity.auditAgentId;
@@ -1056,6 +1366,8 @@ async function dispatchHitlChannel(
     expires_at,
     rawCommand: target,
   };
+  const approvalSummary = buildHitlSummary(toolName, action_class, target);
+  if (approvalSummary !== undefined) sharedOpts.summary = approvalSummary;
   if (!FEATURES.hitlMinimal) {
     const { summary, effects, warnings, inferred_action_class } = explainCommand(target);
     const explanation = summary !== `Runs ${target.trim().split(/\s+/)[0]}` && summary !== 'Runs an unrecognised command'
@@ -1081,7 +1393,15 @@ async function dispatchHitlChannel(
       return;
     }
 
-    const { token, promise } = approvalManager.createApprovalRequest({ toolName, agentId: auditAgent, channelId: auditChannel, policy, target });
+    const { token, promise } = approvalManager.createApprovalRequest({
+      toolName,
+      agentId: auditAgent,
+      channelId: auditChannel,
+      policy,
+      target,
+      action_class,
+      ...(approvalSummary !== undefined && { summary: approvalSummary }),
+    });
     const sendResult = await sendApprovalRequest(telegramConfig, { token, toolName, agentId: auditAgent, policyName: policy.name, timeoutSeconds: policy.approval.timeout, verified: identity.verified, showApproveAlways: FEATURES.approveAlwaysEnabled, ...sharedOpts });
 
     if (!sendResult.ok) {
@@ -1099,7 +1419,7 @@ async function dispatchHitlChannel(
     // Store message_id for editMessageText on decision (mirrors Slack's messageTs).
     if (sendResult.messageId !== undefined) telegramMessageIds.set(token, sendResult.messageId);
 
-    return await resolveHitlDecision(token, promise, policy, toolName, identity, (t, decision) => {
+    return await resolveHitlDecision(token, promise, policy, toolName, action_class, target, identity, (t, decision) => {
       const messageId = telegramMessageIds.get(t);
       telegramMessageIds.delete(t);
       if (messageId !== undefined) {
@@ -1107,7 +1427,7 @@ async function dispatchHitlChannel(
       } else {
         void sendConfirmation(telegramConfig, { token: t, decision, toolName });
       }
-    });
+    }, hookCtx);
   }
 
   if (channel === 'slack') {
@@ -1123,7 +1443,15 @@ async function dispatchHitlChannel(
       return;
     }
 
-    const { token, promise } = approvalManager.createApprovalRequest({ toolName, agentId: auditAgent, channelId: auditChannel, policy, target });
+    const { token, promise } = approvalManager.createApprovalRequest({
+      toolName,
+      agentId: auditAgent,
+      channelId: auditChannel,
+      policy,
+      target,
+      action_class,
+      ...(approvalSummary !== undefined && { summary: approvalSummary }),
+    });
     const result = await sendSlackApprovalRequest(slackConfig, { token, toolName, agentId: auditAgent, policyName: policy.name, timeoutSeconds: policy.approval.timeout, verified: identity.verified, showApproveAlways: FEATURES.approveAlwaysEnabled, ...sharedOpts });
 
     if (!result.ok) {
@@ -1141,20 +1469,29 @@ async function dispatchHitlChannel(
     // Store message timestamp for chat.update on decision
     if (result.messageTs) slackMessageTimestamps.set(token, result.messageTs);
 
-    return await resolveHitlDecision(token, promise, policy, toolName, identity, (t, decision) => {
+    return await resolveHitlDecision(token, promise, policy, toolName, action_class, target, identity, (t, decision) => {
       const messageTs = slackMessageTimestamps.get(t);
       slackMessageTimestamps.delete(t);
       if (messageTs) {
         void sendSlackConfirmation(slackConfig, { token: t, decision, toolName, messageTs });
       }
-    });
+    }, hookCtx);
   }
 
   if (channel === 'console') {
-    const { token, promise } = approvalManager.createApprovalRequest({ toolName, agentId: auditAgent, channelId: auditChannel, policy, target });
+    const { token, promise } = approvalManager.createApprovalRequest({
+      toolName,
+      agentId: auditAgent,
+      channelId: auditChannel,
+      policy,
+      target,
+      action_class,
+      ...(approvalSummary !== undefined && { summary: approvalSummary }),
+    });
     const result = await sendConsoleApprovalRequest({ token, toolName, agentId: auditAgent, policyName: policy.name, timeoutSeconds: policy.approval.timeout, verified: identity.verified, showApproveAlways: FEATURES.approveAlwaysEnabled, ...sharedOpts });
 
     if (result.decision === 'approved_always') {
+      approveAlwaysTokens.add(token);
       approvalManager.addSessionAutoApproval(auditChannel, action_class);
       console.log(`[hitl-console] session auto-approval registered: channel=${auditChannel} action_class=${action_class}`);
       if (target.length > 0 || !['shell.exec', 'code.execute'].includes(action_class)) {
@@ -1165,7 +1502,7 @@ async function dispatchHitlChannel(
     const decision: 'approved' | 'denied' = result.decision === 'denied' ? 'denied' : 'approved';
     approvalManager.resolveApproval(token, decision);
 
-    return await resolveHitlDecision(token, promise, policy, toolName, identity, () => { /* result already shown inline */ });
+    return await resolveHitlDecision(token, promise, policy, toolName, action_class, target, identity, () => { /* result already shown inline */ }, hookCtx);
   }
 
   // Unknown channel — no adapter available
@@ -1181,8 +1518,11 @@ async function resolveHitlDecision(
   promise: Promise<import('./hitl/approval-manager.js').HitlDecision>,
   policy: import('./hitl/types.js').HitlPolicy,
   toolName: string,
+  action_class: string,
+  target: string,
   identity: ResolvedIdentity,
   sendConfirmationFn: (token: string, decision: string) => void,
+  hookCtx?: HookContext,
 ): Promise<BeforeToolCallResult | void> {
   console.log(`[clawthority] │ [hitl] awaiting operator response for token=${token} (timeout=${policy.approval.timeout}s)`);
   const decision = await promise;
@@ -1190,19 +1530,23 @@ async function resolveHitlDecision(
   const auditChannel = identity.auditChannel;
 
   if (decision === 'approved') {
-    console.log(`[clawthority] │ [hitl] ✓ APPROVED (token=${token})`);
+    const approvedAlways = approveAlwaysTokens.delete(token);
+    const status = approvedAlways ? 'APPROVED ALWAYS' : 'APPROVED ONCE';
+    console.log(`[clawthority] │ [hitl] ${status} (token=${token})`);
+    logOpenClawHitlStatus(status, token, toolName, action_class, target, hookCtx);
     await logHitlDecision('approved', token, toolName, auditAgent, auditChannel, policy.name, policy.approval.timeout, identity.verified);
-    sendConfirmationFn(token, 'approved');
+    sendConfirmationFn(token, approvedAlways ? 'approved always' : 'approved');
     return;
   }
 
   if (decision === 'denied') {
     console.log(`[clawthority] │ [hitl] ✕ DENIED (token=${token})`);
+    logOpenClawHitlStatus('DENIED', token, toolName, action_class, target, hookCtx);
     await logHitlDecision('denied', token, toolName, auditAgent, auditChannel, policy.name, policy.approval.timeout, identity.verified);
     sendConfirmationFn(token, 'denied');
     console.log(`[clawthority] │ DECISION: ✕ BLOCKED (hitl/denied)`);
     console.log(`[clawthority] └──────────────────────────────────────────────────────`);
-    return { block: true, blockReason: 'HITL: Operator denied the tool call' };
+    return { block: true, blockReason: `HITL DENIED: operator denied ${toolName} (${action_class})` };
   }
 
   // expired
@@ -1211,11 +1555,13 @@ async function resolveHitlDecision(
   await logHitlDecision(auditDecision, token, toolName, auditAgent, auditChannel, policy.name, policy.approval.timeout, identity.verified);
   if (policy.approval.fallback === 'deny') {
     sendConfirmationFn(token, 'expired (denied)');
+    logOpenClawHitlStatus('EXPIRED DENIED', token, toolName, action_class, target, hookCtx);
     console.log(`[clawthority] │ DECISION: ✕ BLOCKED (hitl/expired-deny)`);
     console.log(`[clawthority] └──────────────────────────────────────────────────────`);
     return { block: true, blockReason: 'HITL: Approval timed out — denied by policy fallback' };
   }
   sendConfirmationFn(token, 'expired (auto-approved)');
+  logOpenClawHitlStatus('EXPIRED AUTO-APPROVED', token, toolName, action_class, target, hookCtx);
   return;
 }
 
@@ -1555,6 +1901,8 @@ const beforeToolCallHandler: BeforeToolCallHandler = async ({ toolName, params, 
     pipelineDecision.reason = `tool '${toolName}' is not registered: ${pipelineDecision.reason}`;
   }
 
+  let hitlGateApproved = false;
+
   if (pipelineDecision.effect === 'forbid') {
     if (pipelineDecision.reason === 'untrusted_source_high_risk') {
       const blockReason = 'untrusted_source_high_risk';
@@ -1581,13 +1929,17 @@ const beforeToolCallHandler: BeforeToolCallHandler = async ({ toolName, params, 
         if (hitlResult.requiresApproval && hitlResult.matchedPolicy) {
           const policy = hitlResult.matchedPolicy;
           if (approvalManager.isSessionAutoApproved(identity.auditChannel, normalizedAction.action_class)) {
-            console.log(`[clawthority] │ [hitl] ✓ session auto-approved (${normalizedAction.action_class}) — skipping HITL dispatch`);
+            console.log(`[clawthority] │ [hitl] AUTO-APPROVED by prior Approve Always (${normalizedAction.action_class}) — skipping HITL dispatch`);
+            logOpenClawHitlStatus('AUTO-APPROVED', '', toolName, normalizedAction.action_class, normalizedAction.target, ctx);
           } else {
             console.log(`[clawthority] │ [hitl] releasing ${pipelineDecision.stage ?? 'unknown'} HITL-gated forbid via policy "${policy.name}" (${policy.approval.channel})`);
-            const hitlChannelResult = await dispatchHitlChannel(policy, toolName, identity, normalizedAction.target, normalizedAction.action_class, intentHint);
+            const hitlChannelResult = await dispatchHitlChannel(policy, toolName, identity, normalizedAction.target, normalizedAction.action_class, intentHint, ctx);
             if (hitlChannelResult) return hitlChannelResult;
           }
-          // Approved (or auto-approved): fall through to the pre-existing HITL check and then ALLOWED.
+          // Approved (or auto-approved): proceed directly. The same policy
+          // already satisfied the gate, so the generic HITL check below must
+          // not dispatch a second approval for the same tool call.
+          hitlGateApproved = true;
         } else {
           const priority = pipelineDecision.priority;
           const ruleTag = pipelineDecision.rule;
@@ -1637,13 +1989,16 @@ const beforeToolCallHandler: BeforeToolCallHandler = async ({ toolName, params, 
       ? checkAction(hitlConfig, normalizedAction.action_class)
       : { requiresApproval: false };
 
-    if (hitlResult.requiresApproval && hitlResult.matchedPolicy) {
+    if (hitlGateApproved) {
+      console.log(`[clawthority] │ [hitl] ✓ approval already satisfied the HITL-gated policy`);
+    } else if (hitlResult.requiresApproval && hitlResult.matchedPolicy) {
       const policy = hitlResult.matchedPolicy;
       if (approvalManager.isSessionAutoApproved(identity.auditChannel, normalizedAction.action_class)) {
-        console.log(`[clawthority] │ [hitl] ✓ session auto-approved (${normalizedAction.action_class}) — skipping HITL dispatch`);
+        console.log(`[clawthority] │ [hitl] AUTO-APPROVED by prior Approve Always (${normalizedAction.action_class}) — skipping HITL dispatch`);
+        logOpenClawHitlStatus('AUTO-APPROVED', '', toolName, normalizedAction.action_class, normalizedAction.target, ctx);
       } else {
         console.log(`[clawthority] │ [hitl] matched policy "${policy.name}" — requesting approval via ${policy.approval.channel}`);
-        const hitlChannelResult = await dispatchHitlChannel(policy, toolName, identity, normalizedAction.target, normalizedAction.action_class, intentHint);
+        const hitlChannelResult = await dispatchHitlChannel(policy, toolName, identity, normalizedAction.target, normalizedAction.action_class, intentHint, ctx);
         if (hitlChannelResult) return hitlChannelResult;
       }
     } else if (hitlConfig !== null) {
@@ -1791,6 +2146,73 @@ function isInstalled(): boolean {
   return existsSync(resolve(pluginRoot, "data", ".installed"));
 }
 
+function registerDeleteFileTool(api: OpenclawPluginContext): void {
+  if (typeof api.registerTool !== "function") {
+    console.warn("[plugin:clawthority] registerTool unavailable — delete_file tool not registered in this OpenClaw runtime");
+    return;
+  }
+
+  api.registerTool({
+    name: "delete_file",
+    label: "Delete File",
+    description:
+      "Delete a file or directory at a specified path. Non-empty directories require recursive=true. Protected system paths are refused.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "Path of the file or directory to delete.",
+        },
+        recursive: {
+          type: "boolean",
+          description:
+            "When true, recursively delete a non-empty directory and all its contents. Omit or set false to allow only files and empty directories.",
+        },
+      },
+      required: ["path"],
+      additionalProperties: false,
+    },
+    async execute(_toolCallId, params) {
+      try {
+        const normalizedParams = params !== null && typeof params === "object" && !Array.isArray(params)
+          ? params
+          : {};
+        const path = typeof normalizedParams.path === "string" ? normalizedParams.path : "";
+        if (path.length === 0) {
+          return jsonToolResult({
+            status: "failed",
+            code: "invalid-params",
+            message: "delete_file requires a non-empty string path.",
+          });
+        }
+
+        const result = deleteFile({
+          path,
+          ...(normalizedParams.recursive === true ? { recursive: true } : {}),
+        });
+        return jsonToolResult({
+          status: "deleted",
+          ...result,
+        });
+      } catch (err) {
+        if (err instanceof DeleteFileError) {
+          return jsonToolResult({
+            status: "failed",
+            code: err.code,
+            message: err.message,
+          });
+        }
+        return jsonToolResult({
+          status: "failed",
+          code: "fs-error",
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+    },
+  }, { name: "delete_file" });
+}
+
 const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void } = {
   name: "clawthority",
   // Single source of truth: package.json (read by getVersionInfo at activation).
@@ -1807,6 +2229,9 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
    * Cedar engine is already populated at module load time with ACTIVE_RULES.
    */
   register(api: OpenclawPluginContext) {
+    captureOpenClawRuntime(api);
+    registerDeleteFileTool(api);
+
     // 1. Register hooks synchronously — the Cedar engine is already populated.
     api.on("before_tool_call", beforeToolCallHandler, { name: "clawthority:before_tool_call" });
     api.on("before_prompt_build", beforePromptBuildHandler, { name: "clawthority:before_prompt_build" });
@@ -1820,6 +2245,7 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
   },
 
   async activate(ctx: OpenclawPluginContext) {
+    captureOpenClawRuntime(ctx);
     // ── Install lifecycle gate ────────────────────────────────────────────────
     // Policy enforcement is deferred until install completes (indicated by
     // data/.installed). This prevents bootstrap commands from being blocked
@@ -1897,7 +2323,8 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
     try {
       const apConfig = resolveAutoPermitStoreConfig();
       const apModuleDir = dirname(fileURLToPath(import.meta.url));
-      const apStorePath = resolve(apModuleDir, "../../", apConfig.path);
+      const apPluginRoot = resolve(apModuleDir, "..");
+      const apStorePath = resolve(apPluginRoot, apConfig.path);
       autoPermitStoreWatcher = watchAutoPermitStore(apStorePath, () => {
         void loadAutoPermitRules();
         void loadJsonRules();
@@ -1911,8 +2338,9 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
     // bundle.json takes precedence over rules.json when present.
     {
       const moduleDir = dirname(fileURLToPath(import.meta.url));
-      const bundleFilePath = resolve(moduleDir, "../../data/bundle.json");
-      const rulesFilePath = resolve(moduleDir, "../../data/rules.json");
+      const pluginRoot = resolve(moduleDir, "..");
+      const bundleFilePath = resolve(pluginRoot, "data/bundle.json");
+      const rulesFilePath = resolve(pluginRoot, "data/rules.json");
       const bundlePath = process.env['CLAWTHORITY_RULES_FILE']
         ?? (existsSync(bundleFilePath) ? bundleFilePath : rulesFilePath);
       adapterRef = new FileAuthorityAdapter({ bundlePath });
@@ -2013,40 +2441,76 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
             // ── confirm_approve_always ────────────────────────────────────
             if (command === 'confirm_approve_always') {
               const conf = pendingApproveAlwaysConfirmations.get(token);
-              if (conf) {
-                clearTimeout(conf.timer);
-                pendingApproveAlwaysConfirmations.delete(token);
-                const pending = approvalManager.getPending(token);
-                if (pending) {
-                  approvalManager.addSessionAutoApproval(pending.channelId, pending.action_class);
-                  console.log(
-                    `[hitl-telegram] session auto-approval registered: channel=${pending.channelId} action_class=${pending.action_class}` +
-                    (operatorId !== undefined ? ` operator=${operatorId}` : ''),
-                  );
-                  if (pending.target.length > 0 || !['shell.exec', 'code.execute'].includes(pending.action_class)) {
-                    void persistAutoPermitPattern(pending.target, pending.toolName, pending.action_class, 'telegram', operatorId, conf.agentId);
-                  }
-                }
-              } else {
+              if (!conf) {
+                const settled = settledApproveAlwaysConfirmations.get(token);
+                if (settled === 'saved') return '✅ Pattern already saved';
+                if (settled === 'cancelled') return '❌ Pattern confirmation was cancelled';
+                if (approvalManager.isConsumed(token)) return 'Already decided';
                 console.log(`[hitl-telegram] confirm_approve_always: no pending confirmation for token=${token}`);
+                return '❌ No pending pattern confirmation';
               }
+
+              clearTimeout(conf.timer);
+              pendingApproveAlwaysConfirmations.delete(token);
+              settledApproveAlwaysConfirmations.set(token, 'saved');
+
+              if (conf.messageId !== undefined) {
+                void editApproveAlwaysConfirmation(telegramConfig, {
+                  messageId: conf.messageId,
+                  token,
+                  decision: 'saved',
+                  pattern: conf.pattern,
+                });
+              }
+
+              const pending = approvalManager.getPending(token);
+              if (pending) {
+                approveAlwaysTokens.add(token);
+                approvalManager.addSessionAutoApproval(pending.channelId, pending.action_class);
+                console.log(
+                  `[hitl-telegram] session auto-approval registered: channel=${pending.channelId} action_class=${pending.action_class}` +
+                  (operatorId !== undefined ? ` operator=${operatorId}` : ''),
+                );
+                if (pending.target.length > 0 || !['shell.exec', 'code.execute'].includes(pending.action_class)) {
+                  void persistAutoPermitPattern(pending.target, pending.toolName, pending.action_class, 'telegram', operatorId, conf.agentId);
+                }
+              }
+
               const resolved = approvalManager.resolveApproval(token, 'approved');
-              if (!resolved) {
+              if (!resolved && !approvalManager.isConsumed(token)) {
                 console.log(`[hitl-telegram] confirm_approve_always: unknown or expired token: ${token}`);
+                return '❌ Unknown or expired approval';
               }
-              return;
+              return '✅ Pattern saved; request approved';
             }
 
             // ── cancel_approve_always ─────────────────────────────────────
             if (command === 'cancel_approve_always') {
               const conf = pendingApproveAlwaysConfirmations.get(token);
-              if (conf) {
-                clearTimeout(conf.timer);
-                pendingApproveAlwaysConfirmations.delete(token);
+              if (!conf) {
+                const settled = settledApproveAlwaysConfirmations.get(token);
+                if (settled === 'saved') return '✅ Pattern already saved';
+                if (settled === 'cancelled') return '❌ Pattern confirmation already cancelled';
+                if (approvalManager.isConsumed(token)) return 'Already decided';
+                console.log(`[hitl-telegram] cancel_approve_always: no pending confirmation for token=${token}`);
+                return '❌ No pending pattern confirmation';
               }
+
+              clearTimeout(conf.timer);
+              pendingApproveAlwaysConfirmations.delete(token);
+              settledApproveAlwaysConfirmations.set(token, 'cancelled');
+              if (conf.messageId !== undefined) {
+                void editApproveAlwaysConfirmation(telegramConfig, {
+                  messageId: conf.messageId,
+                  token,
+                  decision: 'cancelled',
+                  pattern: conf.pattern,
+                });
+              }
+
               console.log(`[hitl-telegram] approve-always confirmation cancelled for token=${token}`);
               // Original approval stays pending — operator can still use the original buttons.
-              return;
+              return '❌ Pattern confirmation cancelled';
             }
 
             // ── approve_always ────────────────────────────────────────────
@@ -2057,6 +2521,7 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
                 clearTimeout(existingConf.timer);
                 pendingApproveAlwaysConfirmations.delete(token);
               }
+              settledApproveAlwaysConfirmations.delete(token);
 
               const pending = approvalManager.getPending(token);
               if (pending) {
@@ -2098,12 +2563,17 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
                     token,
                     pattern: derived.pattern,
                     originalCommand: pending.target,
+                  }).then((result: SendApproveAlwaysConfirmationResult) => {
+                    if (!result.ok || result.messageId === undefined) return;
+                    const current = pendingApproveAlwaysConfirmations.get(token);
+                    if (current) current.messageId = result.messageId;
                   });
                   return; // Wait for confirm or cancel — do not resolve yet.
                 }
 
                 // Auto-confirm path: CLAWTHORITY_APPROVE_ALWAYS_AUTO_CONFIRM=1,
                 // target is empty, or pattern derivation failed.
+                approveAlwaysTokens.add(token);
                 approvalManager.addSessionAutoApproval(pending.channelId, pending.action_class);
                 console.log(
                   `[hitl-telegram] session auto-approval registered: channel=${pending.channelId} action_class=${pending.action_class}` +
@@ -2136,6 +2606,9 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
               console.log(`[hitl-telegram] unknown or expired token: ${token}`);
             }
           },
+          {
+            onManagementCommand: (request) => handleTelegramManagementCommand(request, telegramConfig.chatId),
+          },
         );
         telegramListener.start();
         listeners.push('Telegram');
@@ -2153,6 +2626,7 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
               // requests of the same action class in this channel skip HITL.
               const pending = approvalManager.getPending(token);
               if (pending) {
+                approveAlwaysTokens.add(token);
                 approvalManager.addSessionAutoApproval(pending.channelId, pending.action_class);
                 console.log(`[hitl-slack] session auto-approval registered: channel=${pending.channelId} action_class=${pending.action_class}`);
                 // Derive and persist an auto-permit pattern from the command
@@ -2234,6 +2708,7 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
       clearTimeout(conf.timer);
     }
     pendingApproveAlwaysConfirmations.clear();
+    settledApproveAlwaysConfirmations.clear();
     approvalManager.shutdown();
     if (hitlWatcher !== null) {
       await hitlWatcher.stop();

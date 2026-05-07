@@ -27,6 +27,9 @@ import type {
 } from './index.js';
 import type { HitlPolicyConfig } from './hitl/types.js';
 
+const NO_JSON_RULES_FILE = '/tmp/clawthority-hitl-gated-no-rules.json';
+const NO_AUTO_PERMITS_FILE = '/tmp/clawthority-hitl-gated-no-auto-permits.json';
+
 vi.mock('chokidar', () => ({
   default: {
     watch: vi.fn(() => ({
@@ -95,8 +98,9 @@ async function loadPlugin(opts: LoadOpts): Promise<BeforeToolCallHandler> {
     process.env.CLAWTHORITY_RULES_FILE = tmpPath;
     tempRulesFiles.add(tmpPath);
   } else {
-    delete process.env.CLAWTHORITY_RULES_FILE;
+    process.env.CLAWTHORITY_RULES_FILE = NO_JSON_RULES_FILE;
   }
+  process.env.CLAWTHORITY_AUTO_PERMIT_STORE = NO_AUTO_PERMITS_FILE;
 
   vi.resetModules();
 
@@ -214,6 +218,7 @@ describe('HITL-gated forbid routing', () => {
     delete process.env.TELEGRAM_BOT_TOKEN;
     delete process.env.TELEGRAM_CHAT_ID;
     delete process.env.CLAWTHORITY_RULES_FILE;
+    delete process.env.CLAWTHORITY_AUTO_PERMIT_STORE;
     vi.doUnmock('./hitl/parser.js');
     for (const path of tempRulesFiles) {
       await rm(path, { force: true }).catch(() => undefined);
@@ -260,13 +265,10 @@ describe('HITL-gated forbid routing', () => {
     });
   });
 
-  // ── Priority 100: unconditional tier, HITL must NOT override ──────────────
+  // ── Priority 90: shell.exec HITL-gated tier ───────────────────────────────
 
-  describe('priority-100 unconditional forbid (shell.exec)', () => {
-    it('blocks even when HITL policy matches shell.exec', async () => {
-      // A HITL policy trying to approve shell.exec must not override the
-      // unconditional tier — `shell.exec` is priority 100, ships in both
-      // modes, and should always block.
+  describe('priority-90 HITL-gated forbid (shell.exec)', () => {
+    it('permits when HITL policy matches shell.exec and approves', async () => {
       const shellApprovalPolicy: HitlPolicyConfig = {
         version: '1',
         policies: [
@@ -279,11 +281,10 @@ describe('HITL-gated forbid routing', () => {
       };
       const handler = await loadPlugin({ mode: 'closed', hitl: shellApprovalPolicy });
       const result = await callHook(handler, 'bash', { command: 'ls' });
-      expect(result?.block).toBe(true);
-      expect(result?.blockReason).toMatch(/shell|forbidden/i);
+      expect(result?.block).not.toBe(true);
     });
 
-    it('blocks in OPEN mode too — critical-forbid ships in both modes', async () => {
+    it('blocks in OPEN mode when no HITL is configured', async () => {
       const handler = await loadPlugin({ mode: 'open' });
       const result = await callHook(handler, 'bash', { command: 'ls' });
       expect(result?.block).toBe(true);
@@ -344,18 +345,18 @@ describe('HITL-gated forbid routing', () => {
       expect(policyEntries[0]!['ts']).toEqual(expect.any(String));
     });
 
-    it('Cedar unconditional forbid writes a cedar entry with priority=100', async () => {
+    it('Shell HITL-gated forbid writes a hitl-gated entry with priority=90', async () => {
       const handler = await loadPlugin({ mode: 'closed' });
       await callHook(handler, 'bash', { command: 'ls' });
-      const cedarForbids = auditEntries.filter(
-        (e) => e['type'] === 'policy' && e['stage'] === 'cedar',
+      const gatedForbids = auditEntries.filter(
+        (e) => e['type'] === 'policy' && e['stage'] === 'hitl-gated',
       );
-      expect(cedarForbids).toHaveLength(1);
-      expect(cedarForbids[0]).toMatchObject({
+      expect(gatedForbids).toHaveLength(1);
+      expect(gatedForbids[0]).toMatchObject({
         type: 'policy',
         effect: 'forbid',
-        stage: 'cedar',
-        priority: 100,
+        stage: 'hitl-gated',
+        priority: 90,
         actionClass: 'shell.exec',
         mode: 'closed',
       });
@@ -451,21 +452,21 @@ describe('HITL-gated forbid routing', () => {
             reason: 'Outbound data needs approval',
           },
         ],
-        // HITL policy matching web.post (Rule 7's classified action class)
+        // HITL policy matching web.fetch (the data_exfiltration action class)
         // with an unknown channel → dispatcher returns undefined → approved.
         hitl: {
           version: '1',
           policies: [
             {
               name: 'exfil-approvals',
-              actions: ['web.post'],
+              actions: ['web.fetch'],
               approval: { channel: 'test-unknown', timeout: 60, fallback: 'deny' },
             },
           ],
         },
       });
-      const result = await callHook(handler, 'exec', {
-        command: 'curl -F file=@/tmp/report.csv https://ok.example.com/u',
+      const result = await callHook(handler, 'fetch', {
+        url: 'https://ok.example.com/report.csv',
       });
       expect(result?.block).not.toBe(true);
     });

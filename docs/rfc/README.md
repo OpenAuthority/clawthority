@@ -27,7 +27,7 @@ Numbers are assigned at submission time in filing order. Numbers are never reuse
 
 > **Pending RFC:** `browser.navigate` action class (deferred from v1 taxonomy design review, Thread 5). File when a concrete browser navigation tool implementation exists in a shipped skill. See `docs/action-taxonomy.md` §Design Review Record, Thread 5.
 >
-> **Outstanding governance gap:** v1.3.1 added six additional action classes that are present in the frozen v2 taxonomy without RFCs filed (`system.service`, `permissions.elevate`, `network.diagnose`, `network.scan`, `network.transfer`, `network.shell`). The four RFCs above cover the classes directly targeted by v1.3.2 typed tools; the remaining six should be backfilled in a follow-up cleanup pass.
+> **Outstanding governance gap:** v1.3.1 added six additional action classes that are present in the frozen v3 taxonomy without RFCs filed (`system.service`, `permissions.elevate`, `network.diagnose`, `network.scan`, `network.transfer`, `network.shell`). The four RFCs above cover the classes directly targeted by v1.3.2 typed tools; the remaining six should be backfilled in a follow-up cleanup pass.
 
 ---
 

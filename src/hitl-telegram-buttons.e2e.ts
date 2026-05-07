@@ -70,6 +70,14 @@ function makeCallbackUpdate(
 /** Used as the fallback mock response — valid for getUpdates, answerCallbackQuery, sendMessage, etc. */
 const EMPTY_UPDATES = JSON.stringify({ ok: true, result: [] });
 
+function emptyUpdatesImpl(): () => Promise<Response> {
+  return () =>
+    new Promise<Response>((resolve) => {
+      const t = setTimeout(() => resolve(new Response(EMPTY_UPDATES, { status: 200 })), 1);
+      if (typeof t === 'object' && 'unref' in t) (t as NodeJS.Timeout).unref();
+    });
+}
+
 // ─── TelegramButtonHarness ────────────────────────────────────────────────────
 
 /**
@@ -105,8 +113,10 @@ class TelegramButtonHarness {
   /** Creates a listener wired to this harness's dispatch logic. */
   createListener(): TelegramListener {
     const self = this;
-    this.listener = new TelegramListener(BOT_TOKEN, (command, token, from) =>
-      self.handleCommand(command, token, from),
+    this.listener = new TelegramListener(
+      BOT_TOKEN,
+      (command, token, from) => self.handleCommand(command, token, from),
+      { takeOverSession: false },
     );
     return this.listener;
   }
@@ -300,7 +310,7 @@ describe('HITL Telegram buttons — end-to-end workflow', () => {
             status: 200,
           }),
         )
-        .mockResolvedValue(new Response(EMPTY_UPDATES, { status: 200 }));
+        .mockImplementation(emptyUpdatesImpl());
 
       const listener = harness.createListener();
       listener.start();
@@ -331,7 +341,7 @@ describe('HITL Telegram buttons — end-to-end workflow', () => {
             status: 200,
           }),
         )
-        .mockResolvedValue(new Response(EMPTY_UPDATES, { status: 200 }));
+        .mockImplementation(emptyUpdatesImpl());
 
       const listener = harness.createListener();
       listener.start();
@@ -362,7 +372,7 @@ describe('HITL Telegram buttons — end-to-end workflow', () => {
             status: 200,
           }),
         )
-        .mockResolvedValue(new Response(EMPTY_UPDATES, { status: 200 }));
+        .mockImplementation(emptyUpdatesImpl());
 
       const listener = harness.createListener();
       listener.start();
@@ -418,7 +428,7 @@ describe('HITL Telegram buttons — end-to-end workflow', () => {
             { status: 200 },
           ),
         )
-        .mockResolvedValue(new Response(EMPTY_UPDATES, { status: 200 }));
+        .mockImplementation(emptyUpdatesImpl());
 
       const listener = harness.createListener();
       listener.start();
@@ -453,7 +463,7 @@ describe('HITL Telegram buttons — end-to-end workflow', () => {
             { status: 200 },
           ),
         )
-        .mockResolvedValue(new Response(EMPTY_UPDATES, { status: 200 }));
+        .mockImplementation(emptyUpdatesImpl());
 
       const listener = harness.createListener();
       listener.start();
@@ -494,7 +504,7 @@ describe('HITL Telegram buttons — end-to-end workflow', () => {
             status: 200,
           }),
         )
-        .mockResolvedValue(new Response(EMPTY_UPDATES, { status: 200 }));
+        .mockImplementation(emptyUpdatesImpl());
 
       const listener = harness.createListener();
       listener.start();
@@ -541,7 +551,7 @@ describe('HITL Telegram buttons — end-to-end workflow', () => {
             status: 200,
           }),
         )
-        .mockResolvedValue(new Response(EMPTY_UPDATES, { status: 200 }));
+        .mockImplementation(emptyUpdatesImpl());
 
       const listener = harness.createListener();
       listener.start();
@@ -589,7 +599,7 @@ describe('HITL Telegram buttons — end-to-end workflow', () => {
             status: 200,
           }),
         )
-        .mockResolvedValue(new Response(EMPTY_UPDATES, { status: 200 }));
+        .mockImplementation(emptyUpdatesImpl());
 
       const listener = harness.createListener();
       listener.start();

@@ -17,10 +17,10 @@
 9. [Audit Log](#audit-log)
 10. [Budget Enforcement](#budget-tracking-and-enforcement)
 11. [Environment Variables](#environment-variables)
-11. [Engine Options](#engine-options)
-12. [Example Configurations](#example-configurations)
-13. [Resource Types and Channel Values](#resource-types-and-channel-values)
-14. [TypeScript Configuration](#typescript-configuration)
+12. [Engine Options](#engine-options)
+13. [Example Configurations](#example-configurations)
+14. [Resource Types and Channel Values](#resource-types-and-channel-values)
+15. [TypeScript Configuration](#typescript-configuration)
 
 ---
 
@@ -705,6 +705,15 @@ CLAWTHORITY_MODE=closed node dist/index.js
 | Variable | Default | Description |
 |---|---|---|
 | `CLAWTHORITY_AUTO_PERMIT_STORE` | `data/auto-permits.json` | Path to the file where auto-generated permit records are stored. Defaults to a dedicated `data/auto-permits.json` file (**separate** mode) so auto-permits remain distinct from hand-authored rules and are easy to review or revoke individually. Set to `data/rules.json` to enable **single-file** mode, which appends auto-permit records to the main rules file alongside operator-authored rules. Any other absolute or relative path is used as a custom separate store. Read once at module load — **restart the plugin to change.** |
+
+Auto-permit records are managed through the same store regardless of whether they were created from Telegram, Slack, or the console. Operators can inspect and revoke them with:
+
+| Surface | Commands |
+|---|---|
+| Telegram bot | `/approve_always` lists saved rules; `/revoke N` or `/revoke PATTERN` removes one and reloads rules. |
+| CLI | `npm run list-auto-permits`, `npm run show-auto-permit`, `npm run validate-auto-permits`, `npm run test-auto-permit`, `npm run remove-auto-permit`, `npm run revoke-auto-permit`. |
+
+Revoking through the Telegram bot also clears in-memory session auto-approvals so the current process stops honouring the revoked trust immediately. CLI removals update the file and hot-reload persisted pattern rules; restart the gateway if you also need to clear session-scoped approvals created earlier in the process.
 
 ### HITL — Telegram
 

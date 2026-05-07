@@ -124,6 +124,18 @@ describe('ApprovalManager', () => {
     expect(manager.resolveApproval('UNKNOWN_', 'approved')).toBe(false);
   });
 
+  it('clearSessionAutoApprovals clears session-scoped approve-always entries and returns the count', () => {
+    manager.addSessionAutoApproval('telegram', 'filesystem.write');
+    manager.addSessionAutoApproval('telegram', 'web.fetch');
+
+    expect(manager.isSessionAutoApproved('telegram', 'filesystem.write')).toBe(true);
+    expect(manager.isSessionAutoApproved('telegram', 'web.fetch')).toBe(true);
+
+    expect(manager.clearSessionAutoApprovals()).toBe(2);
+    expect(manager.isSessionAutoApproved('telegram', 'filesystem.write')).toBe(false);
+    expect(manager.isSessionAutoApproved('telegram', 'web.fetch')).toBe(false);
+  });
+
   it('double resolve is a no-op (returns false)', async () => {
     const handle = manager.createApprovalRequest({
       toolName: 'email.send',

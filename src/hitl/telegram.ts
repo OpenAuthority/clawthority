@@ -6,7 +6,7 @@ export type { ResolvedTelegramConfig } from './config.js';
 export { resolveTelegramConfig } from './config.js';
 
 const TELEGRAM_API = 'https://api.telegram.org';
-const POLL_TIMEOUT_SECONDS = 30;
+const POLL_TIMEOUT_SECONDS = 5;
 const RETRY_DELAY_MS = 5_000;
 const POLL_RATE_LIMIT_DELAY_MS = 30_000;
 /** Maximum character count for command explanation text before truncation. */
@@ -249,7 +249,7 @@ export async function sendConfirmation(
   config: ResolvedTelegramConfig,
   opts: { token: string; decision: string; toolName: string },
 ): Promise<void> {
-  const emoji = opts.decision === 'approved' ? '\u2705' : '\u274C';
+  const emoji = opts.decision.toLowerCase().startsWith('approved') ? '\u2705' : '\u274C';
   const text = `${emoji} Action \`${escapeCodeSpan(opts.token)}\` \u2014 *${opts.decision.toUpperCase()}*\nTool: \`${escapeCodeSpan(opts.toolName)}\``;
 
   try {
@@ -278,7 +278,7 @@ export async function editMessageDecision(
   config: ResolvedTelegramConfig,
   opts: { messageId: number; token: string; decision: string; toolName: string },
 ): Promise<void> {
-  const emoji = opts.decision === 'approved' ? '\u2705' : '\u274C';
+  const emoji = opts.decision.toLowerCase().startsWith('approved') ? '\u2705' : '\u274C';
   const text = `${emoji} Action \`${escapeCodeSpan(opts.token)}\` \u2014 *${opts.decision.toUpperCase()}*\nTool: \`${escapeCodeSpan(opts.toolName)}\``;
 
   try {
@@ -308,6 +308,12 @@ export interface SendApproveAlwaysConfirmationOpts {
   originalCommand: string;
 }
 
+export interface SendApproveAlwaysConfirmationResult {
+  ok: boolean;
+  /** Telegram message_id — needed to settle the confirmation message. */
+  messageId?: number | undefined;
+}
+
 /**
  * Sends a confirmation message asking the operator to save or cancel an
  * auto-permit pattern derived from an "Approve Always" click.
@@ -320,13 +326,13 @@ export interface SendApproveAlwaysConfirmationOpts {
  * Cancelling preserves the original approval request so the operator can
  * still use the original Approve Once / Deny buttons.
  *
- * Returns `true` on success, `false` on failure.
+ * Returns `{ ok: true, messageId }` on success, `{ ok: false }` on failure.
  */
 export async function sendApproveAlwaysConfirmation(
   config: ResolvedTelegramConfig,
   opts: SendApproveAlwaysConfirmationOpts,
   breaker: CircuitBreaker = telegramCircuitBreaker,
-): Promise<boolean> {
+): Promise<SendApproveAlwaysConfirmationResult> {
   const lines: string[] = [];
 
   lines.push(`\uD83D\uDD01 *Approve Always \u2014 Confirm Pattern*`, '');
@@ -365,20 +371,56 @@ export async function sendApproveAlwaysConfirmation(
           console.error(
             `[hitl-telegram] sendApproveAlwaysConfirmation failed: ${res.status} ${res.statusText}`,
           );
-          return false;
+          return { ok: false } as SendApproveAlwaysConfirmationResult;
         }
-        return true;
+        const body = await res.json() as { ok: boolean; result?: { message_id?: number } };
+        const messageId = body.result?.message_id;
+        return { ok: true, ...(messageId !== undefined ? { messageId } : {}) } as SendApproveAlwaysConfirmationResult;
       },
-      () => false,
+      () => ({ ok: false }) as SendApproveAlwaysConfirmationResult,
       breaker,
     );
   } catch (err) {
     console.error('[hitl-telegram] sendApproveAlwaysConfirmation error:', err);
-    return false;
+    return { ok: false };
+  }
+}
+
+/**
+ * Edits an Approve Always confirmation message after Save/Cancel so Telegram
+ * no longer presents active buttons for a settled token.
+ */
+export async function editApproveAlwaysConfirmation(
+  config: ResolvedTelegramConfig,
+  opts: { messageId: number; token: string; decision: 'saved' | 'cancelled'; pattern: string },
+): Promise<void> {
+  const emoji = opts.decision === 'saved' ? '\u2705' : '\u274C';
+  const label = opts.decision === 'saved' ? 'SAVED' : 'CANCELLED';
+  const text = [
+    `${emoji} *Approve Always Pattern ${label}*`,
+    `*Pattern:* \`${escapeCodeSpan(opts.pattern)}\``,
+    `\uD83D\uDD11 *Approval ID:* \`${escapeCodeSpan(opts.token)}\``,
+  ].join('\n');
+
+  try {
+    await fetch(`${TELEGRAM_API}/bot${config.botToken}/editMessageText`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: config.chatId,
+        message_id: opts.messageId,
+        text,
+        parse_mode: 'MarkdownV2',
+        // Omitting reply_markup removes the inline keyboard buttons.
+      }),
+    });
+  } catch {
+    // Best-effort — don't fail the approval flow.
   }
 }
 
 export type TelegramCommand = 'approve' | 'approve_once' | 'approve_always' | 'deny' | 'confirm_approve_always' | 'cancel_approve_always';
+export type TelegramManagementCommand = 'help' | 'approvals' | 'approve_always_list' | 'revoke_approve_always';
 
 /**
  * Identity of the Telegram operator who triggered a command via an inline
@@ -396,15 +438,63 @@ export interface TelegramOperatorInfo {
   firstName?: string;
 }
 
+export interface TelegramManagementRequest {
+  command: TelegramManagementCommand;
+  args: string;
+  chatId: number;
+  rawText: string;
+  from?: TelegramOperatorInfo;
+}
+
+export interface TelegramListenerOptions {
+  /**
+   * Allows tests to skip Telegram session takeover and webhook cleanup so
+   * parser/polling fixtures can start directly at getUpdates.
+   */
+  takeOverSession?: boolean;
+  /** Delay after session takeover before polling starts. Defaults to 2s. */
+  startupDelayMs?: number;
+  /**
+   * Optional handler for non-approval bot commands such as /help, /approvals,
+   * /approve_always, and /revoke. The returned text is sent back to the chat
+   * as a plain Telegram message.
+   */
+  onManagementCommand?: (request: TelegramManagementRequest) => string | void | Promise<string | void>;
+}
+
 // Tokens are UUID v7 (36 chars with hyphens, e.g. "019daa50-5dc1-78ee-9ab4-bcf652bddfa3")
 // or session_approval keys of the form "session_id:action_class" (may contain ':', '.').
 // approve_always must appear before approve in the alternation so it matches first.
-const COMMAND_RE = /^\/(approve_always|approve|deny)\s+([\w.:-]{6,128})$/;
+const COMMAND_RE = /^\/(approve_always|approve|deny)(?:@\w+)?\s+([\w.:-]{6,128})$/;
 
 // Same token format but triggered by inline keyboard callback_data ("command:TOKEN").
 // confirm_approve_always and cancel_approve_always must appear before approve_always,
 // and approve_once must appear before approve so the longer prefixes are tried first.
 const CALLBACK_DATA_RE = /^(confirm_approve_always|cancel_approve_always|approve_always|approve_once|approve|deny):([\w.:-]{6,128})$/;
+
+const TEXT_COMMAND_RE = /^\/([a-z_]+)(?:@\w+)?(?:\s+(.+))?$/i;
+
+function parseManagementCommand(text: string): Omit<TelegramManagementRequest, 'chatId' | 'rawText' | 'from'> | undefined {
+  const match = TEXT_COMMAND_RE.exec(text);
+  if (!match) return undefined;
+  const name = match[1]!.toLowerCase();
+  const args = (match[2] ?? '').trim();
+
+  if (name === 'help' || name === 'start') {
+    return { command: 'help', args };
+  }
+  if (name === 'approvals' || name === 'pending') {
+    return { command: 'approvals', args };
+  }
+  if ((name === 'approve_always' || name === 'always' || name === 'auto_approvals' || name === 'auto_permits') && args.length === 0) {
+    return { command: 'approve_always_list', args };
+  }
+  if (name === 'revoke' || name === 'revoke_approve_always') {
+    return { command: 'revoke_approve_always', args };
+  }
+
+  return undefined;
+}
 
 /**
  * Long-polling listener for Telegram bot updates.
@@ -439,18 +529,74 @@ export class TelegramListener {
       token: string,
       from?: TelegramOperatorInfo,
     ) => string | void,
+    private readonly options: TelegramListenerOptions = {},
   ) {}
+
+  /** Masked token for safe logging (shows first 8 chars + …). */
+  private get maskedToken(): string {
+    return this.botToken.length > 8 ? this.botToken.slice(0, 8) + '…' : '***';
+  }
 
   /** Starts the long-polling loop. Safe to call multiple times (no-op if already running). */
   start(): void {
     if (this.running) return;
     this.running = true;
-    this.poll().catch((err) => {
-      if (this.running) {
-        console.error('[hitl-telegram] poll loop exited unexpectedly:', err);
-      }
+    console.log(`[hitl-telegram] listener starting — token=${this.maskedToken}`);
+    // Close any in-flight getUpdates from a previous instance before starting.
+    // closeOtherSessions terminates all active long-poll connections on Telegram's
+    // side, preventing the 409 Conflict that occurs when two pollers race.
+    // We then wait 2s for the termination to propagate before polling.
+    const startup = this.options.takeOverSession === false
+      ? Promise.resolve()
+      : this.closeOtherSessions().then(() => new Promise(resolve => setTimeout(resolve, this.options.startupDelayMs ?? 2_000)));
+    startup.then(() => {
+      if (!this.running) return;
+      this.poll().catch((err) => {
+        if (this.running) {
+          console.error('[hitl-telegram] poll loop exited unexpectedly:', err);
+        }
+      });
+      console.log(`[hitl-telegram] listener started — token=${this.maskedToken}`);
     });
-    console.log('[hitl-telegram] listener started');
+  }
+
+  /**
+   * Terminates any active getUpdates sessions from previous instances.
+   * Calls getUpdates with timeout=0 to take over the session from Telegram,
+   * then calls deleteWebhook to clear any stale webhook registration.
+   * This is the standard pattern to resolve 409 Conflict on startup.
+   */
+  private async closeOtherSessions(): Promise<void> {
+    try {
+      // A timeout=0 getUpdates call immediately terminates any other active
+      // long-poll session Telegram has open for this bot token.
+      const kickUrl = `${TELEGRAM_API}/bot${this.botToken}/getUpdates?offset=-1&timeout=0&limit=1`;
+      const kickRes = await fetch(kickUrl);
+      if (kickRes.ok) {
+        console.log(`[hitl-telegram] session takeover OK — token=${this.maskedToken}`);
+      } else {
+        const body = await kickRes.json() as { description?: string };
+        console.warn(`[hitl-telegram] session takeover returned ${kickRes.status}: ${body.description ?? ''} — token=${this.maskedToken}`);
+      }
+    } catch (err) {
+      console.warn('[hitl-telegram] session takeover error (non-fatal):', err);
+    }
+    await this.deleteWebhook();
+  }
+
+  /** Attempts to delete any registered webhook before starting long-polling. */
+  private async deleteWebhook(): Promise<void> {
+    try {
+      const res = await fetch(`${TELEGRAM_API}/bot${this.botToken}/deleteWebhook`, { method: 'POST' });
+      const body = await res.json() as { ok: boolean; description?: string };
+      if (res.ok && body.ok) {
+        console.log(`[hitl-telegram] deleteWebhook OK — token=${this.maskedToken}`);
+      } else {
+        console.warn(`[hitl-telegram] deleteWebhook failed: ${res.status} — ${body.description ?? 'no description'} — token=${this.maskedToken}`);
+      }
+    } catch (err) {
+      console.warn('[hitl-telegram] deleteWebhook error (non-fatal):', err);
+    }
   }
 
   /** Stops the polling loop and aborts any in-flight fetch. */
@@ -472,13 +618,23 @@ export class TelegramListener {
         const res = await fetch(url, { signal: this.abortController.signal });
 
         if (res.status === 429) {
-          console.warn('[hitl-telegram] getUpdates rate-limited (429) — backing off');
+          console.warn(`[hitl-telegram] getUpdates rate-limited (429) — backing off — token=${this.maskedToken}`);
           await this.delay(POLL_RATE_LIMIT_DELAY_MS);
           continue;
         }
 
+        if (res.status === 409) {
+          let description = '';
+          try { description = ((await res.json()) as { description?: string }).description ?? ''; } catch { /* ignore */ }
+          console.error(`[hitl-telegram] getUpdates conflict (409) — another poller is active — token=${this.maskedToken} — ${description}`);
+          await this.delay(POLL_RATE_LIMIT_DELAY_MS); // 30s backoff for conflicts
+          continue;
+        }
+
         if (!res.ok) {
-          console.error(`[hitl-telegram] getUpdates failed: ${res.status}`);
+          let description = '';
+          try { description = ((await res.json()) as { description?: string }).description ?? ''; } catch { /* ignore */ }
+          console.error(`[hitl-telegram] getUpdates failed: ${res.status} — ${description} — token=${this.maskedToken}`);
           await this.delay(RETRY_DELAY_MS);
           continue;
         }
@@ -487,7 +643,11 @@ export class TelegramListener {
           ok: boolean;
           result?: Array<{
             update_id: number;
-            message?: { text?: string; chat?: { id: number } };
+            message?: {
+              text?: string;
+              chat?: { id: number };
+              from?: { id: number; username?: string; first_name?: string };
+            };
             callback_query?: {
               id: string;
               data?: string;
@@ -538,6 +698,29 @@ export class TelegramListener {
             const command = match[1] as TelegramCommand;
             const token = match[2]!;
             this.onCommand(command, token);
+            continue;
+          }
+
+          const management = parseManagementCommand(text);
+          const chatId = update.message?.chat?.id;
+          if (management && chatId !== undefined && this.options.onManagementCommand) {
+            const from = update.message?.from;
+            const operatorInfo: TelegramOperatorInfo | undefined = from
+              ? {
+                  userId: from.id,
+                  ...(from.username !== undefined ? { username: from.username } : {}),
+                  ...(from.first_name !== undefined ? { firstName: from.first_name } : {}),
+                }
+              : undefined;
+            const response = await this.options.onManagementCommand({
+              ...management,
+              chatId,
+              rawText: text,
+              ...(operatorInfo !== undefined ? { from: operatorInfo } : {}),
+            });
+            if (response !== undefined && response.trim().length > 0) {
+              await this.sendTextMessage(chatId, response);
+            }
           }
         }
       } catch (err) {
@@ -546,6 +729,23 @@ export class TelegramListener {
         console.error('[hitl-telegram] poll error, retrying in 5s:', err);
         await this.delay(RETRY_DELAY_MS);
       }
+    }
+  }
+
+  private async sendTextMessage(chatId: number, text: string): Promise<void> {
+    try {
+      const safeText = text.length > 3900 ? `${text.slice(0, 3897)}...` : text;
+      await fetch(`${TELEGRAM_API}/bot${this.botToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: safeText,
+          disable_web_page_preview: true,
+        }),
+      });
+    } catch {
+      // Best-effort management reply — don't fail the poll loop.
     }
   }
 

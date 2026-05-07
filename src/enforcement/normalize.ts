@@ -75,11 +75,17 @@ function hasShellMetacharsInParams(params: Record<string, unknown>): boolean {
  * Checked in priority order — first non-empty string wins.
  */
 const TARGET_PARAM_KEYS = [
+  'command',
+  'cmd',
+  'script',
   'file_path',
   'path',
   'file',
   'repo_url',
   'package_name',
+  'query',
+  'input',
+  'args',
   'url',
   'destination',
   'to',

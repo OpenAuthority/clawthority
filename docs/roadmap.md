@@ -2,7 +2,7 @@
 
 > **What this page is for.** What Clawthority has shipped, what is in progress, and what comes next. Updated as work completes.
 
-Last updated: April 2026 (v1.3.1 release)
+Last updated: May 2026 (v1.3.3 release)
 
 ---
 
@@ -25,7 +25,7 @@ These features are built, tested, and working in the current codebase.
 
 ### Action Normalization & Registry
 - Static registry of canonical action classes with case-insensitive alias index (`packages/action-registry/src/index.ts`)
-- **42 named action classes + fail-closed `unknown_sensitive_action` sentinel (frozen v2 taxonomy as of v1.3.1)** — see [`docs/action-taxonomy.md`](action-taxonomy.md) and [`docs/action-registry.md`](action-registry.md)
+- **44 named action classes + fail-closed `unknown_sensitive_action` sentinel (frozen v3 taxonomy as of v1.3.2)** — see [`docs/action-taxonomy.md`](action-taxonomy.md) and [`docs/action-registry.md`](action-registry.md)
 - Coverage spans filesystem, web, browser, shell, communication, memory, credential, code, payment, system, permissions, process, network (diagnose / scan / transfer / shell), cluster, scheduling, vcs, package, build, archive
 - Reclassification rules: `filesystem.write` with URL target → `web.post`; shell metacharacter in params raises risk to `critical`
 - Ordered target extraction with per-class overrides (filesystem / vcs / package / build / archive / shell.exec / code.execute)
@@ -98,10 +98,10 @@ These features are built, tested, and working in the current codebase.
 - Hot-reload watcher (debounced, atomic swap)
 - In-memory `ApprovalManager` with token generation, TTL expiry, and concurrent request support
 - **`runWithHitl` wrapper** (`src/enforcement/hitl-dispatch.ts`) handles the dispatch + re-run loop on top of `runPipeline` — operator approves, capability is issued, pipeline re-runs with the capability bound
-- **Telegram adapter**: long-polling listener with `callback_query` support; **inline buttons (v1.3.0)** for Approve Once / Approve Always / Deny; MarkdownV2 message body with explainer-driven sections; legacy `/approve <token>` text-command path retained as a fallback for v1.3.x
+- **Telegram adapter**: long-polling listener with `callback_query` support; **inline buttons (v1.3.0)** for Approve Once / Approve Always / Deny; MarkdownV2 message body with explainer-driven sections; `/approve <token>` and `/deny <token>` text-command fallbacks; `/help`, `/approvals`, `/approve_always`, and `/revoke` operator commands (v1.3.3)
 - **Slack adapter**: Block Kit with three interactive buttons (Approve Once / Approve Always / Deny), webhook server with HMAC-SHA256 signature verification + 5-minute timestamp window, message update on decision
 - **Console adapter** (v1.3.0): rich text + ANSI colour rendering for local development and CI; `[a] / [s] / [d]` keystroke prompt
-- **Approve Always** (v1.3.0): pattern derivation from the original command, persisted to `data/auto-permits.json` (hot-reloadable, separate from `data/rules.json`); CLI helpers (`npm run list-auto-permits`, `revoke-auto-permit`, etc.)
+- **Approve Always** (v1.3.0): pattern derivation from the original command, persisted to `data/auto-permits.json` (hot-reloadable, separate from `data/rules.json`); CLI helpers (`npm run list-auto-permits`, `revoke-auto-permit`, etc.) and Telegram revoke/list commands
 - **Command explainer** (v1.3.0+): rule-based engine in `src/enforcement/command-explainer/patterns.ts` produces summary / effects / warnings for HITL message bodies. ~100 explainer functions covering filesystem / git / package / network / scheduling / containers / archives / process / permissions / system / read-utility commands; v1.3.1 closed the 16-category exec-command coverage gap
 - **`intent_hint` metadata** (v1.3.0): agent-supplied "Why this is happening" line surfaced in HITL messages; truncated to 200 characters
 - **Three feature flags**: `CLAWTHORITY_DISABLE_APPROVE_ALWAYS`, `CLAWTHORITY_APPROVE_ALWAYS_AUTO_CONFIRM`, `CLAWTHORITY_HITL_MINIMAL`

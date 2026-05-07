@@ -126,15 +126,16 @@ const DEFAULT_RULES: Rule[] = [
   },
 
   /**
-   * Unconditionally forbid shell execution.
-   * Direct shell invocation bypasses all command-level policy.
+   * Forbid shell execution pending HITL approval.
+   * Direct shell invocation is high risk, but local operators can approve
+   * bounded development commands through the configured HITL channel.
    */
   {
     action_class: 'shell.exec',
     effect: 'forbid',
-    priority: 100,
-    reason: 'Shell execution is unconditionally forbidden',
-    tags: ['system', 'security'],
+    priority: 90,
+    reason: 'Shell execution requires human-in-the-loop approval',
+    tags: ['system', 'security', 'hitl'],
   },
 
   /**

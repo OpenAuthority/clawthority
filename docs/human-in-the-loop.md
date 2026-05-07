@@ -462,7 +462,7 @@ Uses the Telegram Bot API with long polling to receive operator responses.
 4. The plugin resolves the pending action via `answerCallbackQuery` and the agent continues or receives a rejection.
 5. The original message is updated in place via `editMessageText` to show the decision; the buttons are removed.
 
-The legacy `/approve <token>` and `/deny <token>` text-command path is still supported as a fallback (described below) but the buttons are the primary UX.
+The `/approve <token>` and `/deny <token>` text-command path is still supported as a fallback, and Telegram now also supports management commands for inspecting pending approvals and saved Approve Always rules.
 
 #### Message format
 
@@ -532,16 +532,31 @@ Tool: `bash`
 
 Tapping **Approve Always** opens a follow-up confirmation message that proposes a permit pattern derived from the command (e.g. `docker run *`) with `Save` / `Cancel` buttons. On Save, the rule is appended to `data/auto-permits.json` and hot-reloaded; the next matching command bypasses HITL entirely. See the dedicated [Approve Always](#approve-always) section below for derivation rules, the auto-permit store format, the CLI helpers, and the `CLAWTHORITY_DISABLE_APPROVE_ALWAYS=1` / `CLAWTHORITY_APPROVE_ALWAYS_AUTO_CONFIRM=1` flags.
 
-#### Legacy text-command fallback
+#### Telegram operator commands
 
-The pre-v1.3.0 text-command flow is still supported. If your operator workflow depends on it (e.g. mobile clients without inline-button support, or pipeline integrations that scrape the chat), you can still resolve approvals by replying:
+The inline buttons are the primary approval UX, but the Telegram bot also accepts text commands in the configured `TELEGRAM_CHAT_ID`. Use these for status checks, keyboard-only workflows, and cleanup of saved Approve Always patterns.
+
+| Command | What it does |
+|---|---|
+| `/help` or `/start` | Shows the available HITL bot commands. |
+| `/approvals` or `/pending` | Lists pending HITL requests, including token, tool, action class, policy, target, expiry, and ready-to-send approve/deny commands. |
+| `/approve TOKEN` | Approves one pending request. Kept as a fallback for buttonless clients and automation. |
+| `/deny TOKEN` | Denies one pending request. Kept as a fallback for buttonless clients and automation. |
+| `/approve_always TOKEN` | Starts the Approve Always flow for a pending request. |
+| `/approve_always` | Lists saved Approve Always rules from `data/auto-permits.json`. Aliases: `/always`, `/auto_approvals`, `/auto_permits`. |
+| `/revoke N` | Revokes saved Approve Always rule number `N` from the `/approve_always` list. |
+| `/revoke PATTERN` | Revokes a saved Approve Always rule by exact pattern string. |
+
+Examples:
 
 ```
 /approve 01957b3c-4f2a-7d8e-9b1c-6e5f4a3b2c1d
 /deny    01957b3c-4f2a-7d8e-9b1c-6e5f4a3b2c1d
+/approve_always
+/revoke 2
 ```
 
-These commands work unchanged from v1.2.x. The plan is to keep them through v1.3.x and revisit removal in v1.4.
+`/revoke` rewrites the auto-permit store atomically, reloads the in-memory checker and JSON rules, and clears in-memory session auto-approvals. Clearing the session set is intentionally conservative: session auto-approvals are keyed by channel/action class, while stored rules are pattern-based, so clearing all session entries prevents a revoked rule from lingering until restart.
 
 To collapse the message body to the v1.2.x minimal style (raw command + buttons, no explainer / effects / warnings / intent-hint sections), set `CLAWTHORITY_HITL_MINIMAL=1`. Buttons (including Approve Always) continue to work — only the rich body is suppressed.
 
@@ -550,7 +565,7 @@ To collapse the message body to the v1.2.x minimal style (raw command + buttons,
 - **Secret storage:** Store `TELEGRAM_BOT_TOKEN` in a secrets manager or env file outside the repository. Never hardcode it in `hitl-policy.yaml`. Precedence: `TELEGRAM_BOT_TOKEN` env var > `telegram.botToken` config field > (no built-in default — missing token disables the adapter).
 - **Access control:** The bot listens on the configured `TELEGRAM_CHAT_ID` only. Updates from other chats are silently ignored. Use a private chat or a group with restricted membership. Anyone who can see and tap a button in the chat can approve — restrict membership to operators.
 - **No webhook verification needed:** Telegram long-polling fetches updates from the Telegram API; there is no incoming webhook to verify. Ensure the bot token is not exposed — possession of the token gives full control over the bot.
-- **Callback-query parsing:** Only `callback_query` updates with `callback_data` matching `<verb>:<token>` (where verb ∈ `approve_once`, `approve_always`, `deny`, `confirm_approve_always`, `cancel_approve_always`) are processed; all other updates are ignored. Token format: UUID v7. The legacy text command parser uses `[A-Za-z0-9_-]{6,12}` to filter invalid inputs.
+- **Callback-query parsing:** Only `callback_query` updates with `callback_data` matching `<verb>:<token>` (where verb ∈ `approve_once`, `approve_always`, `deny`, `confirm_approve_always`, `cancel_approve_always`) are processed; all other callback updates are ignored. Token format: UUID v7 or `session_id:action_class` for session approvals. Text approval commands use the same token shape. Management commands only run for the configured chat ID.
 
 ---
 
@@ -619,7 +634,7 @@ Tool: `email.send`
 
 The third button opens a Block Kit confirmation message proposing a permit pattern derived from the command, with **Save** / **Cancel** buttons. On Save, the rule is appended to `data/auto-permits.json` and hot-reloaded. See the dedicated [Approve Always](#approve-always) section below.
 
-To hide the Approve Always button on Slack (keeping only Approve Once / Deny), set `CLAWTHORITY_DISABLE_APPROVE_ALWAYS=1`.
+To hide Approve Always controls on every HITL channel (keeping only Approve Once / Deny where applicable), set `CLAWTHORITY_DISABLE_APPROVE_ALWAYS=1`.
 
 To collapse the message body to v1.2.x minimal style (raw command + buttons only — no explainer / effects / warnings / intent-hint sections), set `CLAWTHORITY_HITL_MINIMAL=1`.
 
@@ -735,10 +750,11 @@ Added in v1.3.0. The third HITL button persists a permit pattern so the next mat
 
 ### Pattern derivation rules
 
-The derivation is intentionally conservative. Only commands that fit one of two methods produce a pattern; everything else is refused (operator must use Approve Once).
+The derivation is intentionally conservative. Only commands that fit a supported strategy produce a pattern; everything else is refused (operator must use Approve Once).
 
-- **`tool` method** — applies when the call resolves to a registered tool name (e.g. `npm_install`). Pattern is the tool name itself; matches every invocation regardless of parameters.
-- **`default` method** — applies when the action class is `unknown_sensitive_action` / `shell.exec` and the target is a shell command. Tokenises the command, drops flags (`-it`, `-v ...`, `--rm`), retains binary + first positional argument as `<binary> * <positional> *`. Example: `docker run -it --rm ubuntu bash` → `docker run *`.
+- **Registered-tool derivation** — applies when the call resolves to a registered non-exec tool name (e.g. `npm_install`). The saved pattern is derived from the tool name and uses `method: "default"`; it matches invocations of that tool name.
+- **Shell-command derivation** — applies when the action class is `unknown_sensitive_action`, `shell.exec`, or `code.execute` and the target is a shell command. Tokenises the command, drops flags (`-it`, `-v ...`, `--rm`), retains binary + first positional argument as `<binary> <positional> *`. Example: `docker run -it --rm ubuntu bash` → `docker run *`.
+- **`exact` method** — supported by the store and matcher for tooling-managed records. It normalises the full command with no wildcard, so only the exact command shape matches.
 
 Refusal cases (Approve Always is offered but produces no pattern):
 - Shell metacharacters present (`;`, `|`, `&&`, `>`, backticks, `$()`) — derivation is unsafe.
@@ -753,7 +769,6 @@ Permits live in a hot-reloadable JSON file alongside `data/rules.json`. Schema:
 {
   "version": 5,
   "checksum": "sha256-...",
-  "generated": "2026-04-29T12:34:56Z",
   "rules": [
     {
       "pattern": "docker run *",
@@ -772,16 +787,17 @@ Permits live in a hot-reloadable JSON file alongside `data/rules.json`. Schema:
 |---|---|
 | `version` | Monotonic counter; bumped on every write. The watcher rejects bundles whose version is not strictly greater. |
 | `checksum` | SHA-256 of the canonicalised `rules` array; verified on load. |
-| `generated` | ISO-8601 write timestamp. Diagnostic only. |
 | `rules[].pattern` | The derived permit pattern. |
-| `rules[].method` | `tool` or `default`. |
+| `rules[].method` | `default` or `exact`. Approve Always currently writes `default`; exact rules can be managed by tooling. |
 | `rules[].createdAt` | Epoch milliseconds. |
 | `rules[].originalCommand` | The command the pattern was derived from. |
 | `rules[].created_by` | Channel / agent identifier of the operator who approved. |
 | `rules[].created_at` | ISO-8601 form of `createdAt`. |
 | `rules[].derived_from` | Sanitised command snippet for audit display. |
 
-The file is hot-reloaded by the same chokidar watcher that handles `data/rules.json` and `data/bundle.json` — no plugin restart required after a manual edit.
+The file is hot-reloaded by the same chokidar watcher that handles `data/rules.json` and `data/bundle.json` — no plugin restart required after a tool-assisted edit.
+
+> **Operator note:** Prefer `/revoke`, `npm run remove-auto-permit`, or `npm run revoke-auto-permit` over hand-editing the file. These paths bump `version`, recompute `checksum`, reload rules, and avoid stale in-memory session approvals.
 
 ### CLI helpers
 
@@ -796,6 +812,16 @@ The plugin ships six npm scripts for managing the auto-permit store. Run from th
 | `npm run remove-auto-permit -- <index>` | Removes a single rule by index; bumps the version counter. |
 | `npm run revoke-auto-permit -- <pattern>` | Removes by pattern string. |
 
+### Telegram bot helpers
+
+The Telegram bot exposes the same common review/revoke loop without shell access:
+
+| Command | What it does |
+|---|---|
+| `/approve_always` | Lists saved patterns with creation metadata and a matching `/revoke N` command for each entry. |
+| `/revoke N` | Removes by list number, bumps the store version, reloads rules, and clears in-memory session auto-approvals. |
+| `/revoke PATTERN` | Removes by exact pattern string. |
+
 ### Audit
 
 Every Approve Always save emits an `auto_permit_added` audit entry alongside the normal `hitl approved` entry:
@@ -804,7 +830,7 @@ Every Approve Always save emits an `auto_permit_added` audit entry alongside the
 |---|---|
 | `type` | `"auto_permit_added"` |
 | `pattern` | The saved pattern. |
-| `method` | `tool` or `default`. |
+| `method` | `default` or `exact`. Approve Always currently writes `default`. |
 | `originalCommand` | The command the pattern was derived from. |
 | `agentId`, `channel`, `policyName` | Same provenance as the underlying HITL entry. |
 

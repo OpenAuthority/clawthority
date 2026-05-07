@@ -990,6 +990,12 @@ describe('normalize_action — unknown tools', () => {
     expect(result.hitl_mode).toBe('per_request');
   });
 
+  it('extracts a target from command-like params for unknown tools', () => {
+    const result = normalize_action('some_unknown_tool_xyz', { command: 'openclaw doctor --non-interactive' });
+    expect(result.action_class).toBe('unknown_sensitive_action');
+    expect(result.target).toBe('openclaw doctor --non-interactive');
+  });
+
   it('defaults params to empty object when omitted', () => {
     const result = normalize_action('read_file');
     expect(result.action_class).toBe('filesystem.read');

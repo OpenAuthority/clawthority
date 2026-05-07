@@ -3,6 +3,7 @@ import { createHmac } from 'node:crypto';
 import {
   resolveSlackConfig,
   sendSlackApprovalRequest,
+  sendSlackConfirmation,
   verifySlackSignature,
   SlackInteractionServer,
 } from './slack.js';
@@ -239,6 +240,34 @@ describe('sendSlackApprovalRequest', () => {
     expect(fields[0].text).not.toContain('a'.repeat(101));
   });
 
+  it('renders optional rich sections (risk, explanation, raw command, effects, warnings, intent)', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, ts: '111.222' }), { status: 200 }),
+    );
+
+    await sendSlackApprovalRequest(config, {
+      ...opts,
+      riskLevel: 'high',
+      explanation: 'E'.repeat(550),
+      rawCommand: 'R'.repeat(260),
+      effects: ['creates file', 'updates config'],
+      warnings: ['irreversible'],
+      intentHint: 'I'.repeat(260),
+    });
+
+    const body = JSON.parse(vi.mocked(fetch).mock.calls[0]![1]?.body as string);
+    const blocks = body.blocks as Array<{ type: string; text?: { text: string }; fields?: Array<{ text: string }>; elements?: Array<{ text: string }> }>;
+    const coreFields = blocks[1].fields ?? [];
+    expect(coreFields.some((f) => f.text.includes('*Risk:*'))).toBe(true);
+    expect(blocks.some((b) => b.text?.text.includes('*Explanation:*'))).toBe(true);
+    expect(blocks.some((b) => b.elements?.[0]?.text.includes('*Command:*'))).toBe(true);
+    expect(blocks.some((b) => b.text?.text.includes('*Effects:*'))).toBe(true);
+    expect(blocks.some((b) => b.text?.text.includes('*Warnings:*'))).toBe(true);
+    expect(blocks.some((b) => b.text?.text.includes('*Why this is happening:*'))).toBe(true);
+    // Truncation marker should be present for long optional strings.
+    expect(JSON.stringify(blocks)).toContain('\u2026');
+  });
+
   it('returns ok:false on HTTP error', async () => {
     vi.mocked(fetch).mockResolvedValue(new Response('Server Error', { status: 500 }));
     const result = await sendSlackApprovalRequest(config, opts);
@@ -280,6 +309,50 @@ describe('sendSlackApprovalRequest', () => {
     const result = await sendSlackApprovalRequest(config, opts, breaker);
     expect(result.ok).toBe(false);
     expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('sendSlackConfirmation', () => {
+  const config = { botToken: 'xoxb-test', channelId: 'C123', signingSecret: 'secret', interactionPort: 3201 };
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('updates the original message with decision text and no buttons', async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+
+    await sendSlackConfirmation(config, {
+      token: 'abc12345',
+      decision: 'approved',
+      toolName: 'shell.exec',
+      messageTs: '1712345678.123456',
+    });
+
+    expect(fetch).toHaveBeenCalledOnce();
+    const [url, init] = vi.mocked(fetch).mock.calls[0]!;
+    expect(url).toBe('https://slack.com/api/chat.update');
+    const body = JSON.parse(init?.body as string);
+    expect(body.channel).toBe('C123');
+    expect(body.ts).toBe('1712345678.123456');
+    expect(body.text).toContain('APPROVED');
+    expect(body.blocks[0].text.text).toContain('shell.exec');
+  });
+
+  it('does not throw when chat.update fails', async () => {
+    vi.mocked(fetch).mockRejectedValue(new Error('network error'));
+    await expect(
+      sendSlackConfirmation(config, {
+        token: 'tok',
+        decision: 'denied',
+        toolName: 'tool',
+        messageTs: '1.2',
+      }),
+    ).resolves.toBeUndefined();
   });
 });
 

@@ -11,10 +11,9 @@
  * Rule 3: Any action class where a param value contains shell metacharacters
  *         → risk raised to `critical` (action class is unchanged)
  *
- * Raw exec classification: a bare `exec` call (not a registered shell alias)
- * resolves to `unknown_sensitive_action`, which carries a priority-100 forbid
- * in CLOSED mode and implicitly permits in OPEN mode (fail-open by design;
- * see the NOTE in `src/policy/rules/default.ts`).
+ * Raw exec classification: a bare `exec` call is registered as a shell alias
+ * and resolves to `shell.exec`, which is HITL-gated in both OPEN and CLOSED
+ * modes.
  *
  * `CLAWTHORITY_MODE` is consumed at module-load time; each test resets
  * the module cache via `vi.resetModules()` and dynamically re-imports
@@ -27,6 +26,9 @@ import type {
   HookContext,
   OpenclawPluginContext,
 } from './index.js';
+
+const NO_JSON_RULES_FILE = '/tmp/clawthority-exec-reclassification-no-rules.json';
+const NO_AUTO_PERMITS_FILE = '/tmp/clawthority-exec-reclassification-no-auto-permits.json';
 
 // ─── Mock chokidar so activation doesn't spin up a real FS watcher ──────────
 
@@ -46,7 +48,23 @@ async function loadPluginInMode(
 ): Promise<BeforeToolCallHandler> {
   process.env.CLAWTHORITY_MODE = mode;
   process.env.OPENAUTH_FORCE_ACTIVE = '1';
+  process.env.CLAWTHORITY_RULES_FILE = NO_JSON_RULES_FILE;
+  process.env.CLAWTHORITY_AUTO_PERMIT_STORE = NO_AUTO_PERMITS_FILE;
   vi.resetModules();
+
+  vi.doMock('./hitl/parser.js', async () => {
+    const actual = await vi.importActual<typeof import('./hitl/parser.js')>(
+      './hitl/parser.js',
+    );
+    return {
+      ...actual,
+      parseHitlPolicyFile: vi.fn(async () => {
+        const err = new Error('ENOENT: no such file or directory') as NodeJS.ErrnoException;
+        err.code = 'ENOENT';
+        throw err;
+      }),
+    };
+  });
 
   const mod = (await import('./index.js')) as { default: {
     activate: (ctx: OpenclawPluginContext) => Promise<void>;
@@ -92,11 +110,16 @@ describe('exec reclassification — production hook handler', () => {
   beforeEach(() => {
     delete process.env.CLAWTHORITY_MODE;
     delete process.env.OPENAUTH_FORCE_ACTIVE;
+    delete process.env.CLAWTHORITY_RULES_FILE;
+    delete process.env.CLAWTHORITY_AUTO_PERMIT_STORE;
   });
 
   afterEach(() => {
     delete process.env.CLAWTHORITY_MODE;
     delete process.env.OPENAUTH_FORCE_ACTIVE;
+    delete process.env.CLAWTHORITY_RULES_FILE;
+    delete process.env.CLAWTHORITY_AUTO_PERMIT_STORE;
+    vi.doUnmock('./hitl/parser.js');
   });
 
   // ── Rule 1: filesystem.write + URL → web.post ─────────────────────────────
@@ -200,30 +223,20 @@ describe('exec reclassification — production hook handler', () => {
   });
 
   // ── Raw exec classification (D-06 regression) ────────────────────────────
-  //
-  // `exec` is not a registered shell alias — it resolves to
-  // `unknown_sensitive_action` (fail-closed unknown tool behaviour).
-  //
-  // In OPEN mode, `unknown_sensitive_action` is intentionally excluded from
-  // CRITICAL_ACTION_CLASSES so unrecognised OpenClaw tools are not
-  // accidentally blocked (implicit permit). In CLOSED mode the full
-  // DEFAULT_RULES set applies and the priority-100 forbid fires.
 
-  describe('raw exec classification — unknown_sensitive_action (D-06)', () => {
-    it('raw exec call resolves to unknown_sensitive_action and permits in OPEN mode', async () => {
+  describe('raw exec classification — shell.exec (D-06)', () => {
+    it('raw exec call resolves to shell.exec and blocks in OPEN mode without HITL', async () => {
       const handler = await loadPluginInMode('open');
       const result = await callHook(handler, 'exec', { command: 'ls /tmp' });
-      // exec is not in the shell-alias registry → unknown_sensitive_action.
-      // OPEN mode excludes unknown_sensitive_action from its forbid set —
-      // implicit permit.
-      expect(result?.block).not.toBe(true);
+      expect(result?.block).toBe(true);
+      expect(result?.blockReason).toMatch(/shell|approval/i);
     });
 
-    it('raw exec call resolves to unknown_sensitive_action and is forbidden at priority 100 in CLOSED mode', async () => {
+    it('raw exec call resolves to shell.exec and blocks in CLOSED mode without HITL', async () => {
       const handler = await loadPluginInMode('closed');
       const result = await callHook(handler, 'exec', { command: 'ls /tmp' });
-      // CLOSED mode includes the priority-100 forbid for unknown_sensitive_action.
       expect(result?.block).toBe(true);
+      expect(result?.blockReason).toMatch(/shell|approval/i);
     });
 
     it('unknown tool name resolves to unknown_sensitive_action and is forbidden in CLOSED mode', async () => {

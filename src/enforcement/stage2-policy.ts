@@ -272,8 +272,21 @@ export function createCombinedStage2(
         }
       }
 
-      // ── JSON rules engine (resource/match-based, keyed by toolName) ───────
+      // ── JSON rules engine (action-class and resource/match rules) ─────────
       if (jsonEngine !== null) {
+        const jsonActionResult = jsonEngine.evaluateByActionClass(
+          ctx.action_class,
+          ctx.target,
+          ctx.rule_context,
+        );
+        if (jsonActionResult.effect === 'forbid') {
+          if (isHitlGatedDecision(jsonActionResult)) {
+            pendingHitlGated ??= toStagedForbid(jsonActionResult, 'json-rules');
+          } else {
+            return toStagedForbid(jsonActionResult, 'json-rules');
+          }
+        }
+
         const jsonResult = jsonEngine.evaluate('tool', toolName, ctx.rule_context, ctx.target);
         if (jsonResult.effect === 'forbid') {
           if (isHitlGatedDecision(jsonResult)) {
