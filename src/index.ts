@@ -1003,6 +1003,9 @@ const slackMessageTimestamps = new Map<string, string>();
 /** Maps HITL token → Telegram message_id for editMessageText on decision. */
 const telegramMessageIds = new Map<string, number>();
 
+/** Tokens resolved through an operator's Approve Always action. */
+const approveAlwaysTokens = new Set<string>();
+
 /**
  * How long (ms) an Approve Always confirmation waits for a Save/Cancel
  * response before timing out.  After timeout the confirmation is silently
@@ -1063,6 +1066,25 @@ function buildHitlSummary(toolName: string, action_class: string, target: string
     return `Unregistered tool "${toolName}" wants approval for: ${truncatedTarget}`;
   }
   return `Unregistered tool "${toolName}" wants approval, but no target or command was provided.`;
+}
+
+function formatHitlTarget(target: string): string {
+  const targetText = target.trim();
+  if (targetText.length === 0) return '(no target)';
+  return targetText.length > 160 ? `${targetText.slice(0, 159)}...` : targetText;
+}
+
+function logOpenClawHitlStatus(
+  status: 'APPROVED ONCE' | 'APPROVED ALWAYS' | 'AUTO-APPROVED' | 'DENIED' | 'EXPIRED DENIED' | 'EXPIRED AUTO-APPROVED',
+  token: string,
+  toolName: string,
+  action_class: string,
+  target: string,
+): void {
+  const tokenPart = token.length > 0 ? ` token=${token}` : '';
+  console.log(
+    `[openclaw-hitl] HITL ${status}${tokenPart} tool=${toolName} action=${action_class} target="${formatHitlTarget(target)}"`,
+  );
 }
 
 /**
@@ -1150,7 +1172,7 @@ async function dispatchHitlChannel(
     // Store message_id for editMessageText on decision (mirrors Slack's messageTs).
     if (sendResult.messageId !== undefined) telegramMessageIds.set(token, sendResult.messageId);
 
-    return await resolveHitlDecision(token, promise, policy, toolName, identity, (t, decision) => {
+    return await resolveHitlDecision(token, promise, policy, toolName, action_class, target, identity, (t, decision) => {
       const messageId = telegramMessageIds.get(t);
       telegramMessageIds.delete(t);
       if (messageId !== undefined) {
@@ -1200,7 +1222,7 @@ async function dispatchHitlChannel(
     // Store message timestamp for chat.update on decision
     if (result.messageTs) slackMessageTimestamps.set(token, result.messageTs);
 
-    return await resolveHitlDecision(token, promise, policy, toolName, identity, (t, decision) => {
+    return await resolveHitlDecision(token, promise, policy, toolName, action_class, target, identity, (t, decision) => {
       const messageTs = slackMessageTimestamps.get(t);
       slackMessageTimestamps.delete(t);
       if (messageTs) {
@@ -1222,6 +1244,7 @@ async function dispatchHitlChannel(
     const result = await sendConsoleApprovalRequest({ token, toolName, agentId: auditAgent, policyName: policy.name, timeoutSeconds: policy.approval.timeout, verified: identity.verified, showApproveAlways: FEATURES.approveAlwaysEnabled, ...sharedOpts });
 
     if (result.decision === 'approved_always') {
+      approveAlwaysTokens.add(token);
       approvalManager.addSessionAutoApproval(auditChannel, action_class);
       console.log(`[hitl-console] session auto-approval registered: channel=${auditChannel} action_class=${action_class}`);
       if (target.length > 0 || !['shell.exec', 'code.execute'].includes(action_class)) {
@@ -1232,7 +1255,7 @@ async function dispatchHitlChannel(
     const decision: 'approved' | 'denied' = result.decision === 'denied' ? 'denied' : 'approved';
     approvalManager.resolveApproval(token, decision);
 
-    return await resolveHitlDecision(token, promise, policy, toolName, identity, () => { /* result already shown inline */ });
+    return await resolveHitlDecision(token, promise, policy, toolName, action_class, target, identity, () => { /* result already shown inline */ });
   }
 
   // Unknown channel — no adapter available
@@ -1248,6 +1271,8 @@ async function resolveHitlDecision(
   promise: Promise<import('./hitl/approval-manager.js').HitlDecision>,
   policy: import('./hitl/types.js').HitlPolicy,
   toolName: string,
+  action_class: string,
+  target: string,
   identity: ResolvedIdentity,
   sendConfirmationFn: (token: string, decision: string) => void,
 ): Promise<BeforeToolCallResult | void> {
@@ -1257,19 +1282,23 @@ async function resolveHitlDecision(
   const auditChannel = identity.auditChannel;
 
   if (decision === 'approved') {
-    console.log(`[clawthority] │ [hitl] ✓ APPROVED (token=${token})`);
+    const approvedAlways = approveAlwaysTokens.delete(token);
+    const status = approvedAlways ? 'APPROVED ALWAYS' : 'APPROVED ONCE';
+    console.log(`[clawthority] │ [hitl] ${status} (token=${token})`);
+    logOpenClawHitlStatus(status, token, toolName, action_class, target);
     await logHitlDecision('approved', token, toolName, auditAgent, auditChannel, policy.name, policy.approval.timeout, identity.verified);
-    sendConfirmationFn(token, 'approved');
+    sendConfirmationFn(token, approvedAlways ? 'approved always' : 'approved');
     return;
   }
 
   if (decision === 'denied') {
     console.log(`[clawthority] │ [hitl] ✕ DENIED (token=${token})`);
+    logOpenClawHitlStatus('DENIED', token, toolName, action_class, target);
     await logHitlDecision('denied', token, toolName, auditAgent, auditChannel, policy.name, policy.approval.timeout, identity.verified);
     sendConfirmationFn(token, 'denied');
     console.log(`[clawthority] │ DECISION: ✕ BLOCKED (hitl/denied)`);
     console.log(`[clawthority] └──────────────────────────────────────────────────────`);
-    return { block: true, blockReason: 'HITL: Operator denied the tool call' };
+    return { block: true, blockReason: `HITL DENIED: operator denied ${toolName} (${action_class})` };
   }
 
   // expired
@@ -1278,11 +1307,13 @@ async function resolveHitlDecision(
   await logHitlDecision(auditDecision, token, toolName, auditAgent, auditChannel, policy.name, policy.approval.timeout, identity.verified);
   if (policy.approval.fallback === 'deny') {
     sendConfirmationFn(token, 'expired (denied)');
+    logOpenClawHitlStatus('EXPIRED DENIED', token, toolName, action_class, target);
     console.log(`[clawthority] │ DECISION: ✕ BLOCKED (hitl/expired-deny)`);
     console.log(`[clawthority] └──────────────────────────────────────────────────────`);
     return { block: true, blockReason: 'HITL: Approval timed out — denied by policy fallback' };
   }
   sendConfirmationFn(token, 'expired (auto-approved)');
+  logOpenClawHitlStatus('EXPIRED AUTO-APPROVED', token, toolName, action_class, target);
   return;
 }
 
@@ -1648,7 +1679,8 @@ const beforeToolCallHandler: BeforeToolCallHandler = async ({ toolName, params, 
         if (hitlResult.requiresApproval && hitlResult.matchedPolicy) {
           const policy = hitlResult.matchedPolicy;
           if (approvalManager.isSessionAutoApproved(identity.auditChannel, normalizedAction.action_class)) {
-            console.log(`[clawthority] │ [hitl] ✓ session auto-approved (${normalizedAction.action_class}) — skipping HITL dispatch`);
+            console.log(`[clawthority] │ [hitl] AUTO-APPROVED by prior Approve Always (${normalizedAction.action_class}) — skipping HITL dispatch`);
+            logOpenClawHitlStatus('AUTO-APPROVED', '', toolName, normalizedAction.action_class, normalizedAction.target);
           } else {
             console.log(`[clawthority] │ [hitl] releasing ${pipelineDecision.stage ?? 'unknown'} HITL-gated forbid via policy "${policy.name}" (${policy.approval.channel})`);
             const hitlChannelResult = await dispatchHitlChannel(policy, toolName, identity, normalizedAction.target, normalizedAction.action_class, intentHint);
@@ -1707,7 +1739,8 @@ const beforeToolCallHandler: BeforeToolCallHandler = async ({ toolName, params, 
     if (hitlResult.requiresApproval && hitlResult.matchedPolicy) {
       const policy = hitlResult.matchedPolicy;
       if (approvalManager.isSessionAutoApproved(identity.auditChannel, normalizedAction.action_class)) {
-        console.log(`[clawthority] │ [hitl] ✓ session auto-approved (${normalizedAction.action_class}) — skipping HITL dispatch`);
+        console.log(`[clawthority] │ [hitl] AUTO-APPROVED by prior Approve Always (${normalizedAction.action_class}) — skipping HITL dispatch`);
+        logOpenClawHitlStatus('AUTO-APPROVED', '', toolName, normalizedAction.action_class, normalizedAction.target);
       } else {
         console.log(`[clawthority] │ [hitl] matched policy "${policy.name}" — requesting approval via ${policy.approval.channel}`);
         const hitlChannelResult = await dispatchHitlChannel(policy, toolName, identity, normalizedAction.target, normalizedAction.action_class, intentHint);
@@ -2156,6 +2189,7 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
                 pendingApproveAlwaysConfirmations.delete(token);
                 const pending = approvalManager.getPending(token);
                 if (pending) {
+                  approveAlwaysTokens.add(token);
                   approvalManager.addSessionAutoApproval(pending.channelId, pending.action_class);
                   console.log(
                     `[hitl-telegram] session auto-approval registered: channel=${pending.channelId} action_class=${pending.action_class}` +
@@ -2242,6 +2276,7 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
 
                 // Auto-confirm path: CLAWTHORITY_APPROVE_ALWAYS_AUTO_CONFIRM=1,
                 // target is empty, or pattern derivation failed.
+                approveAlwaysTokens.add(token);
                 approvalManager.addSessionAutoApproval(pending.channelId, pending.action_class);
                 console.log(
                   `[hitl-telegram] session auto-approval registered: channel=${pending.channelId} action_class=${pending.action_class}` +
@@ -2291,6 +2326,7 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
               // requests of the same action class in this channel skip HITL.
               const pending = approvalManager.getPending(token);
               if (pending) {
+                approveAlwaysTokens.add(token);
                 approvalManager.addSessionAutoApproval(pending.channelId, pending.action_class);
                 console.log(`[hitl-slack] session auto-approval registered: channel=${pending.channelId} action_class=${pending.action_class}`);
                 // Derive and persist an auto-permit pattern from the command
