@@ -378,7 +378,7 @@ describe('HITL comprehensive E2E regression', () => {
             status: 200,
           }),
         )
-        .mockResolvedValue(new Response(EMPTY_UPDATES, { status: 200 }));
+        .mockImplementation(emptyUpdatesImpl());
 
       const listener = harness.createListener();
       listener.start();
@@ -519,7 +519,7 @@ describe('HITL comprehensive E2E regression', () => {
             status: 200,
           }),
         )
-        .mockResolvedValue(new Response(EMPTY_UPDATES, { status: 200 }));
+        .mockImplementation(emptyUpdatesImpl());
 
       const listener = harness.createListener();
       listener.start();
@@ -632,7 +632,7 @@ describe('HITL comprehensive E2E regression', () => {
             { status: 200 },
           ),
         )
-        .mockResolvedValue(new Response(EMPTY_UPDATES, { status: 200 }));
+        .mockImplementation(emptyUpdatesImpl());
 
       const listener = harness.createListener();
       listener.start();
@@ -667,7 +667,7 @@ describe('HITL comprehensive E2E regression', () => {
         .mockResolvedValueOnce(
           new Response(makeTextUpdate(60, `/approve ${tokenA}`), { status: 200 }),
         )
-        .mockResolvedValue(new Response(EMPTY_UPDATES, { status: 200 }));
+        .mockImplementation(emptyUpdatesImpl());
 
       const listenerA = harness.createListener();
       listenerA.start();
@@ -749,7 +749,7 @@ describe('HITL comprehensive E2E regression', () => {
             status: 200,
           }),
         )
-        .mockResolvedValue(new Response(EMPTY_UPDATES, { status: 200 }));
+        .mockImplementation(emptyUpdatesImpl());
 
       const listener = harness.createListener();
       listener.start();

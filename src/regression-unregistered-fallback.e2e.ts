@@ -35,6 +35,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { writeFileSync, unlinkSync } from 'node:fs';
 
+const NO_JSON_RULES_FILE = '/tmp/clawthority-unregistered-fallback-no-rules.json';
+const NO_AUTO_PERMITS_FILE = '/tmp/clawthority-unregistered-fallback-no-auto-permits.json';
+
 // ─── Shared stubs ────────────────────────────────────────────────────────────
 
 vi.mock('chokidar', () => ({
@@ -81,8 +84,9 @@ async function loadPlugin(opts: LoadOpts): Promise<BeforeToolCallHandler> {
   if (opts.jsonRulesFile !== undefined) {
     process.env.CLAWTHORITY_RULES_FILE = opts.jsonRulesFile;
   } else {
-    delete process.env.CLAWTHORITY_RULES_FILE;
+    process.env.CLAWTHORITY_RULES_FILE = NO_JSON_RULES_FILE;
   }
+  process.env.CLAWTHORITY_AUTO_PERMIT_STORE = NO_AUTO_PERMITS_FILE;
 
   vi.resetModules();
 
@@ -140,6 +144,7 @@ describe('unregistered tool fallback — regression tests', () => {
     delete process.env.CLAWTHORITY_MODE;
     delete process.env.OPENAUTH_FORCE_ACTIVE;
     delete process.env.CLAWTHORITY_RULES_FILE;
+    delete process.env.CLAWTHORITY_AUTO_PERMIT_STORE;
     auditEntries.length = 0;
   });
 
@@ -147,6 +152,7 @@ describe('unregistered tool fallback — regression tests', () => {
     delete process.env.CLAWTHORITY_MODE;
     delete process.env.OPENAUTH_FORCE_ACTIVE;
     delete process.env.CLAWTHORITY_RULES_FILE;
+    delete process.env.CLAWTHORITY_AUTO_PERMIT_STORE;
     vi.doUnmock('./hitl/parser.js');
   });
 

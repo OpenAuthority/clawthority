@@ -16,8 +16,8 @@
  *  TC-RD-04  With a console HITL policy targeting unknown_sensitive_action, an
  *            unregistered tool call fires sendConsoleApprovalRequest and is
  *            permitted when approved
- *  TC-RD-05  Without any HITL policy configured, an unregistered tool is silently
- *            permitted in OPEN mode (no HITL dispatch)
+ *  TC-RD-05  Without any HITL policy configured and without operator JSON rules,
+ *            an unregistered tool is permitted in OPEN mode (no HITL dispatch)
  *  TC-RD-06  Upgrade path — existing rules.json with both the recommended default
  *            action_class entry and a custom resource/match forbid loads correctly;
  *            the custom forbid is still enforced after upgrade
@@ -45,6 +45,8 @@ const dataDir = resolve(repoRoot, 'data');
 const realRulesPath = resolve(dataDir, 'rules.json');
 const realMarkerPath = resolve(dataDir, '.installed');
 const realExamplePath = resolve(dataDir, 'hitl-policy.yaml.example');
+const NO_JSON_RULES_FILE = '/tmp/clawthority-recommended-defaults-no-rules.json';
+const NO_AUTO_PERMITS_FILE = '/tmp/clawthority-recommended-defaults-no-auto-permits.json';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -115,8 +117,9 @@ async function loadPlugin(opts: LoadOpts): Promise<LoadResult> {
   if (opts.jsonRulesFile !== undefined) {
     process.env.CLAWTHORITY_RULES_FILE = opts.jsonRulesFile;
   } else {
-    delete process.env.CLAWTHORITY_RULES_FILE;
+    process.env.CLAWTHORITY_RULES_FILE = NO_JSON_RULES_FILE;
   }
+  process.env.CLAWTHORITY_AUTO_PERMIT_STORE = NO_AUTO_PERMITS_FILE;
 
   vi.resetModules();
 
@@ -364,6 +367,7 @@ describe('recommended defaults — enforcement pipeline', () => {
     delete process.env.CLAWTHORITY_MODE;
     delete process.env.OPENAUTH_FORCE_ACTIVE;
     delete process.env.CLAWTHORITY_RULES_FILE;
+    delete process.env.CLAWTHORITY_AUTO_PERMIT_STORE;
     vi.doUnmock('./hitl/parser.js');
     vi.doUnmock('./hitl/console.js');
   });
@@ -402,7 +406,7 @@ describe('recommended defaults — enforcement pipeline', () => {
   // ── TC-RD-05 ────────────────────────────────────────────────────────────────
 
   it(
-    'TC-RD-05: without HITL policy, unregistered tool is silently permitted in OPEN mode — no HITL dispatch',
+    'TC-RD-05: without HITL policy or operator JSON rules, unregistered tool is permitted in OPEN mode — no HITL dispatch',
     async () => {
       // Without a HITL policy, hitlConfig is null and the pre-existing HITL
       // check is skipped.  Unregistered tools in OPEN mode fall through to the
@@ -479,12 +483,14 @@ describe('recommended defaults — enforcement pipeline', () => {
         });
         expect(blockedResult?.block).toBe(true);
 
-        // A different unregistered tool has no matching resource/match forbid
-        // and no HITL policy — it falls through to the implicit OPEN mode permit.
-        const permittedResult = await callHook(handler, 'unrelated_novel_tool', {
+        // The recommended-default action_class entry is now evaluated by the
+        // JSON rules engine, so unregistered tools are also gated by the
+        // upgraded rules file.
+        const unknownResult = await callHook(handler, 'unrelated_novel_tool', {
           data: 'payload',
         });
-        expect(permittedResult?.block).not.toBe(true);
+        expect(unknownResult?.block).toBe(true);
+        expect(unknownResult?.blockReason).toMatch(/unrelated_novel_tool|unknown|approval/i);
 
         // No HITL console interaction occurred (no console HITL policy).
         expect(consoleSpy).not.toHaveBeenCalled();

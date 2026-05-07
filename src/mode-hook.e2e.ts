@@ -27,6 +27,9 @@ import type {
   OpenclawPluginContext,
 } from './index.js';
 
+const NO_JSON_RULES_FILE = '/tmp/clawthority-mode-hook-no-rules.json';
+const NO_AUTO_PERMITS_FILE = '/tmp/clawthority-mode-hook-no-auto-permits.json';
+
 // ─── Mock chokidar so activation doesn't spin up a real FS watcher ──────────
 
 vi.mock('chokidar', () => ({
@@ -50,11 +53,27 @@ async function loadPluginInMode(
   mode: 'open' | 'closed',
 ): Promise<BeforeToolCallHandler> {
   process.env.CLAWTHORITY_MODE = mode;
+  process.env.CLAWTHORITY_RULES_FILE = NO_JSON_RULES_FILE;
+  process.env.CLAWTHORITY_AUTO_PERMIT_STORE = NO_AUTO_PERMITS_FILE;
   vi.resetModules();
 
   // Bypass the install-lifecycle gate so activate() doesn't short-circuit on
   // missing data/.installed.
   process.env.OPENAUTH_FORCE_ACTIVE = '1';
+
+  vi.doMock('./hitl/parser.js', async () => {
+    const actual = await vi.importActual<typeof import('./hitl/parser.js')>(
+      './hitl/parser.js',
+    );
+    return {
+      ...actual,
+      parseHitlPolicyFile: vi.fn(async () => {
+        const err = new Error('ENOENT: no such file or directory') as NodeJS.ErrnoException;
+        err.code = 'ENOENT';
+        throw err;
+      }),
+    };
+  });
 
   const mod = (await import('./index.js')) as { default: {
     activate: (ctx: OpenclawPluginContext) => Promise<void>;
@@ -103,11 +122,16 @@ describe('install mode — production hook handler', () => {
   beforeEach(() => {
     delete process.env.CLAWTHORITY_MODE;
     delete process.env.OPENAUTH_FORCE_ACTIVE;
+    delete process.env.CLAWTHORITY_RULES_FILE;
+    delete process.env.CLAWTHORITY_AUTO_PERMIT_STORE;
   });
 
   afterEach(() => {
     delete process.env.CLAWTHORITY_MODE;
     delete process.env.OPENAUTH_FORCE_ACTIVE;
+    delete process.env.CLAWTHORITY_RULES_FILE;
+    delete process.env.CLAWTHORITY_AUTO_PERMIT_STORE;
+    vi.doUnmock('./hitl/parser.js');
   });
 
   describe('open', () => {

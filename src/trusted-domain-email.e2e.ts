@@ -12,9 +12,6 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { runPipeline } from './enforcement/pipeline.js';
 import type { PipelineContext, Stage1Fn, Stage2Fn } from './enforcement/pipeline.js';
 import { validateCapability } from './enforcement/stage1-capability.js';
@@ -28,8 +25,6 @@ import type { Rule } from './policy/types.js';
 
 // ─── Fixture ─────────────────────────────────────────────────────────────────
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
 interface TrustedAcmeFixture {
   name: string;
   version: number;
@@ -37,9 +32,12 @@ interface TrustedAcmeFixture {
   trustedDomains: string[];
 }
 
-const trustedAcme: TrustedAcmeFixture = JSON.parse(
-  readFileSync(join(__dirname, '../data/fixtures/trusted-acme.json'), 'utf-8'),
-) as TrustedAcmeFixture;
+const trustedAcme: TrustedAcmeFixture = {
+  name: 'trusted-acme',
+  version: 1,
+  description: 'ACME Corp email domain trust policy - only acme.com recipients are permitted',
+  trustedDomains: ['acme.com'],
+};
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 

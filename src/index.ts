@@ -1750,6 +1750,8 @@ const beforeToolCallHandler: BeforeToolCallHandler = async ({ toolName, params, 
     pipelineDecision.reason = `tool '${toolName}' is not registered: ${pipelineDecision.reason}`;
   }
 
+  let hitlGateApproved = false;
+
   if (pipelineDecision.effect === 'forbid') {
     if (pipelineDecision.reason === 'untrusted_source_high_risk') {
       const blockReason = 'untrusted_source_high_risk';
@@ -1783,7 +1785,10 @@ const beforeToolCallHandler: BeforeToolCallHandler = async ({ toolName, params, 
             const hitlChannelResult = await dispatchHitlChannel(policy, toolName, identity, normalizedAction.target, normalizedAction.action_class, intentHint, ctx);
             if (hitlChannelResult) return hitlChannelResult;
           }
-          // Approved (or auto-approved): fall through to the pre-existing HITL check and then ALLOWED.
+          // Approved (or auto-approved): proceed directly. The same policy
+          // already satisfied the gate, so the generic HITL check below must
+          // not dispatch a second approval for the same tool call.
+          hitlGateApproved = true;
         } else {
           const priority = pipelineDecision.priority;
           const ruleTag = pipelineDecision.rule;
@@ -1833,7 +1838,9 @@ const beforeToolCallHandler: BeforeToolCallHandler = async ({ toolName, params, 
       ? checkAction(hitlConfig, normalizedAction.action_class)
       : { requiresApproval: false };
 
-    if (hitlResult.requiresApproval && hitlResult.matchedPolicy) {
+    if (hitlGateApproved) {
+      console.log(`[clawthority] │ [hitl] ✓ approval already satisfied the HITL-gated policy`);
+    } else if (hitlResult.requiresApproval && hitlResult.matchedPolicy) {
       const policy = hitlResult.matchedPolicy;
       if (approvalManager.isSessionAutoApproved(identity.auditChannel, normalizedAction.action_class)) {
         console.log(`[clawthority] │ [hitl] AUTO-APPROVED by prior Approve Always (${normalizedAction.action_class}) — skipping HITL dispatch`);

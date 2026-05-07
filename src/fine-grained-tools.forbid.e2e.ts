@@ -37,6 +37,9 @@ import type {
 } from './index.js';
 import type { HitlPolicyConfig } from './hitl/types.js';
 
+const NO_JSON_RULES_FILE = '/tmp/clawthority-fine-grained-no-rules.json';
+const NO_AUTO_PERMITS_FILE = '/tmp/clawthority-fine-grained-no-auto-permits.json';
+
 // ─── Shared stubs ────────────────────────────────────────────────────────────
 
 vi.mock('chokidar', () => ({
@@ -87,7 +90,8 @@ interface LoadOpts {
 async function loadPlugin(opts: LoadOpts): Promise<BeforeToolCallHandler> {
   process.env.CLAWTHORITY_MODE = opts.mode;
   process.env.OPENAUTH_FORCE_ACTIVE = '1';
-  delete process.env.CLAWTHORITY_RULES_FILE;
+  process.env.CLAWTHORITY_RULES_FILE = NO_JSON_RULES_FILE;
+  process.env.CLAWTHORITY_AUTO_PERMIT_STORE = NO_AUTO_PERMITS_FILE;
 
   vi.resetModules();
 
@@ -175,6 +179,7 @@ describe('fine-grained tools — default forbid rules', () => {
     delete process.env.CLAWTHORITY_MODE;
     delete process.env.OPENAUTH_FORCE_ACTIVE;
     delete process.env.CLAWTHORITY_RULES_FILE;
+    delete process.env.CLAWTHORITY_AUTO_PERMIT_STORE;
     vi.doUnmock('./hitl/parser.js');
   });
 
@@ -266,23 +271,23 @@ describe('fine-grained tools — default forbid rules', () => {
     });
   });
 
-  // ── Priority 100: shell.exec (unconditional) ──────────────────────────────
+  // ── Priority 90: shell.exec (HITL-gated) ─────────────────────────────────
 
-  describe('priority-100 unconditional forbid — shell.exec', () => {
-    it('TC-FGB-09: bash is blocked in CLOSED mode (unconditional priority-100 forbid)', async () => {
+  describe('priority-90 HITL-gated forbid — shell.exec', () => {
+    it('TC-FGB-09: bash is blocked in CLOSED mode when no HITL is configured', async () => {
       const handler = await loadPlugin({ mode: 'closed' });
       const result = await callHook(handler, 'bash', { command: 'ls -la /etc' });
       expect(result?.block).toBe(true);
-      expect(result?.blockReason).toMatch(/shell|forbidden/i);
+      expect(result?.blockReason).toMatch(/shell|approval/i);
     });
 
-    it('TC-FGB-10: bash is blocked in OPEN mode — shell.exec ships as a critical class in both modes', async () => {
+    it('TC-FGB-10: bash is blocked in OPEN mode when no HITL is configured', async () => {
       const handler = await loadPlugin({ mode: 'open' });
       const result = await callHook(handler, 'bash', { command: 'pwd' });
       expect(result?.block).toBe(true);
     });
 
-    it('TC-FGB-11: run_command is blocked even when a HITL policy covers shell.exec — priority-100 forbids cannot be overridden by HITL', async () => {
+    it('TC-FGB-11: run_command is permitted when a HITL policy covers shell.exec and approves', async () => {
       const shellPolicy: HitlPolicyConfig = {
         version: '1',
         policies: [
@@ -295,8 +300,7 @@ describe('fine-grained tools — default forbid rules', () => {
       };
       const handler = await loadPlugin({ mode: 'closed', hitl: shellPolicy });
       const result = await callHook(handler, 'run_command', { command: 'cat /etc/passwd' });
-      expect(result?.block).toBe(true);
-      expect(result?.blockReason).toMatch(/shell|forbidden/i);
+      expect(result?.block).not.toBe(true);
     });
   });
 
@@ -381,18 +385,18 @@ describe('fine-grained tools — default forbid rules', () => {
   // ── Audit log: forbid decisions write structured policy entries ───────────
 
   describe('audit log — forbid decisions write structured policy entries', () => {
-    it('TC-FGB-20: priority-100 forbid (shell.exec) writes a cedar entry with stage=cedar and priority=100', async () => {
+    it('TC-FGB-20: priority-90 forbid (shell.exec) writes a hitl-gated entry with priority=90', async () => {
       const handler = await loadPlugin({ mode: 'closed' });
       await callHook(handler, 'bash', { command: 'whoami' });
-      const cedarForbids = auditEntries.filter(
-        (e) => e['type'] === 'policy' && e['stage'] === 'cedar',
+      const gatedForbids = auditEntries.filter(
+        (e) => e['type'] === 'policy' && e['stage'] === 'hitl-gated',
       );
-      expect(cedarForbids).toHaveLength(1);
-      expect(cedarForbids[0]).toMatchObject({
+      expect(gatedForbids).toHaveLength(1);
+      expect(gatedForbids[0]).toMatchObject({
         type: 'policy',
         effect: 'forbid',
-        stage: 'cedar',
-        priority: 100,
+        stage: 'hitl-gated',
+        priority: 90,
         actionClass: 'shell.exec',
       });
     });
