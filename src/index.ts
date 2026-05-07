@@ -1055,6 +1055,16 @@ function formatMatchedRule(rule: { effect: string; resource?: string; action_cla
   return `${rule.effect} ${scope}:${truncMatch}${cond}`;
 }
 
+function buildHitlSummary(toolName: string, action_class: string, target: string): string | undefined {
+  if (action_class !== 'unknown_sensitive_action') return undefined;
+  const targetText = target.trim();
+  if (targetText.length > 0) {
+    const truncatedTarget = targetText.length > 120 ? `${targetText.slice(0, 119)}...` : targetText;
+    return `Unregistered tool "${toolName}" wants approval for: ${truncatedTarget}`;
+  }
+  return `Unregistered tool "${toolName}" wants approval, but no target or command was provided.`;
+}
+
 /**
  * Dispatches a HITL approval request to the appropriate channel adapter
  * (Telegram, Slack, or console). Calls `explainCommand` on `target` and
@@ -1087,6 +1097,8 @@ async function dispatchHitlChannel(
     expires_at,
     rawCommand: target,
   };
+  const approvalSummary = buildHitlSummary(toolName, action_class, target);
+  if (approvalSummary !== undefined) sharedOpts.summary = approvalSummary;
   if (!FEATURES.hitlMinimal) {
     const { summary, effects, warnings, inferred_action_class } = explainCommand(target);
     const explanation = summary !== `Runs ${target.trim().split(/\s+/)[0]}` && summary !== 'Runs an unrecognised command'
@@ -1112,7 +1124,15 @@ async function dispatchHitlChannel(
       return;
     }
 
-    const { token, promise } = approvalManager.createApprovalRequest({ toolName, agentId: auditAgent, channelId: auditChannel, policy, target });
+    const { token, promise } = approvalManager.createApprovalRequest({
+      toolName,
+      agentId: auditAgent,
+      channelId: auditChannel,
+      policy,
+      target,
+      action_class,
+      ...(approvalSummary !== undefined && { summary: approvalSummary }),
+    });
     const sendResult = await sendApprovalRequest(telegramConfig, { token, toolName, agentId: auditAgent, policyName: policy.name, timeoutSeconds: policy.approval.timeout, verified: identity.verified, showApproveAlways: FEATURES.approveAlwaysEnabled, ...sharedOpts });
 
     if (!sendResult.ok) {
@@ -1154,7 +1174,15 @@ async function dispatchHitlChannel(
       return;
     }
 
-    const { token, promise } = approvalManager.createApprovalRequest({ toolName, agentId: auditAgent, channelId: auditChannel, policy, target });
+    const { token, promise } = approvalManager.createApprovalRequest({
+      toolName,
+      agentId: auditAgent,
+      channelId: auditChannel,
+      policy,
+      target,
+      action_class,
+      ...(approvalSummary !== undefined && { summary: approvalSummary }),
+    });
     const result = await sendSlackApprovalRequest(slackConfig, { token, toolName, agentId: auditAgent, policyName: policy.name, timeoutSeconds: policy.approval.timeout, verified: identity.verified, showApproveAlways: FEATURES.approveAlwaysEnabled, ...sharedOpts });
 
     if (!result.ok) {
@@ -1182,7 +1210,15 @@ async function dispatchHitlChannel(
   }
 
   if (channel === 'console') {
-    const { token, promise } = approvalManager.createApprovalRequest({ toolName, agentId: auditAgent, channelId: auditChannel, policy, target });
+    const { token, promise } = approvalManager.createApprovalRequest({
+      toolName,
+      agentId: auditAgent,
+      channelId: auditChannel,
+      policy,
+      target,
+      action_class,
+      ...(approvalSummary !== undefined && { summary: approvalSummary }),
+    });
     const result = await sendConsoleApprovalRequest({ token, toolName, agentId: auditAgent, policyName: policy.name, timeoutSeconds: policy.approval.timeout, verified: identity.verified, showApproveAlways: FEATURES.approveAlwaysEnabled, ...sharedOpts });
 
     if (result.decision === 'approved_always') {

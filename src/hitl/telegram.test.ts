@@ -378,6 +378,25 @@ describe('sendApprovalRequest', () => {
     expect(body.text).toContain('user@example.com');
   });
 
+  it('includes unknown-action summary when provided', async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+
+    await sendApprovalRequest(config, {
+      ...opts,
+      toolName: 'mystery_tool',
+      action_class: 'unknown_sensitive_action',
+      target: 'openclaw doctor --non-interactive',
+      summary: 'Unregistered tool "mystery_tool" wants approval for: openclaw doctor --non-interactive',
+    });
+
+    const [, init] = vi.mocked(fetch).mock.calls[0]!;
+    const body = JSON.parse(init?.body as string);
+    expect(body.text).toContain('Summary');
+    expect(body.text).toContain('mystery\\_tool');
+    expect(body.text).toContain('unknown_sensitive_action');
+    expect(body.text).toContain('openclaw doctor');
+  });
+
   it('includes expires_at in footer when provided', async () => {
     vi.mocked(fetch).mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
 
