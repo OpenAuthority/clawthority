@@ -260,6 +260,17 @@ To suppress the rich body and fall back to a v1.2.x-style minimal message (raw c
 
 The agent can populate the "Why this is happening" line by setting `ctx.metadata.intent_hint` on the tool call. The plugin sanitises and truncates the value at 200 characters; absent or empty values omit the section entirely.
 
+Telegram also exposes operator commands for quick status and cleanup:
+
+```text
+/help             show available HITL bot commands
+/approvals        list pending approval requests
+/approve TOKEN    approve a pending request
+/deny TOKEN       deny a pending request
+/approve_always   list saved Approve Always rules
+/revoke N         revoke saved rule number N from the list
+```
+
 ---
 
 ## Hot Reload

@@ -21,7 +21,7 @@ Agent tool call  ─►  Clawthority  ─►  Allow  │  Deny  │  Ask human  
 ```
 
 > [!NOTE]
-> **v1.x - stable API.** The plugin API and policy bundle schema follow [semantic versioning](https://semver.org); breaking changes ship in a future major release. The version badge above reflects the current release (1.3.1).
+> **v1.x - stable API.** The plugin API and policy bundle schema follow [semantic versioning](https://semver.org); breaking changes ship in a future major release. The version badge above reflects the current release (1.3.3).
 
 ---
 
@@ -191,7 +191,7 @@ Full table: [docs/action-registry.md](docs/action-registry.md).
 High-risk action classes route to a human for approval via Telegram, Slack, or a console fallback. Approvals are:
 
 - **Payload-bound** - SHA-256 of `(action_class | target | payload_hash)` is stored with the approval and re-verified at consumption. Any parameter change invalidates the token.
-- **One-time** (Approve Once), **session-scoped** (Approve Always), or denied (Deny) - operators choose with a button tap, no command typing.
+- **One-time** (Approve Once), **session-scoped** (Approve Always), or denied (Deny) - operators normally choose with a button tap; Telegram also exposes text commands for listing pending approvals, listing saved approve-always rules, and revoking saved rules.
 - **TTL-limited** - default 120 seconds, configurable per HITL policy.
 - **UUID v7 IDs** - time-sortable, safe to log.
 
@@ -221,9 +221,9 @@ Why this is happening:
 [ Approve once ] [ Approve always ] [ Deny ]
 ```
 
-**Approve Always** derives a permit pattern from the command, persists it to `data/auto-permits.json`, and the next matching call bypasses HITL entirely. Manage stored permits with `npm run list-auto-permits` / `revoke-auto-permit`.
+**Approve Always** derives a permit pattern from the command, persists it to `data/auto-permits.json`, and the next matching call bypasses HITL entirely. Manage stored permits with the Telegram bot (`/approve_always`, `/revoke`) or the CLI helpers (`npm run list-auto-permits`, `npm run revoke-auto-permit`).
 
-Channel setup, retry/backoff, fallback behaviour, and the legacy `/approve <token>` text-command path (kept for one release): [docs/human-in-the-loop.md](docs/human-in-the-loop.md).
+Channel setup, retry/backoff, fallback behaviour, and Telegram operator commands: [docs/human-in-the-loop.md](docs/human-in-the-loop.md).
 
 ---
 
@@ -245,7 +245,7 @@ Full schema and environment-variable overrides: [docs/configuration.md](docs/con
 
 | Variable | Default | Effect |
 |---|---|---|
-| `CLAWTHORITY_DISABLE_APPROVE_ALWAYS` | _(unset)_ | Set to `1` to hide the Approve Always button in Slack approval messages and prevent creation of new session auto-permits. Existing in-process auto-permits are still honoured. Requires restart to change. |
+| `CLAWTHORITY_DISABLE_APPROVE_ALWAYS` | _(unset)_ | Set to `1` to hide Approve Always controls on all HITL channels and prevent creation of new session auto-permits. Existing stored auto-permits are still honoured until revoked. Requires restart to change. |
 
 ---
 

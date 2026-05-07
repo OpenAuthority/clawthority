@@ -4,7 +4,7 @@
 
 Source of truth: [`packages/action-registry/src/index.ts`](../packages/action-registry/src/index.ts) (the registry itself) and [`src/enforcement/normalize.ts`](../src/enforcement/normalize.ts) (the lookup + reclassification pipeline).
 
-This page reflects **frozen v2** of the taxonomy (released with v1.3.1). For the change-control process and the canonical class table, see [docs/action-taxonomy.md](action-taxonomy.md).
+This page reflects **frozen v3** of the taxonomy (released with v1.3.2). For the change-control process and the canonical class table, see [docs/action-taxonomy.md](action-taxonomy.md).
 
 ---
 
@@ -25,7 +25,7 @@ The registry recognises both **tool-name** aliases (e.g. `read_file`, `git_log`,
 
 ## Complete Action Registry
 
-42 named action classes plus the `unknown_sensitive_action` fail-closed sentinel.
+44 named action classes plus the `unknown_sensitive_action` fail-closed sentinel.
 
 | # | Action Class | Risk | HITL Mode | Intent Group | Since |
 |---|---|---|---|---|---|
@@ -136,7 +136,7 @@ The `default_hitl_mode` field on each registry entry specifies what human-approv
 | **Operator fatigue** | None | High for frequent actions | Low |
 | **Replay attack surface** | None | Minimal — payload hash binding per token | Elevated — token covers all session calls |
 
-Operators can also persist auto-permits to `data/auto-permits.json` via the v1.3.0 "Approve Always" flow — see [docs/human-in-the-loop.md](human-in-the-loop.md) and [docs/configuration.md](configuration.md#auto-permits).
+Operators can also persist auto-permits to `data/auto-permits.json` via the "Approve Always" flow and revoke them later from Telegram (`/approve_always`, `/revoke`) or the CLI — see [docs/human-in-the-loop.md](human-in-the-loop.md) and [docs/configuration.md](configuration.md#auto-permit-store).
 
 > **Note:** Pending approvals are in-memory only and do not survive plugin restarts. Consumed tokens also reset on restart. Operators must re-approve any pending actions after a restart. File-based auto-permits in `data/auto-permits.json` do persist across restarts.
 

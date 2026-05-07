@@ -356,7 +356,7 @@ First pass: runPipeline(ctx with hitl_mode='none', ...)
                           (the operator has already approved); priority >= 100 still blocks.
 ```
 
-The Approve Always button (v1.3.0+) is handled in the `dispatchHitlChannel` branch: tapping it triggers a confirmation flow that derives a permit pattern, persists it to `data/auto-permits.json`, registers a session-scoped auto-approval on the `ApprovalManager`, and resolves the original approval as approved. The next call whose command matches the saved pattern is short-circuited at the top of Stage 2 (before Cedar even runs) with `effect: 'permit', stage: 'auto-permit'`. See [docs/human-in-the-loop.md — Approve Always](human-in-the-loop.md#approve-always) for the full feature lifecycle.
+The Approve Always button (v1.3.0+) is handled in the `dispatchHitlChannel` branch: tapping it triggers a confirmation flow that derives a permit pattern, persists it to `data/auto-permits.json`, registers a session-scoped auto-approval on the `ApprovalManager`, and resolves the original approval as approved. The next call whose command matches the saved pattern is short-circuited at the top of Stage 2 (before Cedar even runs) with `effect: 'permit', stage: 'auto-permit'`. Telegram management commands (`/approve_always`, `/revoke`) reuse the same store; revocation rewrites the file, reloads rules, and clears the `ApprovalManager` session auto-approval set so revoked trust does not linger in memory. See [docs/human-in-the-loop.md — Approve Always](human-in-the-loop.md#approve-always) for the full feature lifecycle.
 
 ---
 

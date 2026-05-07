@@ -249,7 +249,24 @@ npm run validate-auto-permits
 
 This validates the schema and the SHA-256 checksum without modifying anything. Errors are printed with the field paths.
 
-**Fix:** Use the CLI helpers (`npm run remove-auto-permit`, `npm run revoke-auto-permit`) for edits — they bump the version counter and rewrite the checksum atomically. If you want to inspect the file, `list-auto-permits` is read-only.
+**Fix:** Use the CLI helpers (`npm run remove-auto-permit`, `npm run revoke-auto-permit`) or the Telegram bot (`/approve_always` then `/revoke N`) for edits — they bump the version counter and rewrite the checksum atomically. If you want to inspect the file, `list-auto-permits` and Telegram `/approve_always` are read-only.
+
+### Revoked Approve Always rule still seems active
+
+**Symptom:** You removed a saved pattern but matching calls continue to bypass HITL in the current gateway process.
+
+**Root cause:** There are two approval layers:
+
+- persisted auto-permit rules in `data/auto-permits.json`
+- in-memory session auto-approvals keyed by channel/action class
+
+File edits and CLI removals hot-reload the persisted pattern rules, but they do not necessarily clear session-scoped approvals that were created earlier in the same process.
+
+**Fix:** Prefer Telegram `/revoke N` for live operations. It rewrites the store, reloads rules, and clears in-memory session auto-approvals immediately. If you used the CLI or edited the file directly, restart the gateway to clear session approvals:
+
+```bash
+openclaw gateway restart
+```
 
 ---
 

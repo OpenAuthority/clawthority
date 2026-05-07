@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.3] — 2026-05-07
+
+HITL operations release: makes Telegram a real operator control surface, closes the duplicate-approval loop, and tightens approval feedback in both Telegram and OpenClaw chat.
+
+### Added
+
+#### Telegram approval-management commands
+
+The Telegram listener now accepts operator commands in the configured `TELEGRAM_CHAT_ID`:
+
+- `/help` / `/start` — show available HITL commands.
+- `/approvals` / `/pending` — list live pending HITL requests with token, tool, action class, policy, target, expiry, and approve/deny commands.
+- `/approve TOKEN`, `/deny TOKEN`, `/approve_always TOKEN` — text-command fallbacks for pending requests.
+- `/approve_always` — list persisted Approve Always rules from `data/auto-permits.json`.
+- `/revoke N` / `/revoke PATTERN` — revoke a saved Approve Always rule by list number or exact pattern.
+
+`/revoke` rewrites the auto-permit store atomically, reloads the file-based checker and JSON rules, and clears in-memory session auto-approvals so revoked trust stops applying in the current gateway process.
+
+#### OpenClaw chat HITL status messages
+
+HITL outcomes are now surfaced back into OpenClaw chat as system-visible status events, so operators can see when a request was approved once, approved always, auto-approved, denied, or expired without checking Telegram separately.
+
+### Fixed
+
+- Telegram decision rendering now treats `approved always` as an approval state, so final messages render with a checkmark instead of a denial marker.
+- Priority-90 HITL approvals no longer fall through into a second generic HITL dispatch, preventing duplicate approval prompts and approval loops.
+- E2E tests no longer depend on local `data/` policy state or ignored fixture files, which keeps CI and local coverage runs aligned.
+- Telegram coverage mocks now return fresh response bodies and avoid the `Body is unusable` failure seen during `npm run test:coverage`.
+
+### Docs
+
+- Updated README, HITL, configuration, usage, troubleshooting, API, architecture, and action-registry docs for Telegram management commands and live auto-permit revocation.
+- Corrected the documented auto-permit store envelope to match the implementation (`{ version, rules, checksum }`).
+
 ## [1.3.2] — 2026-04-29
 
 Typed-tool depth release: closes the per-tool injection-surface gap that v1.3.1's breadth pass left open. v1.3.1 added registry aliases (Layer 1) and explainer patterns (Layer 2) so policy and HITL could *target* high-risk commands; v1.3.2 adds typed-tool wrappers (Layer 3) so agents that opt in get a structured execution path with no shell interpretation. Defense-in-depth on top of v1.3.1, not a replacement — the existing `bash`/`exec` path still works, the typed tools are additional.
@@ -174,11 +208,11 @@ Headline release: **HITL becomes the primary control surface, not the failure mo
 
 `sendApprovalRequest` now sends a MarkdownV2-formatted message with an `inline_keyboard` carrying three buttons — `Approve once`, `Approve always`, `Deny` — instead of asking the operator to type `/approve <token>`. `callback_data` uses a `<verb>:<token>` form (`approve_once:<uuidv7>`, `approve_always:<uuidv7>`, `deny:<uuidv7>`) which fits the 64-byte Telegram limit.
 
-`TelegramListener` was extended to dispatch `callback_query` updates alongside the existing long-poll loop. Each click triggers `answerCallbackQuery` (acknowledgement + replay-protected "Already decided" toast on second tap) and `editMessageText` to replace the buttons with a confirmation footer. The legacy `/approve <token>` text command is kept for one release with a deprecation hint per use; remove planned for v1.4.
+`TelegramListener` was extended to dispatch `callback_query` updates alongside the existing long-poll loop. Each click triggers `answerCallbackQuery` (acknowledgement + replay-protected "Already decided" toast on second tap) and `editMessageText` to replace the buttons with a confirmation footer. The `/approve <token>` text command is kept as a fallback; v1.3.3 expands the same text-command surface with `/help`, `/approvals`, `/approve_always`, and `/revoke`.
 
 #### Approve Always — session-scoped auto-permits (W2)
 
-Tapping derives a permit pattern from the current command and offers it back to the operator in a confirmation message (`Pattern: docker run * ubuntu *` with `[Save] [Cancel]` buttons; auto-confirm available via `CLAWTHORITY_APPROVE_ALWAYS_AUTO_CONFIRM=1`). On Save, the rule is appended to `data/auto-permits.json` (`{ version, rules, checksum, generated, created_by, created_at, derived_from }`), hot-reloaded via chokidar, and merged into the JSON rules engine. Future matching calls bypass HITL entirely with a `stage: 'auto-permit'` permit decision.
+Tapping derives a permit pattern from the current command and offers it back to the operator in a confirmation message (`Pattern: docker run * ubuntu *` with `[Save] [Cancel]` buttons; auto-confirm available via `CLAWTHORITY_APPROVE_ALWAYS_AUTO_CONFIRM=1`). On Save, the rule is appended to `data/auto-permits.json` (`{ version, rules, checksum }` envelope; each rule carries `pattern`, `method`, `createdAt`, `originalCommand`, and provenance fields), hot-reloaded via chokidar, and merged into the JSON rules engine. Future matching calls bypass HITL entirely with a `stage: 'auto-permit'` permit decision.
 
 Pattern derivation (`src/auto-permits/pattern-derivation.ts`) uses two methods:
 - **`tool` method:** registered tool name → pattern is the tool name itself.
@@ -257,7 +291,7 @@ Reduces HITL volume on the most common cases by 5–10× (per pre-release tester
 
 ### Migration (from v1.2.x)
 
-**Telegram approval is now button-driven.** The legacy `/approve <token>` and `/deny <token>` text commands continue to work for v1.3.x with a deprecation hint logged on each use. Operators should migrate to the inline buttons; text-command support is scheduled for removal in v1.4.0. No action required for the migration itself — buttons are shown automatically.
+**Telegram approval is now button-driven.** The `/approve <token>` and `/deny <token>` text commands continue to work as fallbacks for buttonless clients and automation. Inline buttons remain the primary approval UX, and v1.3.3 expands the text-command surface with `/help`, `/approvals`, `/approve_always`, and `/revoke`.
 
 **`data/auto-permits.json` is a new optional file.** When operators tap Approve Always, derived patterns are appended here. The file is human-readable and managed via `npm run list-auto-permits` / `npm run revoke-auto-permit`. Operators who prefer the v1.2.x flow (no auto-permits) can set `CLAWTHORITY_DISABLE_APPROVE_ALWAYS=1` — the button is hidden on all channels.
 
