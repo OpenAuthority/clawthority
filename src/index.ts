@@ -555,8 +555,9 @@ async function loadJsonRules(): Promise<void> {
     // present; this mirrors the watcher resolveActiveJsonRulesFile() logic.
     // `CLAWTHORITY_RULES_FILE` overrides both for non-standard install layouts
     // and for tests that need to inject a fixture.
-    const bundleFilePath = resolve(moduleDir, "../../data/bundle.json");
-    const rulesFilePath = resolve(moduleDir, "../../data/rules.json");
+    const pluginRoot = resolve(moduleDir, "..");
+    const bundleFilePath = resolve(pluginRoot, "data/bundle.json");
+    const rulesFilePath = resolve(pluginRoot, "data/rules.json");
     const rulesPath = process.env['CLAWTHORITY_RULES_FILE']
       ?? (existsSync(bundleFilePath) ? bundleFilePath : rulesFilePath);
 
@@ -683,7 +684,7 @@ async function loadJsonRules(): Promise<void> {
     const apConfig = resolveAutoPermitStoreConfig();
     if (apConfig.mode === 'separate') {
       try {
-        const apPath = resolve(moduleDir, '../../', apConfig.path);
+        const apPath = resolve(pluginRoot, apConfig.path);
         const apResult = await loadAutoPermitRulesFromFile(apPath);
         if (apResult.found) {
           if (apResult.skipped > 0) {
@@ -751,7 +752,8 @@ async function loadAutoPermitRules(): Promise<void> {
   try {
     const config = resolveAutoPermitStoreConfig();
     const moduleDir = dirname(fileURLToPath(import.meta.url));
-    const storePath = resolve(moduleDir, "../../", config.path);
+    const pluginRoot = resolve(moduleDir, "..");
+    const storePath = resolve(pluginRoot, config.path);
 
     const result = await loadAutoPermitRulesFromFile(storePath);
 
@@ -855,7 +857,8 @@ async function persistAutoPermitPattern(
   try {
     const config = resolveAutoPermitStoreConfig();
     const moduleDir = dirname(fileURLToPath(import.meta.url));
-    const storePath = resolve(moduleDir, "../../", config.path);
+    const pluginRoot = resolve(moduleDir, "..");
+    const storePath = resolve(pluginRoot, config.path);
 
     const existing = await loadAutoPermitRulesFromFile(storePath);
     const nextVersion = existing.version + 1;
@@ -1994,7 +1997,8 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
     try {
       const apConfig = resolveAutoPermitStoreConfig();
       const apModuleDir = dirname(fileURLToPath(import.meta.url));
-      const apStorePath = resolve(apModuleDir, "../../", apConfig.path);
+      const apPluginRoot = resolve(apModuleDir, "..");
+      const apStorePath = resolve(apPluginRoot, apConfig.path);
       autoPermitStoreWatcher = watchAutoPermitStore(apStorePath, () => {
         void loadAutoPermitRules();
         void loadJsonRules();
@@ -2008,8 +2012,9 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
     // bundle.json takes precedence over rules.json when present.
     {
       const moduleDir = dirname(fileURLToPath(import.meta.url));
-      const bundleFilePath = resolve(moduleDir, "../../data/bundle.json");
-      const rulesFilePath = resolve(moduleDir, "../../data/rules.json");
+      const pluginRoot = resolve(moduleDir, "..");
+      const bundleFilePath = resolve(pluginRoot, "data/bundle.json");
+      const rulesFilePath = resolve(pluginRoot, "data/rules.json");
       const bundlePath = process.env['CLAWTHORITY_RULES_FILE']
         ?? (existsSync(bundleFilePath) ? bundleFilePath : rulesFilePath);
       adapterRef = new FileAuthorityAdapter({ bundlePath });
