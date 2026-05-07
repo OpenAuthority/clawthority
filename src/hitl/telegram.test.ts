@@ -1106,9 +1106,23 @@ describe('editMessageDecision', () => {
     expect(body.chat_id).toBe('12345');
     expect(body.message_id).toBe(42);
     expect(body.parse_mode).toBe('MarkdownV2');
+    expect(body.text).toContain('\u2705');
+    expect(body.text).not.toContain('\u274C');
     expect(body.text).toContain('APPROVED');
     expect(body.text).toContain('abc12345');
     expect(body.text).toContain('email.send');
+  });
+
+  it('uses a checkmark for approved-always decisions', async () => {
+    vi.mocked(fetch).mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
+
+    await editMessageDecision(config, { messageId: 43, token: 'abc12345', decision: 'approved always', toolName: 'edit' });
+
+    const [, init] = vi.mocked(fetch).mock.calls[0]!;
+    const body = JSON.parse(init?.body as string);
+    expect(body.text).toContain('\u2705');
+    expect(body.text).not.toContain('\u274C');
+    expect(body.text).toContain('APPROVED ALWAYS');
   });
 
   it('sends a POST to editMessageText endpoint with denied decision', async () => {
@@ -1118,6 +1132,8 @@ describe('editMessageDecision', () => {
 
     const [, init] = vi.mocked(fetch).mock.calls[0]!;
     const body = JSON.parse(init?.body as string);
+    expect(body.text).toContain('\u274C');
+    expect(body.text).not.toContain('\u2705');
     expect(body.text).toContain('DENIED');
   });
 
@@ -1168,8 +1184,29 @@ describe('editApproveAlwaysConfirmation', () => {
     expect(url).toBe('https://api.telegram.org/bottest-token/editMessageText');
     const body = JSON.parse(init?.body as string);
     expect(body.message_id).toBe(77);
+    expect(body.text).toContain('\u2705');
+    expect(body.text).not.toContain('\u274C');
     expect(body.text).toContain('SAVED');
     expect(body.text).toContain('git commit *');
+    expect(body.reply_markup).toBeUndefined();
+  });
+
+  it('edits the confirmation message with a clear cancelled marker after cancel', async () => {
+    vi.mocked(fetch).mockImplementation(() => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
+
+    await editApproveAlwaysConfirmation(config, {
+      messageId: 78,
+      token: 'abc12345',
+      decision: 'cancelled',
+      pattern: 'git commit *',
+    });
+
+    expect(fetch).toHaveBeenCalledOnce();
+    const [, init] = vi.mocked(fetch).mock.calls[0]!;
+    const body = JSON.parse(init?.body as string);
+    expect(body.text).toContain('\u274C');
+    expect(body.text).not.toContain('\u2705');
+    expect(body.text).toContain('CANCELLED');
     expect(body.reply_markup).toBeUndefined();
   });
 });

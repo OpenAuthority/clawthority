@@ -249,7 +249,7 @@ export async function sendConfirmation(
   config: ResolvedTelegramConfig,
   opts: { token: string; decision: string; toolName: string },
 ): Promise<void> {
-  const emoji = opts.decision === 'approved' ? '\u2705' : '\u274C';
+  const emoji = opts.decision.toLowerCase().startsWith('approved') ? '\u2705' : '\u274C';
   const text = `${emoji} Action \`${escapeCodeSpan(opts.token)}\` \u2014 *${opts.decision.toUpperCase()}*\nTool: \`${escapeCodeSpan(opts.toolName)}\``;
 
   try {
@@ -278,7 +278,7 @@ export async function editMessageDecision(
   config: ResolvedTelegramConfig,
   opts: { messageId: number; token: string; decision: string; toolName: string },
 ): Promise<void> {
-  const emoji = opts.decision === 'approved' ? '\u2705' : '\u274C';
+  const emoji = opts.decision.toLowerCase().startsWith('approved') ? '\u2705' : '\u274C';
   const text = `${emoji} Action \`${escapeCodeSpan(opts.token)}\` \u2014 *${opts.decision.toUpperCase()}*\nTool: \`${escapeCodeSpan(opts.toolName)}\``;
 
   try {

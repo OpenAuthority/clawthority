@@ -983,6 +983,9 @@ describe('Approve Always — error handling in callback processing', () => {
       if (!manager.isConsumed(tok)) {
         manager.resolveApproval(tok, 'approved');
       }
+      if (command === 'confirm_approve_always') {
+        return '✅ Pattern saved; request approved';
+      }
     });
 
     vi.mocked(fetch)
@@ -1022,6 +1025,9 @@ describe('Approve Always — error handling in callback processing', () => {
       if (!manager.isConsumed(tok)) {
         manager.resolveApproval(tok, 'approved');
       }
+      if (command === 'confirm_approve_always') {
+        return '✅ Pattern saved; request approved';
+      }
     });
 
     vi.mocked(fetch)
@@ -1047,6 +1053,9 @@ describe('Approve Always — error handling in callback processing', () => {
     expect(answerCall).toBeDefined();
     const answerBody = JSON.parse(answerCall![1]?.body as string);
     expect(answerBody.callback_query_id).toBe('cq-conf-answer');
+    expect(answerBody.text).toBe('✅ Pattern saved; request approved');
+    expect(answerBody.text).not.toContain('❌');
+    expect(answerBody.show_alert).toBe(true);
   });
 
   it('cancel_approve_always answerCallbackQuery carries the correct callback_query_id', async () => {

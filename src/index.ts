@@ -2292,11 +2292,11 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
               const conf = pendingApproveAlwaysConfirmations.get(token);
               if (!conf) {
                 const settled = settledApproveAlwaysConfirmations.get(token);
-                if (settled === 'saved') return 'Pattern already saved';
-                if (settled === 'cancelled') return 'Pattern confirmation was cancelled';
+                if (settled === 'saved') return '✅ Pattern already saved';
+                if (settled === 'cancelled') return '❌ Pattern confirmation was cancelled';
                 if (approvalManager.isConsumed(token)) return 'Already decided';
                 console.log(`[hitl-telegram] confirm_approve_always: no pending confirmation for token=${token}`);
-                return 'No pending pattern confirmation';
+                return '❌ No pending pattern confirmation';
               }
 
               clearTimeout(conf.timer);
@@ -2328,9 +2328,9 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
               const resolved = approvalManager.resolveApproval(token, 'approved');
               if (!resolved && !approvalManager.isConsumed(token)) {
                 console.log(`[hitl-telegram] confirm_approve_always: unknown or expired token: ${token}`);
-                return 'Unknown or expired approval';
+                return '❌ Unknown or expired approval';
               }
-              return 'Pattern saved; request approved';
+              return '✅ Pattern saved; request approved';
             }
 
             // ── cancel_approve_always ─────────────────────────────────────
@@ -2338,11 +2338,11 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
               const conf = pendingApproveAlwaysConfirmations.get(token);
               if (!conf) {
                 const settled = settledApproveAlwaysConfirmations.get(token);
-                if (settled === 'saved') return 'Pattern already saved';
-                if (settled === 'cancelled') return 'Pattern confirmation already cancelled';
+                if (settled === 'saved') return '✅ Pattern already saved';
+                if (settled === 'cancelled') return '❌ Pattern confirmation already cancelled';
                 if (approvalManager.isConsumed(token)) return 'Already decided';
                 console.log(`[hitl-telegram] cancel_approve_always: no pending confirmation for token=${token}`);
-                return 'No pending pattern confirmation';
+                return '❌ No pending pattern confirmation';
               }
 
               clearTimeout(conf.timer);
@@ -2359,7 +2359,7 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
 
               console.log(`[hitl-telegram] approve-always confirmation cancelled for token=${token}`);
               // Original approval stays pending — operator can still use the original buttons.
-              return 'Pattern confirmation cancelled';
+              return '❌ Pattern confirmation cancelled';
             }
 
             // ── approve_always ────────────────────────────────────────────
