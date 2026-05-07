@@ -25,13 +25,9 @@ Thumbs.db
 .env
 .env.*
 
-# Runtime state — created by the install script, not committed
-data/.installed
-
-# Runtime state — budget tracker log, written by the plugin at runtime
-data/budget.jsonl
-# Audit log, written by the plugin at runtime
-data/audit.jsonl
+# Runtime/operator state — policies, bundles, approvals, audit, budget.
+# Keep examples and presets outside data/ so local policy does not get pushed.
+data/
 
 # Build-time generated file — baked by scripts/gen-build-info.mjs
 src/build-info.ts
