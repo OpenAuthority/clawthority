@@ -420,6 +420,7 @@ export async function editApproveAlwaysConfirmation(
 }
 
 export type TelegramCommand = 'approve' | 'approve_once' | 'approve_always' | 'deny' | 'confirm_approve_always' | 'cancel_approve_always';
+export type TelegramManagementCommand = 'help' | 'approvals' | 'approve_always_list' | 'revoke_approve_always';
 
 /**
  * Identity of the Telegram operator who triggered a command via an inline
@@ -437,6 +438,14 @@ export interface TelegramOperatorInfo {
   firstName?: string;
 }
 
+export interface TelegramManagementRequest {
+  command: TelegramManagementCommand;
+  args: string;
+  chatId: number;
+  rawText: string;
+  from?: TelegramOperatorInfo;
+}
+
 export interface TelegramListenerOptions {
   /**
    * Allows tests to skip Telegram session takeover and webhook cleanup so
@@ -445,17 +454,47 @@ export interface TelegramListenerOptions {
   takeOverSession?: boolean;
   /** Delay after session takeover before polling starts. Defaults to 2s. */
   startupDelayMs?: number;
+  /**
+   * Optional handler for non-approval bot commands such as /help, /approvals,
+   * /approve_always, and /revoke. The returned text is sent back to the chat
+   * as a plain Telegram message.
+   */
+  onManagementCommand?: (request: TelegramManagementRequest) => string | void | Promise<string | void>;
 }
 
 // Tokens are UUID v7 (36 chars with hyphens, e.g. "019daa50-5dc1-78ee-9ab4-bcf652bddfa3")
 // or session_approval keys of the form "session_id:action_class" (may contain ':', '.').
 // approve_always must appear before approve in the alternation so it matches first.
-const COMMAND_RE = /^\/(approve_always|approve|deny)\s+([\w.:-]{6,128})$/;
+const COMMAND_RE = /^\/(approve_always|approve|deny)(?:@\w+)?\s+([\w.:-]{6,128})$/;
 
 // Same token format but triggered by inline keyboard callback_data ("command:TOKEN").
 // confirm_approve_always and cancel_approve_always must appear before approve_always,
 // and approve_once must appear before approve so the longer prefixes are tried first.
 const CALLBACK_DATA_RE = /^(confirm_approve_always|cancel_approve_always|approve_always|approve_once|approve|deny):([\w.:-]{6,128})$/;
+
+const TEXT_COMMAND_RE = /^\/([a-z_]+)(?:@\w+)?(?:\s+(.+))?$/i;
+
+function parseManagementCommand(text: string): Omit<TelegramManagementRequest, 'chatId' | 'rawText' | 'from'> | undefined {
+  const match = TEXT_COMMAND_RE.exec(text);
+  if (!match) return undefined;
+  const name = match[1]!.toLowerCase();
+  const args = (match[2] ?? '').trim();
+
+  if (name === 'help' || name === 'start') {
+    return { command: 'help', args };
+  }
+  if (name === 'approvals' || name === 'pending') {
+    return { command: 'approvals', args };
+  }
+  if ((name === 'approve_always' || name === 'always' || name === 'auto_approvals' || name === 'auto_permits') && args.length === 0) {
+    return { command: 'approve_always_list', args };
+  }
+  if (name === 'revoke' || name === 'revoke_approve_always') {
+    return { command: 'revoke_approve_always', args };
+  }
+
+  return undefined;
+}
 
 /**
  * Long-polling listener for Telegram bot updates.
@@ -604,7 +643,11 @@ export class TelegramListener {
           ok: boolean;
           result?: Array<{
             update_id: number;
-            message?: { text?: string; chat?: { id: number } };
+            message?: {
+              text?: string;
+              chat?: { id: number };
+              from?: { id: number; username?: string; first_name?: string };
+            };
             callback_query?: {
               id: string;
               data?: string;
@@ -655,6 +698,29 @@ export class TelegramListener {
             const command = match[1] as TelegramCommand;
             const token = match[2]!;
             this.onCommand(command, token);
+            continue;
+          }
+
+          const management = parseManagementCommand(text);
+          const chatId = update.message?.chat?.id;
+          if (management && chatId !== undefined && this.options.onManagementCommand) {
+            const from = update.message?.from;
+            const operatorInfo: TelegramOperatorInfo | undefined = from
+              ? {
+                  userId: from.id,
+                  ...(from.username !== undefined ? { username: from.username } : {}),
+                  ...(from.first_name !== undefined ? { firstName: from.first_name } : {}),
+                }
+              : undefined;
+            const response = await this.options.onManagementCommand({
+              ...management,
+              chatId,
+              rawText: text,
+              ...(operatorInfo !== undefined ? { from: operatorInfo } : {}),
+            });
+            if (response !== undefined && response.trim().length > 0) {
+              await this.sendTextMessage(chatId, response);
+            }
           }
         }
       } catch (err) {
@@ -663,6 +729,23 @@ export class TelegramListener {
         console.error('[hitl-telegram] poll error, retrying in 5s:', err);
         await this.delay(RETRY_DELAY_MS);
       }
+    }
+  }
+
+  private async sendTextMessage(chatId: number, text: string): Promise<void> {
+    try {
+      const safeText = text.length > 3900 ? `${text.slice(0, 3897)}...` : text;
+      await fetch(`${TELEGRAM_API}/bot${this.botToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: safeText,
+          disable_web_page_preview: true,
+        }),
+      });
+    } catch {
+      // Best-effort management reply — don't fail the poll loop.
     }
   }
 

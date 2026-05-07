@@ -576,6 +576,111 @@ describe('TelegramListener', () => {
     expect(onCommand).toHaveBeenCalledWith('approve_always', uuid);
   });
 
+  it('routes /help to the management command handler and replies to the chat', async () => {
+    const onManagementCommand = vi.fn(() => 'OpenClaw HITL commands');
+    const updates = {
+      ok: true,
+      result: [
+        {
+          update_id: 10,
+          message: {
+            text: '/help',
+            chat: { id: 12345 },
+            from: { id: 99, username: 'operator', first_name: 'Op' },
+          },
+        },
+      ],
+    };
+
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
+      .mockResolvedValueOnce(new Response('{"ok":true}', { status: 200 }))
+      .mockImplementation(() => new Promise(() => {}));
+
+    listener = new TelegramListener('test-token', onCommand, {
+      takeOverSession: false,
+      onManagementCommand,
+    });
+    listener.start();
+
+    await vi.waitFor(() => expect(onManagementCommand).toHaveBeenCalled());
+    expect(onCommand).not.toHaveBeenCalled();
+    expect(onManagementCommand).toHaveBeenCalledWith({
+      command: 'help',
+      args: '',
+      chatId: 12345,
+      rawText: '/help',
+      from: { userId: 99, username: 'operator', firstName: 'Op' },
+    });
+
+    const sendCall = vi.mocked(fetch).mock.calls.find(
+      (call) => (call[0] as string).includes('sendMessage'),
+    );
+    expect(sendCall).toBeDefined();
+    const body = JSON.parse(sendCall![1]?.body as string);
+    expect(body.chat_id).toBe(12345);
+    expect(body.text).toBe('OpenClaw HITL commands');
+  });
+
+  it('routes /approve_always without a token to the saved-rule list command', async () => {
+    const onManagementCommand = vi.fn(() => 'Saved approve-always rules');
+    const updates = {
+      ok: true,
+      result: [
+        { update_id: 11, message: { text: '/approve_always', chat: { id: 12345 } } },
+      ],
+    };
+
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
+      .mockResolvedValueOnce(new Response('{"ok":true}', { status: 200 }))
+      .mockImplementation(() => new Promise(() => {}));
+
+    listener = new TelegramListener('test-token', onCommand, {
+      takeOverSession: false,
+      onManagementCommand,
+    });
+    listener.start();
+
+    await vi.waitFor(() => expect(onManagementCommand).toHaveBeenCalled());
+    expect(onCommand).not.toHaveBeenCalled();
+    expect(onManagementCommand).toHaveBeenCalledWith({
+      command: 'approve_always_list',
+      args: '',
+      chatId: 12345,
+      rawText: '/approve_always',
+    });
+  });
+
+  it('routes /revoke arguments to the revoke approve-always command', async () => {
+    const onManagementCommand = vi.fn(() => 'Revoked');
+    const updates = {
+      ok: true,
+      result: [
+        { update_id: 12, message: { text: '/revoke 2', chat: { id: 12345 } } },
+      ],
+    };
+
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
+      .mockResolvedValueOnce(new Response('{"ok":true}', { status: 200 }))
+      .mockImplementation(() => new Promise(() => {}));
+
+    listener = new TelegramListener('test-token', onCommand, {
+      takeOverSession: false,
+      onManagementCommand,
+    });
+    listener.start();
+
+    await vi.waitFor(() => expect(onManagementCommand).toHaveBeenCalled());
+    expect(onManagementCommand).toHaveBeenCalledWith({
+      command: 'revoke_approve_always',
+      args: '2',
+      chatId: 12345,
+      rawText: '/revoke 2',
+    });
+  });
+
   it('handles callback_query approve_once from inline keyboard', async () => {
     const updates = {
       ok: true,

@@ -146,6 +146,8 @@ export type {
   SendApproveAlwaysConfirmationOpts,
   SendApproveAlwaysConfirmationResult,
   TelegramCommand,
+  TelegramManagementCommand,
+  TelegramManagementRequest,
   TelegramOperatorInfo,
   TelegramListenerOptions,
   ResolvedSlackConfig,
@@ -170,7 +172,7 @@ import { startHitlPolicyWatcher, type HitlWatcherHandle } from "./hitl/watcher.j
 import type { HitlPolicyConfig } from "./hitl/types.js";
 import { ApprovalManager } from "./hitl/approval-manager.js";
 import { TelegramListener, sendApprovalRequest, sendConfirmation, editMessageDecision, sendApproveAlwaysConfirmation, editApproveAlwaysConfirmation, resolveTelegramConfig } from "./hitl/telegram.js";
-import type { SendApproveAlwaysConfirmationResult, TelegramOperatorInfo } from "./hitl/telegram.js";
+import type { SendApproveAlwaysConfirmationResult, TelegramManagementRequest, TelegramOperatorInfo } from "./hitl/telegram.js";
 import { SlackInteractionServer, sendSlackApprovalRequest, sendSlackConfirmation, resolveSlackConfig } from "./hitl/slack.js";
 import { sendConsoleApprovalRequest } from "./hitl/console.js";
 import { explainCommand } from "./hitl/command-explainer.js";
@@ -912,6 +914,155 @@ async function persistAutoPermitPattern(
     }
   } catch (err) {
     console.warn(`[hitl-${channel}] failed to save auto-permit rule: ${(err as Error).message}`);
+  }
+}
+
+// ─── Telegram approval-management commands ──────────────────────────────────
+
+function resolveAutoPermitStorePath(): string {
+  const config = resolveAutoPermitStoreConfig();
+  const moduleDir = dirname(fileURLToPath(import.meta.url));
+  const pluginRoot = resolve(moduleDir, "..");
+  return resolve(pluginRoot, config.path);
+}
+
+function formatDuration(ms: number): string {
+  const seconds = Math.max(0, Math.ceil(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remSeconds = seconds % 60;
+  if (minutes < 60) return remSeconds > 0 ? `${minutes}m ${remSeconds}s` : `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remMinutes = minutes % 60;
+  return remMinutes > 0 ? `${hours}h ${remMinutes}m` : `${hours}h`;
+}
+
+function formatTelegramHelp(): string {
+  return [
+    'OpenClaw HITL commands',
+    '',
+    '/help - show this help',
+    '/approvals - list pending HITL approval requests',
+    '/approve TOKEN - approve a request once',
+    '/deny TOKEN - deny a request',
+    '/approve_always TOKEN - approve a request and remember the pattern',
+    '/approve_always - list saved approve-always rules',
+    '/revoke N - revoke approve-always rule number N from /approve_always',
+    '/revoke PATTERN - revoke a saved approve-always rule by exact pattern',
+  ].join('\n');
+}
+
+function formatPendingApprovalsForTelegram(): string {
+  const pending = approvalManager.listPending();
+  if (pending.length === 0) {
+    return 'No pending HITL approvals.';
+  }
+
+  const now = Date.now();
+  const lines = [`Pending HITL approvals (${pending.length})`];
+  pending.forEach((approval, index) => {
+    const expiresIn = approval.createdAt + approval.timeoutMs - now;
+    const target = formatHitlTarget(approval.target);
+    lines.push(
+      '',
+      `${index + 1}. ${approval.token}`,
+      `Tool: ${approval.toolName}`,
+      `Action: ${approval.action_class}`,
+      `Policy: ${approval.policyName}`,
+      `Target: ${target}`,
+      `Expires in: ${formatDuration(expiresIn)}`,
+      `Approve: /approve ${approval.token}`,
+      `Deny: /deny ${approval.token}`,
+    );
+  });
+  return lines.join('\n');
+}
+
+function formatAutoPermitsForTelegram(rules: AutoPermit[]): string {
+  if (rules.length === 0) {
+    return 'No saved approve-always rules.';
+  }
+
+  const lines = [`Saved approve-always rules (${rules.length})`];
+  rules.forEach((rule, index) => {
+    const created = rule.created_at ?? new Date(rule.createdAt).toISOString();
+    const createdBy = rule.created_by ?? 'unknown';
+    lines.push(
+      '',
+      `${index + 1}. ${rule.pattern}`,
+      `From: ${formatHitlTarget(rule.originalCommand)}`,
+      `Method: ${rule.method}`,
+      `Created: ${created}`,
+      `By: ${createdBy}`,
+      `Revoke: /revoke ${index + 1}`,
+    );
+  });
+  return lines.join('\n');
+}
+
+async function listAutoPermitsForTelegram(): Promise<string> {
+  const storePath = resolveAutoPermitStorePath();
+  const result = await loadAutoPermitRulesFromFile(storePath);
+  return formatAutoPermitsForTelegram(result.rules);
+}
+
+async function revokeAutoPermitForTelegram(args: string): Promise<string> {
+  const selector = args.trim();
+  if (selector.length === 0) {
+    return 'Usage: /revoke N\nRun /approve_always to see rule numbers.';
+  }
+
+  const storePath = resolveAutoPermitStorePath();
+  const existing = await loadAutoPermitRulesFromFile(storePath);
+  if (existing.rules.length === 0) {
+    return 'No saved approve-always rules to revoke.';
+  }
+
+  const numeric = /^[0-9]+$/.test(selector) ? Number(selector) : NaN;
+  const index = Number.isInteger(numeric)
+    ? numeric - 1
+    : existing.rules.findIndex((rule) => rule.pattern === selector);
+
+  if (index < 0 || index >= existing.rules.length) {
+    return `No approve-always rule matches "${selector}". Run /approve_always to see valid entries.`;
+  }
+
+  const revoked = existing.rules[index]!;
+  const remaining = existing.rules.filter((_, i) => i !== index);
+  const nextVersion = existing.version + 1;
+  await saveAutoPermitRules(storePath, remaining, nextVersion);
+  await loadAutoPermitRules();
+  await loadJsonRules();
+  const cleared = approvalManager.clearSessionAutoApprovals();
+
+  return [
+    `✅ Revoked approve-always rule #${index + 1}`,
+    `Pattern: ${revoked.pattern}`,
+    `Store version: ${nextVersion}`,
+    `Cleared session auto-approvals: ${cleared}`,
+  ].join('\n');
+}
+
+async function handleTelegramManagementCommand(request: TelegramManagementRequest, configuredChatId: string): Promise<string | void> {
+  if (String(request.chatId) !== String(configuredChatId)) {
+    console.warn(`[hitl-telegram] ignoring management command from unconfigured chat ${request.chatId}`);
+    return;
+  }
+
+  try {
+    switch (request.command) {
+      case 'help':
+        return formatTelegramHelp();
+      case 'approvals':
+        return formatPendingApprovalsForTelegram();
+      case 'approve_always_list':
+        return await listAutoPermitsForTelegram();
+      case 'revoke_approve_always':
+        return await revokeAutoPermitForTelegram(request.args);
+    }
+  } catch (err) {
+    console.warn(`[hitl-telegram] management command failed: ${(err as Error).message}`);
+    return `❌ Failed to run /${request.rawText.replace(/^\//, '').split(/\s+/, 1)[0] ?? request.command}: ${(err as Error).message}`;
   }
 }
 
@@ -2454,6 +2605,9 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
             if (!resolved) {
               console.log(`[hitl-telegram] unknown or expired token: ${token}`);
             }
+          },
+          {
+            onManagementCommand: (request) => handleTelegramManagementCommand(request, telegramConfig.chatId),
           },
         );
         telegramListener.start();

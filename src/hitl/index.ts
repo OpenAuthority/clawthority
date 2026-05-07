@@ -38,7 +38,7 @@ export type { HitlDecision, CreateApprovalOpts, ApprovalRequestHandle } from './
 
 // ─── Telegram adapter ────────────────────────────────────────────────────────
 export { TelegramListener, sendApprovalRequest, sendConfirmation, editMessageDecision, sendApproveAlwaysConfirmation, editApproveAlwaysConfirmation, resolveTelegramConfig } from './telegram.js';
-export type { ResolvedTelegramConfig, SendApprovalOpts, SendApprovalResult, SendApproveAlwaysConfirmationOpts, SendApproveAlwaysConfirmationResult, TelegramCommand, TelegramOperatorInfo, TelegramListenerOptions } from './telegram.js';
+export type { ResolvedTelegramConfig, SendApprovalOpts, SendApprovalResult, SendApproveAlwaysConfirmationOpts, SendApproveAlwaysConfirmationResult, TelegramCommand, TelegramManagementCommand, TelegramManagementRequest, TelegramOperatorInfo, TelegramListenerOptions } from './telegram.js';
 
 // ─── Slack adapter ──────────────────────────────────────────────────────────
 export { SlackInteractionServer, sendSlackApprovalRequest, sendSlackConfirmation, resolveSlackConfig, verifySlackSignature } from './slack.js';

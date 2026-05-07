@@ -315,6 +315,23 @@ export class ApprovalManager {
     return this.sessionAutoApprovals.has(`${channelId}:${actionClass}`);
   }
 
+  /**
+   * Clears all in-memory session-scoped auto-approvals.
+   *
+   * Used when an operator revokes persisted "Approve Always" rules from an
+   * out-of-band control surface. Persistent auto-permit rules are pattern
+   * based, while session approvals are keyed only by channel/action class, so
+   * clearing the in-memory set avoids leaving a revoked approval active until
+   * the next process restart.
+   *
+   * @returns number of session auto-approval keys that were cleared.
+   */
+  clearSessionAutoApprovals(): number {
+    const count = this.sessionAutoApprovals.size;
+    this.sessionAutoApprovals.clear();
+    return count;
+  }
+
   /** Clears all pending approvals, resolving each as 'expired'. */
   shutdown(): void {
     for (const entry of this.pending.values()) {
