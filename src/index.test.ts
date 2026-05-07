@@ -92,7 +92,12 @@ async function loadPlugin(opts: LoadOpts): Promise<BeforeToolCallHandler> {
     process.env.CLAWTHORITY_AUTO_PERMIT_STORE = tmpPath;
     tempFiles.add(tmpPath);
   } else {
-    delete process.env.CLAWTHORITY_AUTO_PERMIT_STORE;
+    const tmpPath = join(
+      tmpdir(),
+      `oa-ap-missing-${Date.now()}-${Math.random().toString(36).slice(2)}.json`,
+    );
+    process.env.CLAWTHORITY_AUTO_PERMIT_STORE = tmpPath;
+    tempFiles.add(tmpPath);
   }
 
   vi.resetModules();
