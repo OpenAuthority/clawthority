@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { resolveTelegramConfig, sendApprovalRequest, sendApproveAlwaysConfirmation, editMessageDecision, TelegramListener, escapeMarkdownV2 } from './telegram.js';
+import { resolveTelegramConfig, sendApprovalRequest, sendApproveAlwaysConfirmation, editMessageDecision, editApproveAlwaysConfirmation, TelegramListener, escapeMarkdownV2 } from './telegram.js';
 import { CircuitBreaker } from './retry.js';
 import type { TelegramConfig } from './types.js';
 
@@ -470,7 +470,7 @@ describe('TelegramListener', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
       .mockImplementation(() => new Promise(() => {})); // hang
 
-    listener = new TelegramListener('test-token', onCommand);
+    listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
 
     // Wait for the poll to process
@@ -490,7 +490,7 @@ describe('TelegramListener', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
       .mockImplementation(() => new Promise(() => {}));
 
-    listener = new TelegramListener('test-token', onCommand);
+    listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
 
     await vi.waitFor(() => expect(onCommand).toHaveBeenCalled());
@@ -510,7 +510,7 @@ describe('TelegramListener', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
       .mockImplementation(() => new Promise(() => {}));
 
-    listener = new TelegramListener('test-token', onCommand);
+    listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
 
     await vi.waitFor(() => expect(onCommand).toHaveBeenCalled());
@@ -530,7 +530,7 @@ describe('TelegramListener', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
       .mockImplementation(() => new Promise(() => {}));
 
-    listener = new TelegramListener('test-token', onCommand);
+    listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
 
     await vi.waitFor(() => expect(onCommand).toHaveBeenCalled());
@@ -549,7 +549,7 @@ describe('TelegramListener', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
       .mockImplementation(() => new Promise(() => {}));
 
-    listener = new TelegramListener('test-token', onCommand);
+    listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
 
     await vi.waitFor(() => expect(onCommand).toHaveBeenCalled());
@@ -569,7 +569,7 @@ describe('TelegramListener', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
       .mockImplementation(() => new Promise(() => {}));
 
-    listener = new TelegramListener('test-token', onCommand);
+    listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
 
     await vi.waitFor(() => expect(onCommand).toHaveBeenCalled());
@@ -588,7 +588,7 @@ describe('TelegramListener', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
       .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
 
-    listener = new TelegramListener('test-token', onCommand);
+    listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
 
     await vi.waitFor(() => expect(onCommand).toHaveBeenCalled());
@@ -607,7 +607,7 @@ describe('TelegramListener', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
       .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
 
-    listener = new TelegramListener('test-token', onCommand);
+    listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
 
     await vi.waitFor(() => expect(onCommand).toHaveBeenCalled());
@@ -626,7 +626,7 @@ describe('TelegramListener', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
       .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
 
-    listener = new TelegramListener('test-token', onCommand);
+    listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
 
     await vi.waitFor(() => expect(onCommand).toHaveBeenCalled());
@@ -645,7 +645,7 @@ describe('TelegramListener', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
       .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
 
-    listener = new TelegramListener('test-token', onCommand);
+    listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
 
     await vi.waitFor(() => expect(onCommand).toHaveBeenCalled());
@@ -673,7 +673,7 @@ describe('TelegramListener', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
       .mockImplementation(() => new Promise(() => {}));
 
-    listener = new TelegramListener('test-token', onCommand);
+    listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
 
     await new Promise((r) => setTimeout(r, 50));
@@ -692,7 +692,7 @@ describe('TelegramListener', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
       .mockImplementation(() => new Promise(() => {}));
 
-    listener = new TelegramListener('test-token', onCommand);
+    listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
 
     await new Promise((r) => setTimeout(r, 50));
@@ -712,7 +712,7 @@ describe('TelegramListener', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
       .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
 
-    listener = new TelegramListener('test-token', onCommand);
+    listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
 
     await vi.waitFor(() => expect(onCommand).toHaveBeenCalled());
@@ -733,7 +733,7 @@ describe('TelegramListener', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
       .mockImplementation(() => new Promise(() => {}));
 
-    listener = new TelegramListener('test-token', onCommand);
+    listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
 
     // Give it time to process, then verify no commands were dispatched
@@ -748,7 +748,7 @@ describe('TelegramListener', () => {
       }),
     );
 
-    listener = new TelegramListener('test-token', onCommand);
+    listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
     listener.stop();
 
@@ -769,7 +769,7 @@ describe('TelegramListener', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
       .mockImplementation(() => new Promise(() => {}));
 
-    listener = new TelegramListener('test-token', onCommand);
+    listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
 
     await vi.waitFor(() => expect(onCommand).toHaveBeenCalledTimes(2));
@@ -790,7 +790,7 @@ describe('TelegramListener', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
       .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
 
-    listener = new TelegramListener('test-token', onCommand);
+    listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
 
     await vi.waitFor(() => expect(onCommand).toHaveBeenCalledTimes(2));
@@ -806,7 +806,7 @@ describe('TelegramListener', () => {
     vi.mocked(fetch).mockImplementationOnce(() => Promise.reject(new Error('Transient network error')));
     vi.mocked(fetch).mockImplementation(() => new Promise(() => {})); // hang subsequent polls
 
-    listener = new TelegramListener('test-token', onCommand);
+    listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
 
     await vi.waitFor(() => expect(errorSpy).toHaveBeenCalled());
@@ -825,7 +825,7 @@ describe('TelegramListener', () => {
       .mockResolvedValueOnce(new Response('', { status: 429 }))
       .mockImplementation(() => new Promise(() => {})); // hang subsequent polls
 
-    listener = new TelegramListener('test-token', onCommand);
+    listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
 
     await vi.waitFor(() => expect(warnSpy).toHaveBeenCalled());
@@ -840,7 +840,7 @@ describe('TelegramListener', () => {
     vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ ok: false }), { status: 200 }));
     vi.mocked(fetch).mockImplementation(() => new Promise(() => {}));
 
-    listener = new TelegramListener('test-token', onCommand);
+    listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
 
     // Give the listener a tick to consume the ok:false response
@@ -860,7 +860,7 @@ describe('TelegramListener', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
       .mockImplementation(() => new Promise(() => {}));
 
-    listener = new TelegramListener('test-token', onCommand);
+    listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
 
     await vi.waitFor(() => expect(onCommand).toHaveBeenCalled());
@@ -883,7 +883,7 @@ describe('TelegramListener', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
       .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
 
-    listener = new TelegramListener('test-token', onCommand);
+    listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
 
     await vi.waitFor(() => expect(onCommand).toHaveBeenCalled());
@@ -917,7 +917,7 @@ describe('TelegramListener', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
       .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
 
-    listener = new TelegramListener('test-token', onCommand);
+    listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
 
     await vi.waitFor(() => expect(onCommand).toHaveBeenCalled());
@@ -940,7 +940,7 @@ describe('TelegramListener', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
       .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
 
-    listener = new TelegramListener('test-token', onCommand);
+    listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
 
     await vi.waitFor(() => expect(onCommand).toHaveBeenCalled());
@@ -960,7 +960,7 @@ describe('TelegramListener', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
       .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
 
-    listener = new TelegramListener('test-token', onCommand);
+    listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
 
     await vi.waitFor(() => expect(onCommand).toHaveBeenCalled());
@@ -979,7 +979,7 @@ describe('TelegramListener', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
       .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
 
-    listener = new TelegramListener('test-token', onCommand);
+    listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
 
     await vi.waitFor(() => expect(onCommand).toHaveBeenCalled());
@@ -1006,10 +1006,10 @@ describe('sendApproveAlwaysConfirmation', () => {
   });
 
   it('sends a POST to the Telegram sendMessage endpoint', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.mocked(fetch).mockResolvedValue(new Response('{"ok":true,"result":{"message_id":55}}', { status: 200 }));
 
     const result = await sendApproveAlwaysConfirmation(config, opts);
-    expect(result).toBe(true);
+    expect(result).toEqual({ ok: true, messageId: 55 });
 
     expect(fetch).toHaveBeenCalledOnce();
     const [url, init] = vi.mocked(fetch).mock.calls[0]!;
@@ -1060,14 +1060,14 @@ describe('sendApproveAlwaysConfirmation', () => {
     vi.mocked(fetch).mockResolvedValue(new Response('', { status: 400 }));
 
     const result = await sendApproveAlwaysConfirmation(config, opts);
-    expect(result).toBe(false);
+    expect(result).toEqual({ ok: false });
   });
 
   it('returns false when fetch throws', async () => {
     vi.mocked(fetch).mockRejectedValue(new Error('network error'));
 
     const result = await sendApproveAlwaysConfirmation(config, opts);
-    expect(result).toBe(false);
+    expect(result).toEqual({ ok: false });
   });
 
   it('respects an injected circuit breaker', async () => {
@@ -1075,7 +1075,7 @@ describe('sendApproveAlwaysConfirmation', () => {
     vi.mocked(fetch).mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
 
     const result = await sendApproveAlwaysConfirmation(config, opts, breaker);
-    expect(result).toBe(true);
+    expect(result).toEqual({ ok: true });
   });
 });
 
@@ -1140,6 +1140,40 @@ describe('editMessageDecision', () => {
   });
 });
 
+// ─── editApproveAlwaysConfirmation ───────────────────────────────────────────
+
+describe('editApproveAlwaysConfirmation', () => {
+  const config = { botToken: 'test-token', chatId: '12345' };
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('edits the confirmation message and removes inline buttons after save', async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+
+    await editApproveAlwaysConfirmation(config, {
+      messageId: 77,
+      token: 'abc12345',
+      decision: 'saved',
+      pattern: 'git commit *',
+    });
+
+    expect(fetch).toHaveBeenCalledOnce();
+    const [url, init] = vi.mocked(fetch).mock.calls[0]!;
+    expect(url).toBe('https://api.telegram.org/bottest-token/editMessageText');
+    const body = JSON.parse(init?.body as string);
+    expect(body.message_id).toBe(77);
+    expect(body.text).toContain('SAVED');
+    expect(body.text).toContain('git commit *');
+    expect(body.reply_markup).toBeUndefined();
+  });
+});
+
 // ─── TelegramListener — duplicate tap alert ───────────────────────────────────
 
 describe('TelegramListener — duplicate callback_query alert', () => {
@@ -1169,7 +1203,7 @@ describe('TelegramListener — duplicate callback_query alert', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
       .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
 
-    listener = new TelegramListener('test-token', onCommand);
+    listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
 
     await vi.waitFor(() => expect(onCommand).toHaveBeenCalled());
@@ -1200,7 +1234,7 @@ describe('TelegramListener — duplicate callback_query alert', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify(updates), { status: 200 }))
       .mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
 
-    listener = new TelegramListener('test-token', onCommand);
+    listener = new TelegramListener('test-token', onCommand, { takeOverSession: false });
     listener.start();
 
     await vi.waitFor(() => expect(onCommand).toHaveBeenCalled());

@@ -121,6 +121,7 @@ export {
   sendConfirmation,
   editMessageDecision,
   sendApproveAlwaysConfirmation,
+  editApproveAlwaysConfirmation,
   resolveTelegramConfig,
   SlackInteractionServer,
   sendSlackApprovalRequest,
@@ -143,8 +144,10 @@ export type {
   ResolvedTelegramConfig,
   SendApprovalOpts,
   SendApproveAlwaysConfirmationOpts,
+  SendApproveAlwaysConfirmationResult,
   TelegramCommand,
   TelegramOperatorInfo,
+  TelegramListenerOptions,
   ResolvedSlackConfig,
   SlackSendApprovalOpts,
   SlackSendApprovalResult,
@@ -166,8 +169,8 @@ import { parseHitlPolicyFile } from "./hitl/parser.js";
 import { startHitlPolicyWatcher, type HitlWatcherHandle } from "./hitl/watcher.js";
 import type { HitlPolicyConfig } from "./hitl/types.js";
 import { ApprovalManager } from "./hitl/approval-manager.js";
-import { TelegramListener, sendApprovalRequest, sendConfirmation, editMessageDecision, sendApproveAlwaysConfirmation, resolveTelegramConfig } from "./hitl/telegram.js";
-import type { TelegramOperatorInfo } from "./hitl/telegram.js";
+import { TelegramListener, sendApprovalRequest, sendConfirmation, editMessageDecision, sendApproveAlwaysConfirmation, editApproveAlwaysConfirmation, resolveTelegramConfig } from "./hitl/telegram.js";
+import type { SendApproveAlwaysConfirmationResult, TelegramOperatorInfo } from "./hitl/telegram.js";
 import { SlackInteractionServer, sendSlackApprovalRequest, sendSlackConfirmation, resolveSlackConfig } from "./hitl/slack.js";
 import { sendConsoleApprovalRequest } from "./hitl/console.js";
 import { explainCommand } from "./hitl/command-explainer.js";
@@ -1057,6 +1060,7 @@ interface PendingApproveAlwaysConfirmation {
   method: string;
   operatorId: string | undefined;
   agentId: string;
+  messageId?: number | undefined;
   timer: ReturnType<typeof setTimeout>;
 }
 
@@ -1066,6 +1070,12 @@ interface PendingApproveAlwaysConfirmation {
  * message is sent.  Cleared on Save, Cancel, or timeout.
  */
 const pendingApproveAlwaysConfirmations = new Map<string, PendingApproveAlwaysConfirmation>();
+
+/**
+ * Remembers recently-settled Approve Always confirmations so duplicate
+ * Telegram callback deliveries/taps get a clear idempotent response.
+ */
+const settledApproveAlwaysConfirmations = new Map<string, 'saved' | 'cancelled'>();
 
 /** JSONL audit logger for HITL decisions — initialised in activate(). */
 let hitlAuditLogger: JsonlAuditLogger | null = null;
@@ -2273,41 +2283,76 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
             // ── confirm_approve_always ────────────────────────────────────
             if (command === 'confirm_approve_always') {
               const conf = pendingApproveAlwaysConfirmations.get(token);
-              if (conf) {
-                clearTimeout(conf.timer);
-                pendingApproveAlwaysConfirmations.delete(token);
-                const pending = approvalManager.getPending(token);
-                if (pending) {
-                  approveAlwaysTokens.add(token);
-                  approvalManager.addSessionAutoApproval(pending.channelId, pending.action_class);
-                  console.log(
-                    `[hitl-telegram] session auto-approval registered: channel=${pending.channelId} action_class=${pending.action_class}` +
-                    (operatorId !== undefined ? ` operator=${operatorId}` : ''),
-                  );
-                  if (pending.target.length > 0 || !['shell.exec', 'code.execute'].includes(pending.action_class)) {
-                    void persistAutoPermitPattern(pending.target, pending.toolName, pending.action_class, 'telegram', operatorId, conf.agentId);
-                  }
-                }
-              } else {
+              if (!conf) {
+                const settled = settledApproveAlwaysConfirmations.get(token);
+                if (settled === 'saved') return 'Pattern already saved';
+                if (settled === 'cancelled') return 'Pattern confirmation was cancelled';
+                if (approvalManager.isConsumed(token)) return 'Already decided';
                 console.log(`[hitl-telegram] confirm_approve_always: no pending confirmation for token=${token}`);
+                return 'No pending pattern confirmation';
               }
+
+              clearTimeout(conf.timer);
+              pendingApproveAlwaysConfirmations.delete(token);
+              settledApproveAlwaysConfirmations.set(token, 'saved');
+
+              if (conf.messageId !== undefined) {
+                void editApproveAlwaysConfirmation(telegramConfig, {
+                  messageId: conf.messageId,
+                  token,
+                  decision: 'saved',
+                  pattern: conf.pattern,
+                });
+              }
+
+              const pending = approvalManager.getPending(token);
+              if (pending) {
+                approveAlwaysTokens.add(token);
+                approvalManager.addSessionAutoApproval(pending.channelId, pending.action_class);
+                console.log(
+                  `[hitl-telegram] session auto-approval registered: channel=${pending.channelId} action_class=${pending.action_class}` +
+                  (operatorId !== undefined ? ` operator=${operatorId}` : ''),
+                );
+                if (pending.target.length > 0 || !['shell.exec', 'code.execute'].includes(pending.action_class)) {
+                  void persistAutoPermitPattern(pending.target, pending.toolName, pending.action_class, 'telegram', operatorId, conf.agentId);
+                }
+              }
+
               const resolved = approvalManager.resolveApproval(token, 'approved');
-              if (!resolved) {
+              if (!resolved && !approvalManager.isConsumed(token)) {
                 console.log(`[hitl-telegram] confirm_approve_always: unknown or expired token: ${token}`);
+                return 'Unknown or expired approval';
               }
-              return;
+              return 'Pattern saved; request approved';
             }
 
             // ── cancel_approve_always ─────────────────────────────────────
             if (command === 'cancel_approve_always') {
               const conf = pendingApproveAlwaysConfirmations.get(token);
-              if (conf) {
-                clearTimeout(conf.timer);
-                pendingApproveAlwaysConfirmations.delete(token);
+              if (!conf) {
+                const settled = settledApproveAlwaysConfirmations.get(token);
+                if (settled === 'saved') return 'Pattern already saved';
+                if (settled === 'cancelled') return 'Pattern confirmation already cancelled';
+                if (approvalManager.isConsumed(token)) return 'Already decided';
+                console.log(`[hitl-telegram] cancel_approve_always: no pending confirmation for token=${token}`);
+                return 'No pending pattern confirmation';
               }
+
+              clearTimeout(conf.timer);
+              pendingApproveAlwaysConfirmations.delete(token);
+              settledApproveAlwaysConfirmations.set(token, 'cancelled');
+              if (conf.messageId !== undefined) {
+                void editApproveAlwaysConfirmation(telegramConfig, {
+                  messageId: conf.messageId,
+                  token,
+                  decision: 'cancelled',
+                  pattern: conf.pattern,
+                });
+              }
+
               console.log(`[hitl-telegram] approve-always confirmation cancelled for token=${token}`);
               // Original approval stays pending — operator can still use the original buttons.
-              return;
+              return 'Pattern confirmation cancelled';
             }
 
             // ── approve_always ────────────────────────────────────────────
@@ -2318,6 +2363,7 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
                 clearTimeout(existingConf.timer);
                 pendingApproveAlwaysConfirmations.delete(token);
               }
+              settledApproveAlwaysConfirmations.delete(token);
 
               const pending = approvalManager.getPending(token);
               if (pending) {
@@ -2359,6 +2405,10 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
                     token,
                     pattern: derived.pattern,
                     originalCommand: pending.target,
+                  }).then((result: SendApproveAlwaysConfirmationResult) => {
+                    if (!result.ok || result.messageId === undefined) return;
+                    const current = pendingApproveAlwaysConfirmations.get(token);
+                    if (current) current.messageId = result.messageId;
                   });
                   return; // Wait for confirm or cancel — do not resolve yet.
                 }
@@ -2497,6 +2547,7 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
       clearTimeout(conf.timer);
     }
     pendingApproveAlwaysConfirmations.clear();
+    settledApproveAlwaysConfirmations.clear();
     approvalManager.shutdown();
     if (hitlWatcher !== null) {
       await hitlWatcher.stop();

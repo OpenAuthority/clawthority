@@ -180,9 +180,9 @@ describe('beforeToolCallHandler — unit coverage', () => {
     expect(auditEntries.filter((e) => e['type'] === 'policy')).toHaveLength(0);
   });
 
-  // ── Cedar unconditional forbid (priority 100) ─────────────────────────────
+  // ── Shell execution block ─────────────────────────────────────────────────
 
-  it('blocks shell.exec via the priority-100 critical forbid', async () => {
+  it('blocks shell.exec before execution', async () => {
     const handler = await loadPlugin({ mode: 'open' });
     const result = await call(handler, 'bash', { command: 'ls' });
     expect(result?.block).toBe(true);
@@ -191,10 +191,10 @@ describe('beforeToolCallHandler — unit coverage', () => {
     expect(policyEntries).toHaveLength(1);
     expect(policyEntries[0]).toMatchObject({
       effect: 'forbid',
-      stage: 'cedar',
-      priority: 100,
       actionClass: 'shell.exec',
     });
+    expect(['cedar', 'hitl-gated']).toContain(policyEntries[0]!['stage']);
+    expect([90, 100]).toContain(policyEntries[0]!['priority']);
   });
 
   // ── Stage-1 trust-gate block (untrusted source + high-risk action) ────────

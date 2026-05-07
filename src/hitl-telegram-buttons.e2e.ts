@@ -105,8 +105,10 @@ class TelegramButtonHarness {
   /** Creates a listener wired to this harness's dispatch logic. */
   createListener(): TelegramListener {
     const self = this;
-    this.listener = new TelegramListener(BOT_TOKEN, (command, token, from) =>
-      self.handleCommand(command, token, from),
+    this.listener = new TelegramListener(
+      BOT_TOKEN,
+      (command, token, from) => self.handleCommand(command, token, from),
+      { takeOverSession: false },
     );
     return this.listener;
   }

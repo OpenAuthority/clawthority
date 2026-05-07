@@ -111,11 +111,12 @@ describe('TC-MTG-02: unregistered tools are forbidden by default (E-07)', () => 
     expect(d.allowlisted).toBe(false);
   });
 
-  it('forbids "exec" (not a registered alias in the registry)', async () => {
+  it('forbids "exec" as a registered exec wrapper alias', async () => {
     const d = await gate.evaluate('exec', ctx());
     expect(d.effect).toBe('forbid');
-    expect(d.actionClass).toBe(ActionClass.UnknownSensitiveAction);
-    expect(d.reason).toBe('unregistered_tool');
+    expect(d.actionClass).toBe(ActionClass.ShellExec);
+    expect(d.reason).toBe('exec_wrapper_blocked');
+    expect(d.registered).toBe(true);
   });
 
   it('forbids "sh" (not a registered alias in the registry)', async () => {
@@ -188,6 +189,7 @@ describe('TC-MTG-04: exec wrapper tools resolve to shell.exec and are forbidden 
 
   const execWrapperAliases = [
     'bash',
+    'exec',
     'shell_exec',
     'run_command',
     'execute_command',

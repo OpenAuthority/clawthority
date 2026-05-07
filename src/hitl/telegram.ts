@@ -308,6 +308,12 @@ export interface SendApproveAlwaysConfirmationOpts {
   originalCommand: string;
 }
 
+export interface SendApproveAlwaysConfirmationResult {
+  ok: boolean;
+  /** Telegram message_id — needed to settle the confirmation message. */
+  messageId?: number | undefined;
+}
+
 /**
  * Sends a confirmation message asking the operator to save or cancel an
  * auto-permit pattern derived from an "Approve Always" click.
@@ -320,13 +326,13 @@ export interface SendApproveAlwaysConfirmationOpts {
  * Cancelling preserves the original approval request so the operator can
  * still use the original Approve Once / Deny buttons.
  *
- * Returns `true` on success, `false` on failure.
+ * Returns `{ ok: true, messageId }` on success, `{ ok: false }` on failure.
  */
 export async function sendApproveAlwaysConfirmation(
   config: ResolvedTelegramConfig,
   opts: SendApproveAlwaysConfirmationOpts,
   breaker: CircuitBreaker = telegramCircuitBreaker,
-): Promise<boolean> {
+): Promise<SendApproveAlwaysConfirmationResult> {
   const lines: string[] = [];
 
   lines.push(`\uD83D\uDD01 *Approve Always \u2014 Confirm Pattern*`, '');
@@ -365,16 +371,51 @@ export async function sendApproveAlwaysConfirmation(
           console.error(
             `[hitl-telegram] sendApproveAlwaysConfirmation failed: ${res.status} ${res.statusText}`,
           );
-          return false;
+          return { ok: false } as SendApproveAlwaysConfirmationResult;
         }
-        return true;
+        const body = await res.json() as { ok: boolean; result?: { message_id?: number } };
+        const messageId = body.result?.message_id;
+        return { ok: true, ...(messageId !== undefined ? { messageId } : {}) } as SendApproveAlwaysConfirmationResult;
       },
-      () => false,
+      () => ({ ok: false }) as SendApproveAlwaysConfirmationResult,
       breaker,
     );
   } catch (err) {
     console.error('[hitl-telegram] sendApproveAlwaysConfirmation error:', err);
-    return false;
+    return { ok: false };
+  }
+}
+
+/**
+ * Edits an Approve Always confirmation message after Save/Cancel so Telegram
+ * no longer presents active buttons for a settled token.
+ */
+export async function editApproveAlwaysConfirmation(
+  config: ResolvedTelegramConfig,
+  opts: { messageId: number; token: string; decision: 'saved' | 'cancelled'; pattern: string },
+): Promise<void> {
+  const emoji = opts.decision === 'saved' ? '\u2705' : '\u274C';
+  const label = opts.decision === 'saved' ? 'SAVED' : 'CANCELLED';
+  const text = [
+    `${emoji} *Approve Always Pattern ${label}*`,
+    `*Pattern:* \`${escapeCodeSpan(opts.pattern)}\``,
+    `\uD83D\uDD11 *Approval ID:* \`${escapeCodeSpan(opts.token)}\``,
+  ].join('\n');
+
+  try {
+    await fetch(`${TELEGRAM_API}/bot${config.botToken}/editMessageText`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: config.chatId,
+        message_id: opts.messageId,
+        text,
+        parse_mode: 'MarkdownV2',
+        // Omitting reply_markup removes the inline keyboard buttons.
+      }),
+    });
+  } catch {
+    // Best-effort — don't fail the approval flow.
   }
 }
 
@@ -394,6 +435,16 @@ export interface TelegramOperatorInfo {
   username?: string;
   /** Display first name of the operator. */
   firstName?: string;
+}
+
+export interface TelegramListenerOptions {
+  /**
+   * Allows tests to skip Telegram session takeover and webhook cleanup so
+   * parser/polling fixtures can start directly at getUpdates.
+   */
+  takeOverSession?: boolean;
+  /** Delay after session takeover before polling starts. Defaults to 2s. */
+  startupDelayMs?: number;
 }
 
 // Tokens are UUID v7 (36 chars with hyphens, e.g. "019daa50-5dc1-78ee-9ab4-bcf652bddfa3")
@@ -439,6 +490,7 @@ export class TelegramListener {
       token: string,
       from?: TelegramOperatorInfo,
     ) => string | void,
+    private readonly options: TelegramListenerOptions = {},
   ) {}
 
   /** Masked token for safe logging (shows first 8 chars + …). */
@@ -455,7 +507,11 @@ export class TelegramListener {
     // closeOtherSessions terminates all active long-poll connections on Telegram's
     // side, preventing the 409 Conflict that occurs when two pollers race.
     // We then wait 2s for the termination to propagate before polling.
-    this.closeOtherSessions().then(() => new Promise(resolve => setTimeout(resolve, 2_000))).then(() => {
+    const startup = this.options.takeOverSession === false
+      ? Promise.resolve()
+      : this.closeOtherSessions().then(() => new Promise(resolve => setTimeout(resolve, this.options.startupDelayMs ?? 2_000)));
+    startup.then(() => {
+      if (!this.running) return;
       this.poll().catch((err) => {
         if (this.running) {
           console.error('[hitl-telegram] poll loop exited unexpectedly:', err);
