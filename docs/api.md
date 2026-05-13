@@ -10,7 +10,7 @@
 > Plane API* in Future. Until that work lands, treat this page as a design
 > document, not operational documentation.
 >
-> **What v1.3.3 actually provides:**
+> **What v1.3.4 actually provides:**
 > - Audit access: tail / query [`data/audit.jsonl`](configuration.md#audit-logging)
 > - Rule management: edit `data/rules.json` (hot-reload via watcher)
 > - Auto-permit management: Telegram `/approve_always` / `/revoke`, or `npm run list-auto-permits` / `revoke-auto-permit` etc.

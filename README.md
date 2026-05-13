@@ -21,7 +21,7 @@ Agent tool call  ─►  Clawthority  ─►  Allow  │  Deny  │  Ask human  
 ```
 
 > [!NOTE]
-> **v1.x - stable API.** The plugin API and policy bundle schema follow [semantic versioning](https://semver.org); breaking changes ship in a future major release. The version badge above reflects the current release (1.3.3).
+> **v1.x - stable API.** The plugin API and policy bundle schema follow [semantic versioning](https://semver.org); breaking changes ship in a future major release. The version badge above reflects the current release (1.3.4).
 
 ---
 

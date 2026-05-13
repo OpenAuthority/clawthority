@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.4] — 2026-05-13
+
+### Fixed
+
+- Mode switches between `open` and `closed` now hot-reload via `data/mode.json`, rebuilding the policy engine with the matching `defaultEffect` and baseline rules without requiring a plugin restart.
+- Synchronized package, lockfile, and OpenClaw manifest version metadata for the 1.3.4 release.
+
 ## [1.3.3] — 2026-05-07
 
 HITL operations release: makes Telegram a real operator control surface, closes the duplicate-approval loop, and tightens approval feedback in both Telegram and OpenClaw chat.
