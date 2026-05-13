@@ -82,7 +82,7 @@ Select mode via the `CLAWTHORITY_MODE` environment variable before launching the
 export CLAWTHORITY_MODE=closed
 ```
 
-Mode is read once at activation; restart the agent to change it. See [configuration.md — Install mode](configuration.md#install-mode) for the full rule-set breakdown per mode.
+Mode is read from `CLAWTHORITY_MODE` at startup. To switch a running plugin without restarting, write `data/mode.json` with `{ "mode": "closed" }` or `{ "mode": "open" }`; the watcher rebuilds the policy engine in place. See [configuration.md — Install mode](configuration.md#install-mode) for the full rule-set breakdown per mode.
 
 ### 4. Verify installation
 

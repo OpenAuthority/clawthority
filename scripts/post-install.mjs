@@ -63,6 +63,7 @@ const CLOSED_HITL_POLICY = `version: "1"
 #   channelId: ""       # or: SLACK_CHANNEL_ID env var
 #   signingSecret: ""   # or: SLACK_SIGNING_SECRET env var
 #   interactionPort: 3201
+#   interactionHost: "0.0.0.0"
 
 policies:
   # Gate every unrecognised action through the approval channel.
@@ -87,7 +88,9 @@ policies:
       - closed-hitl
 `;
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const root = process.env.CLAWTHORITY_POST_INSTALL_ROOT
+  ? resolve(process.env.CLAWTHORITY_POST_INSTALL_ROOT)
+  : resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const dataDir = resolve(root, "data");
 const markerPath = resolve(dataDir, ".installed");
 const rulesPath = resolve(dataDir, "rules.json");
@@ -150,6 +153,7 @@ const hitlExampleContent = `version: "1"
 #   channelId: ""
 #   signingSecret: ""
 #   interactionPort: 3201
+#   interactionHost: "0.0.0.0"
 
 policies:
   # Gate every unrecognised or sensitive action through Telegram.

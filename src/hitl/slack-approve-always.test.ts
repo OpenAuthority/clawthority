@@ -29,6 +29,7 @@ const slackConfig = {
   channelId: 'C123',
   signingSecret: 'test-secret',
   interactionPort: 0,
+  interactionHost: '127.0.0.1',
 };
 
 const testPolicy: HitlPolicy = {
@@ -55,7 +56,7 @@ async function sendInteraction(
   const body = `payload=${encodeURIComponent(payload)}`;
   const ts = String(Math.floor(Date.now() / 1000));
   const sig = makeSignature(signingSecret, ts, body);
-  return fetch(`http://localhost:${port}/slack/interactions`, {
+  return fetch(`http://${slackConfig.interactionHost}:${port}/slack/interactions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
@@ -190,6 +191,7 @@ describe('Approve Always — session auto-approval registration', () => {
         const decision = command === 'deny' ? ('denied' as const) : ('approved' as const);
         manager.resolveApproval(token, decision);
       },
+      slackConfig.interactionHost,
     );
     await server.start();
     port = server.address().port;

@@ -2,7 +2,7 @@
 
 > **What this page is for.** What Clawthority has shipped, what is in progress, and what comes next. Updated as work completes.
 
-Last updated: May 2026 (v1.3.3 release)
+Last updated: May 2026 (v1.3.4 release)
 
 ---
 

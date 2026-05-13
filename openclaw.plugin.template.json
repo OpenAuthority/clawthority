@@ -2,7 +2,7 @@
   "id": "clawthority",
   "name": "clawthority",
   "displayName": "Clawthority",
-  "version": "1.2.1",
+  "version": "1.3.4",
   "description": "Authorization policy engine for Clawthority — semantic authorization, action normalization, audit logging, and HITL approval",
   "author": "Clawthority",
   "license": "Apache-2.0",
@@ -19,7 +19,8 @@
     ],
     "hooks": [
       "before_tool_call",
-      "before_prompt_build"
+      "before_prompt_build",
+      "before_model_resolve"
     ],
     "installPath": "~/.openclaw/plugins/clawthority",
     "postInstall": {
@@ -30,12 +31,14 @@
       "reads": [
         "data/bundles/active/",
         "data/bundles/proposals/",
+        "data/mode.json",
         "data/rules.json",
         "hitl-policy.yaml",
         "data/.installed"
       ],
       "writes": [
         "data/.installed",
+        "data/mode.json",
         "data/audit.jsonl",
         "data/budget.jsonl"
       ]
@@ -59,7 +62,7 @@
       "enum": ["open", "closed"],
       "required": false,
       "default": "open",
-      "description": "Install mode. `open` = implicit permit + critical-forbid safety net; `closed` = implicit deny, explicit permits required. Read once at activation; restart to change."
+      "description": "Initial install mode. `open` = implicit permit + critical-forbid safety net; `closed` = implicit deny, explicit permits required. Runtime switches can be applied by writing data/mode.json."
     },
     "CLAWTHORITY_RULES_FILE": {
       "type": "string",
@@ -152,6 +155,12 @@
       "required": false,
       "default": 3201,
       "description": "Port the Slack interactive webhook server binds to when Slack HITL is enabled."
+    },
+    "SLACK_INTERACTION_HOST": {
+      "type": "string",
+      "required": false,
+      "default": "0.0.0.0",
+      "description": "Host/interface the Slack interactive webhook server binds to when Slack HITL is enabled."
     }
   },
   "configSchema": {
@@ -256,6 +265,11 @@
                 "type": "number",
                 "description": "Port for the Slack webhook interaction server",
                 "default": 3201
+              },
+              "interactionHost": {
+                "type": "string",
+                "description": "Host/interface for the Slack webhook interaction server",
+                "default": "0.0.0.0"
               }
             },
             "additionalProperties": false

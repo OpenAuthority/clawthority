@@ -7,6 +7,7 @@ import type { PolicyEngineOptions } from './policy/engine.js';
 import { mergeRules } from './policy/rules/index.js';
 import type { Rule, Effect, Resource } from './policy/types.js';
 import { CoverageMap } from './policy/coverage.js';
+import { resolveModeValue, type ClawMode } from './policy/mode.js';
 
 /**
  * In-memory cache of last-successfully-loaded Rule arrays, keyed by file stem
@@ -28,6 +29,7 @@ const __srcDir = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = resolve(__srcDir, '..');
 const JSON_BUNDLE_FILE = resolve(PLUGIN_ROOT, 'data', 'bundle.json');
 const JSON_RULES_FILE = resolve(PLUGIN_ROOT, 'data', 'rules.json');
+const MODE_FILE = resolve(PLUGIN_ROOT, 'data', 'mode.json');
 
 /**
  * Returns the active JSON rules file path.
@@ -101,14 +103,19 @@ function loadJsonRules(filePath: string = resolveActiveJsonRulesFile()): Rule[] 
 async function importRuleModule(relPath: string, name: string): Promise<Rule[]> {
   const t = Date.now();
   const url = new URL(`${relPath}?t=${t}`, import.meta.url).href;
-  const mod = (await import(url)) as { default?: unknown };
-  if (!Array.isArray(mod.default)) {
+  const mod = (await import(url)) as { default?: unknown; OPEN_MODE_RULES?: unknown };
+  const exportedRules = name === 'default' && currentMode === 'open'
+    ? mod.OPEN_MODE_RULES
+    : mod.default;
+  if (!Array.isArray(exportedRules)) {
     throw new TypeError(
       `rules/${name}.ts must export a default array of Rule objects`,
     );
   }
-  return mod.default as Rule[];
+  return exportedRules as Rule[];
 }
+
+let currentMode: ClawMode = 'open';
 
 /**
  * Re-imports only the changed rule module (plus any missing cache entries),
@@ -167,6 +174,19 @@ export interface WatcherHandle {
   stop(): Promise<void>;
 }
 
+export interface ModeWatcherOptions {
+  /** Current mode used to choose baseline rules and engine defaultEffect. */
+  getMode?: () => ClawMode;
+  /** Called after data/mode.json changes to update the owning runtime. */
+  setMode?: (mode: ClawMode) => void;
+  /** Returns the compiled baseline rules for the current mode. */
+  getBaseRules?: () => Rule[];
+  /** Returns engine options for the current mode. */
+  getEngineOptions?: () => PolicyEngineOptions;
+  /** Optional override for tests or non-standard installs. */
+  modeFile?: string;
+}
+
 /** Log all loaded rules to the console for visibility at startup / reload. */
 function logRules(rules: Rule[], source: string): void {
   if (rules.length === 0) return;
@@ -175,6 +195,24 @@ function logRules(rules: Rule[], source: string): void {
     const matchStr = r.match instanceof RegExp ? r.match.toString() : r.match;
     const reason = r.reason ? ` — ${r.reason}` : '';
     console.log(`[clawthority]   ${r.effect.toUpperCase().padEnd(6)} ${r.resource}:${matchStr}${reason}`);
+  }
+}
+
+function loadModeFile(filePath: string): ClawMode | null {
+  try {
+    if (!existsSync(filePath)) return null;
+    const raw = readFileSync(filePath, 'utf-8').trim();
+    if (raw.length === 0) return null;
+    const parsed: unknown = JSON.parse(raw);
+    const rawMode = typeof parsed === 'string'
+      ? parsed
+      : parsed !== null && typeof parsed === 'object' && 'mode' in parsed
+        ? (parsed as { mode?: unknown }).mode
+        : undefined;
+    return resolveModeValue(rawMode, basename(filePath));
+  } catch (err) {
+    console.error('[hot-reload] failed to load mode file:', err);
+    return null;
   }
 }
 
@@ -194,20 +232,38 @@ export function startRulesWatcher(
   engineOptions?: PolicyEngineOptions,
   initialRules?: Rule[],
   coverageMap?: CoverageMap,
+  modeOptions: ModeWatcherOptions = {},
 ): WatcherHandle {
   const rulesDirUrl = new URL('./policy/rules/', import.meta.url);
   const watchPath = rulesDirUrl.pathname;
 
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
+  const getEngineOptions = (): PolicyEngineOptions | undefined =>
+    modeOptions.getEngineOptions?.() ?? engineOptions;
+  const getBaseRules = (): Rule[] => {
+    const provided = modeOptions.getBaseRules?.() ?? initialRules;
+    if (provided !== undefined) return provided;
+    const merged = buildMergedFromCache();
+    return Array.isArray(merged) ? merged : [];
+  };
+  const syncCurrentMode = (): void => {
+    currentMode = modeOptions.getMode?.() ?? currentMode;
+  };
+  syncCurrentMode();
+  if (initialRules !== undefined) {
+    ruleCache.set('default', initialRules);
+  }
+
   const rebuildEngine = (rules: Rule[]): void => {
-    const newEngine = new PolicyEngine(engineOptions);
+    const newEngine = new PolicyEngine(getEngineOptions());
     newEngine.addRules(rules);
     engineRef.current = newEngine;
   };
 
   const reload = async (changedFile?: string): Promise<void> => {
     try {
+      syncCurrentMode();
       const { rules, reloadedAgents } = await importFreshRules(changedFile);
       if (reloadedAgents.length === 0) return;
 
@@ -235,9 +291,10 @@ export function startRulesWatcher(
 
   const reloadJsonRules = (): void => {
     try {
+      syncCurrentMode();
       const jsonRules = loadJsonRules();
       ruleCache.set('json', jsonRules);
-      const allRules = buildMergedFromCache();
+      const allRules = [...jsonRules, ...getBaseRules()];
       rebuildEngine(allRules);
       coverageMap?.reset();
       logRules(jsonRules, 'UI (data/bundle.json | data/rules.json)');
@@ -250,6 +307,22 @@ export function startRulesWatcher(
         err,
       );
     }
+  };
+
+  const reloadMode = (): void => {
+    const mode = loadModeFile(modeOptions.modeFile ?? MODE_FILE);
+    if (mode === null) return;
+    modeOptions.setMode?.(mode);
+    syncCurrentMode();
+    const jsonRules = loadJsonRules();
+    ruleCache.set('json', jsonRules);
+    const baseRules = getBaseRules();
+    ruleCache.set('default', baseRules);
+    rebuildEngine([...jsonRules, ...baseRules]);
+    coverageMap?.reset();
+    console.log(
+      `[hot-reload] switched mode to ${mode.toUpperCase()} - ${jsonRules.length + baseRules.length} rule${jsonRules.length + baseRules.length !== 1 ? 's' : ''} total`,
+    );
   };
 
   // Watch TypeScript rule files
@@ -301,15 +374,28 @@ export function startRulesWatcher(
     bundleDebounceTimer = setTimeout(reloadJsonRules, debounceMs);
   });
 
+  let modeDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  const modeWatcher = chokidar.watch(modeOptions.modeFile ?? MODE_FILE, {
+    persistent: false,
+    ignoreInitial: true,
+  });
+
+  modeWatcher.on('change', () => {
+    if (modeDebounceTimer !== null) clearTimeout(modeDebounceTimer);
+    modeDebounceTimer = setTimeout(reloadMode, debounceMs);
+  });
+  modeWatcher.on('add', () => {
+    if (modeDebounceTimer !== null) clearTimeout(modeDebounceTimer);
+    modeDebounceTimer = setTimeout(reloadMode, debounceMs);
+  });
+
   // Initial load of JSON rules — rebuild the engine so the ref is replaced with
   // a new instance that includes both JSON rules and any pre-compiled TypeScript
   // rules passed via `initialRules`.
   const jsonRules = loadJsonRules();
   if (jsonRules.length > 0) {
     ruleCache.set('json', jsonRules);
-    const allRules = initialRules !== undefined
-      ? [...jsonRules, ...initialRules]
-      : buildMergedFromCache();
+    const allRules = [...jsonRules, ...getBaseRules()];
     rebuildEngine(allRules);
     logRules(jsonRules, 'UI (data/bundle.json | data/rules.json)');
   }
@@ -317,6 +403,7 @@ export function startRulesWatcher(
   console.log(`[hot-reload] watching ${watchPath} for rule changes`);
   console.log(`[hot-reload] watching ${JSON_RULES_FILE} for UI rule changes`);
   console.log(`[hot-reload] watching ${JSON_BUNDLE_FILE} for bundle rule changes (takes precedence)`);
+  console.log(`[hot-reload] watching ${modeOptions.modeFile ?? MODE_FILE} for mode changes`);
 
   return {
     async stop(): Promise<void> {
@@ -332,9 +419,14 @@ export function startRulesWatcher(
         clearTimeout(bundleDebounceTimer);
         bundleDebounceTimer = null;
       }
+      if (modeDebounceTimer !== null) {
+        clearTimeout(modeDebounceTimer);
+        modeDebounceTimer = null;
+      }
       await tsWatcher.close();
       await jsonWatcher.close();
       await bundleWatcher.close();
+      await modeWatcher.close();
       console.log('[hot-reload] watchers stopped');
     },
   };

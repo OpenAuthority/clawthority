@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { modeToDefaultEffect, resolveMode } from './mode.js';
+import { modeToDefaultEffect, resolveMode, resolveModeValue } from './mode.js';
 
 /**
  * Save and restore `CLAWTHORITY_MODE` around each test so cross-test leakage
@@ -62,6 +62,22 @@ describe('resolveMode', () => {
     expect(resolveMode()).toBe('open');
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0]?.[0]).toContain('invalid CLAWTHORITY_MODE="strict"');
+  });
+});
+
+describe('resolveModeValue', () => {
+  it('accepts raw control-plane values without reading process.env', () => {
+    process.env[ENV_KEY] = 'closed';
+    expect(resolveModeValue('open', 'data/mode.json')).toBe('open');
+    expect(resolveModeValue(' closed ', 'data/mode.json')).toBe('closed');
+  });
+
+  it('falls back to open for nullish or invalid runtime values', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(resolveModeValue(undefined, 'data/mode.json')).toBe('open');
+    expect(resolveModeValue(null, 'data/mode.json')).toBe('open');
+    expect(resolveModeValue('strict', 'data/mode.json')).toBe('open');
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -45,7 +45,7 @@ cd ui/client && npm run dev
 
 The dashboard is available at `http://localhost:7331` (served by Express) or `http://localhost:5173` (Vite HMR, proxied to the Express API).
 
-> **Note (v1.3.3):** The web dashboard is **under active development and does not ship as part of the v1.3.3 npm package**. Plugin-only installations are fully supported — every operator-facing surface (rule edits, audit log queries, auto-permit management) is available through `data/` files, the Telegram operator commands, and the `npm run` CLI helpers. The `ui/` directory in this repo is for contributors who want to work on the dashboard; it is optional. See [api.md](api.md) for the design-target REST surface and [roadmap.md](roadmap.md) for the dashboard roadmap.
+> **Note (v1.3.4):** The web dashboard is **under active development and does not ship as part of the v1.3.4 npm package**. Plugin-only installations are fully supported — every operator-facing surface (rule edits, audit log queries, auto-permit management) is available through `data/` files, the Telegram operator commands, and the `npm run` CLI helpers. The `ui/` directory in this repo is for contributors who want to work on the dashboard; it is optional. See [api.md](api.md) for the design-target REST surface and [roadmap.md](roadmap.md) for the dashboard roadmap.
 
 ---
 

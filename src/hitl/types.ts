@@ -59,6 +59,8 @@ export const SlackConfigSchema = Type.Object({
   signingSecret: Type.Optional(Type.String()),
   /** Port for the interaction webhook server. Overridden by SLACK_INTERACTION_PORT env var. Default: 3201. */
   interactionPort: Type.Optional(Type.Number({ minimum: 1 })),
+  /** Host/interface for the interaction webhook server. Overridden by SLACK_INTERACTION_HOST env var. Default: 0.0.0.0. */
+  interactionHost: Type.Optional(Type.String()),
 });
 
 /** Top-level HITL policy configuration file schema. */

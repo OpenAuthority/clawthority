@@ -376,6 +376,7 @@ policies:
 | `channelId` | `string` | Slack channel ID. Overridden by `SLACK_CHANNEL_ID` env var. |
 | `signingSecret` | `string` | Slack Signing Secret for webhook verification. Overridden by `SLACK_SIGNING_SECRET` env var. |
 | `interactionPort` | `number` | Port for the interaction webhook server. Default: `3201`. Overridden by `SLACK_INTERACTION_PORT` env var. |
+| `interactionHost` | `string` | Host/interface for the interaction webhook server. Default: `0.0.0.0`. Overridden by `SLACK_INTERACTION_HOST` env var. |
 
 ### Fallback behaviour
 
@@ -586,6 +587,8 @@ Uses the Slack Web API with Block Kit interactive buttons. Requires a webhook en
    export SLACK_SIGNING_SECRET="your-signing-secret"
    # Optional: override default port 3201
    export SLACK_INTERACTION_PORT="3201"
+   # Optional: override default bind host 0.0.0.0
+   export SLACK_INTERACTION_HOST="0.0.0.0"
    ```
 
 #### Approval flow
@@ -682,6 +685,7 @@ Only `block_actions` type payloads with values matching `approve:<token>` or `de
   - `SLACK_CHANNEL_ID` > `slack.channelId` > (disabled)
   - `SLACK_SIGNING_SECRET` > `slack.signingSecret` > (disabled)
   - `SLACK_INTERACTION_PORT` > `slack.interactionPort` > `3201`
+  - `SLACK_INTERACTION_HOST` > `slack.interactionHost` > `0.0.0.0`
 - **Request verification:** Every incoming webhook request is verified using Slack's `v0=` HMAC-SHA256 scheme before any payload is processed:
   ```
   base_string = "v0:" + X-Slack-Request-Timestamp + ":" + raw_body

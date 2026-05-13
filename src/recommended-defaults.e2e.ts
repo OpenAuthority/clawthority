@@ -25,7 +25,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { exec as execCb } from 'node:child_process';
-import { rm, readFile, writeFile, access } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, readFile, writeFile, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -41,10 +41,6 @@ import type { HitlPolicyConfig } from './hitl/types.js';
 const exec = promisify(execCb);
 const __fileDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__fileDir, '..');
-const dataDir = resolve(repoRoot, 'data');
-const realRulesPath = resolve(dataDir, 'rules.json');
-const realMarkerPath = resolve(dataDir, '.installed');
-const realExamplePath = resolve(dataDir, 'hitl-policy.yaml.example');
 const NO_JSON_RULES_FILE = '/tmp/clawthority-recommended-defaults-no-rules.json';
 const NO_AUTO_PERMITS_FILE = '/tmp/clawthority-recommended-defaults-no-auto-permits.json';
 
@@ -220,40 +216,17 @@ const EXAMPLE_HITL_YAML = [
 // ─── Suite 1: post-install artifacts ─────────────────────────────────────────
 
 describe('recommended defaults — post-install artifacts', () => {
-  // Snapshot pre-test state so we can restore it afterwards regardless of
-  // test outcome.  TC-RD-01 and TC-RD-02 mutate data/rules.json directly.
-  let savedRules: string | null = null;
-  let savedMarker: string | null = null;
-  let savedExample: string | null = null;
+  let installRoot: string;
+  let installRulesPath: string;
 
   beforeEach(async () => {
-    savedRules = (await fileExists(realRulesPath))
-      ? await readFile(realRulesPath, 'utf-8')
-      : null;
-    savedMarker = (await fileExists(realMarkerPath))
-      ? await readFile(realMarkerPath, 'utf-8')
-      : null;
-    savedExample = (await fileExists(realExamplePath))
-      ? await readFile(realExamplePath, 'utf-8')
-      : null;
+    installRoot = await mkdtemp(join(tmpdir(), 'clawthority-post-install-'));
+    installRulesPath = resolve(installRoot, 'data', 'rules.json');
+    await mkdir(resolve(installRoot, 'data'), { recursive: true });
   });
 
   afterEach(async () => {
-    if (savedRules !== null) {
-      await writeFile(realRulesPath, savedRules, 'utf-8');
-    } else {
-      await rm(realRulesPath, { force: true });
-    }
-    if (savedMarker !== null) {
-      await writeFile(realMarkerPath, savedMarker, 'utf-8');
-    } else {
-      await rm(realMarkerPath, { force: true });
-    }
-    if (savedExample !== null) {
-      await writeFile(realExamplePath, savedExample, 'utf-8');
-    } else {
-      await rm(realExamplePath, { force: true });
-    }
+    await rm(installRoot, { force: true, recursive: true });
   });
 
   // ── TC-RD-01 ────────────────────────────────────────────────────────────────
@@ -261,14 +234,14 @@ describe('recommended defaults — post-install artifacts', () => {
   it(
     'TC-RD-01: fresh install creates data/rules.json with unknown_sensitive_action forbid at priority 90',
     async () => {
-      // Remove rules.json so post-install treats this as a fresh install.
-      await rm(realRulesPath, { force: true });
-
-      const { stdout } = await exec('node scripts/post-install.mjs', { cwd: repoRoot });
+      const { stdout } = await exec('node scripts/post-install.mjs', {
+        cwd: repoRoot,
+        env: { ...process.env, CLAWTHORITY_POST_INSTALL_ROOT: installRoot },
+      });
       expect(stdout).toContain('created data/rules.json');
 
-      expect(await fileExists(realRulesPath)).toBe(true);
-      const raw = await readFile(realRulesPath, 'utf-8');
+      expect(await fileExists(installRulesPath)).toBe(true);
+      const raw = await readFile(installRulesPath, 'utf-8');
       const rules: unknown[] = JSON.parse(raw);
 
       expect(Array.isArray(rules)).toBe(true);
@@ -296,13 +269,16 @@ describe('recommended defaults — post-install artifacts', () => {
           null,
           2,
         ) + '\n';
-      await writeFile(realRulesPath, customContent, 'utf-8');
+      await writeFile(installRulesPath, customContent, 'utf-8');
 
-      const { stdout } = await exec('node scripts/post-install.mjs', { cwd: repoRoot });
+      const { stdout } = await exec('node scripts/post-install.mjs', {
+        cwd: repoRoot,
+        env: { ...process.env, CLAWTHORITY_POST_INSTALL_ROOT: installRoot },
+      });
       expect(stdout).toContain('already exists');
 
       // Verify the custom content was NOT overwritten.
-      const afterContent = await readFile(realRulesPath, 'utf-8');
+      const afterContent = await readFile(installRulesPath, 'utf-8');
       expect(afterContent).toBe(customContent);
     },
     15_000,
