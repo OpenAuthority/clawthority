@@ -11,7 +11,7 @@
 > document, not operational documentation.
 >
 > **What v1.3.4 actually provides:**
-> - Audit access: tail / query [`data/audit.jsonl`](configuration.md#audit-logging)
+> - Audit access: tail / query [`data/audit.jsonl`](configuration.md#audit-log)
 > - Rule management: edit `data/rules.json` (hot-reload via watcher)
 > - Auto-permit management: Telegram `/approve_always` / `/revoke`, or `npm run list-auto-permits` / `revoke-auto-permit` etc.
 > - HITL approval routing: `hitl-policy.yaml` (hot-reload)

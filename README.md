@@ -122,7 +122,7 @@ Run your agent. A `shell.exec` call now terminates at the boundary:
 [clawthority] │ DECISION: BLOCKED (cedar/forbid priority=100 rule=action:shell.exec) - Shell execution is unconditionally forbidden
 ```
 
-Every block - plus every HITL outcome - is appended to `data/audit.jsonl` as structured JSONL with `stage`, `rule`, `priority`, and `mode` fields. See [docs/troubleshooting.md](docs/troubleshooting.md#total-lockout-recovery) for the recovery runbook.
+Every block - plus every HITL outcome - is appended to `data/audit.jsonl` as structured JSONL with `stage`, `rule`, `priority`, and `mode` fields. See [docs/troubleshooting.md](docs/troubleshooting.md#total-lockout-recovery--everything-is-blocked-i-cannot-fix-the-policy) for the recovery runbook.
 
 > [!TIP]
 > `data/rules.json` and `hitl-policy.yaml` hot-reload within ~300ms. Anything else under `src/` requires a gateway restart.
@@ -239,7 +239,7 @@ Runtime behaviour is configured through three surfaces:
 
 Structured decisions land in `data/audit.jsonl` - each block carries `stage`, `rule`, `priority`, and `mode` fields for post-mortem analysis.
 
-Full schema and environment-variable overrides: [docs/configuration.md](docs/configuration.md). Recovery runbook for lockouts: [docs/troubleshooting.md](docs/troubleshooting.md#total-lockout-recovery).
+Full schema and environment-variable overrides: [docs/configuration.md](docs/configuration.md). Recovery runbook for lockouts: [docs/troubleshooting.md](docs/troubleshooting.md#total-lockout-recovery--everything-is-blocked-i-cannot-fix-the-policy).
 
 ### Feature flags
 
