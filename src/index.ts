@@ -314,6 +314,7 @@ export type BeforeModelResolveHandler = (
 // ─── Plugin interfaces ────────────────────────────────────────────────────────
 
 export interface OpenclawPlugin {
+  id: string;
   name: string;
   version: string;
   activate(context: OpenclawPluginContext): void | Promise<void>;
@@ -2244,7 +2245,20 @@ function registerDeleteFileTool(api: OpenclawPluginContext): void {
   }, { name: "delete_file" });
 }
 
+function registerLifecycleHooks(ctx: OpenclawPluginContext): void {
+  ctx.on("before_tool_call", beforeToolCallHandler, { name: "clawthority:before_tool_call" });
+  ctx.on("before_prompt_build", beforePromptBuildHandler, { name: "clawthority:before_prompt_build" });
+  ctx.on("before_model_resolve", beforeModelResolveHandler, { name: "clawthority:before_model_resolve" });
+
+  if (ctx.registerHook === ctx.on) return;
+
+  ctx.registerHook("before_tool_call", beforeToolCallHandler, { name: "clawthority:before_tool_call" });
+  ctx.registerHook("before_prompt_build", beforePromptBuildHandler, { name: "clawthority:before_prompt_build" });
+  ctx.registerHook("before_model_resolve", beforeModelResolveHandler, { name: "clawthority:before_model_resolve" });
+}
+
 const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void } = {
+  id: "clawthority",
   name: "clawthority",
   // Single source of truth: package.json (read by getVersionInfo at activation).
   version: getVersionInfo().version,
@@ -2265,9 +2279,7 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
     registerDeleteFileTool(api);
 
     // 1. Register hooks synchronously — the Cedar engine is already populated.
-    api.on("before_tool_call", beforeToolCallHandler, { name: "clawthority:before_tool_call" });
-    api.on("before_prompt_build", beforePromptBuildHandler, { name: "clawthority:before_prompt_build" });
-    api.on("before_model_resolve", beforeModelResolveHandler, { name: "clawthority:before_model_resolve" });
+    registerLifecycleHooks(api);
 
     // 2. Async init — deferred, non-blocking. Call activate directly (not via
     // `this`) to avoid losing context when OpenClaw invokes register().
@@ -2294,9 +2306,7 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
     // The global hook runner is overwritten on each loadOpenClawPlugins call,
     // so we must register into every registry to ensure the hook is present
     // in whichever registry ends up as the active one.
-    ctx.on("before_tool_call", beforeToolCallHandler, { name: "clawthority:before_tool_call" });
-    ctx.on("before_prompt_build", beforePromptBuildHandler, { name: "clawthority:before_prompt_build" });
-    ctx.on("before_model_resolve", beforeModelResolveHandler, { name: "clawthority:before_model_resolve" });
+    registerLifecycleHooks(ctx);
 
     // ── Guard: side effects (watchers, engines) only once ────────────────────
     if (activated) {

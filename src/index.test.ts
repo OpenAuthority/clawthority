@@ -162,6 +162,7 @@ describe('beforeToolCallHandler — unit coverage', () => {
     delete process.env.OPENAUTH_FORCE_ACTIVE;
     delete process.env.CLAWTHORITY_RULES_FILE;
     delete process.env.CLAWTHORITY_AUTO_PERMIT_STORE;
+    delete process.env.npm_lifecycle_event;
   });
 
   afterEach(async () => {
@@ -169,6 +170,7 @@ describe('beforeToolCallHandler — unit coverage', () => {
     delete process.env.OPENAUTH_FORCE_ACTIVE;
     delete process.env.CLAWTHORITY_RULES_FILE;
     delete process.env.CLAWTHORITY_AUTO_PERMIT_STORE;
+    delete process.env.npm_lifecycle_event;
     vi.doUnmock('./hitl/parser.js');
     for (const path of tempFiles) {
       await rm(path, { force: true }).catch(() => undefined);
@@ -177,6 +179,41 @@ describe('beforeToolCallHandler — unit coverage', () => {
   });
 
   // ── Permit path (filesystem.read in OPEN mode) ────────────────────────────
+
+  it('exposes a stable plugin id and registers hooks through typed and legacy APIs', async () => {
+    delete process.env.OPENAUTH_FORCE_ACTIVE;
+    process.env.npm_lifecycle_event = 'install';
+    vi.resetModules();
+    const mod = (await import('./index.js')) as {
+      default: {
+        id: string;
+        register: (ctx: OpenclawPluginContext) => void;
+      };
+    };
+
+    const on = vi.fn();
+    const registerHook = vi.fn();
+    const ctx = {
+      on,
+      registerHook,
+    } as unknown as OpenclawPluginContext;
+
+    expect(mod.default.id).toBe('clawthority');
+    mod.default.register(ctx);
+
+    expect(on).toHaveBeenCalledTimes(3);
+    expect(registerHook).toHaveBeenCalledTimes(3);
+    expect(on.mock.calls.map((call) => call[0])).toEqual([
+      'before_tool_call',
+      'before_prompt_build',
+      'before_model_resolve',
+    ]);
+    expect(registerHook.mock.calls.map((call) => call[0])).toEqual([
+      'before_tool_call',
+      'before_prompt_build',
+      'before_model_resolve',
+    ]);
+  });
 
   it('permits a filesystem.read call in OPEN mode and writes no audit entry', async () => {
     const handler = await loadPlugin({ mode: 'open' });

@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Mode switches between `open` and `closed` now hot-reload via `data/mode.json`, rebuilding the policy engine with the matching `defaultEffect` and baseline rules without requiring a plugin restart.
+- The runtime plugin now exposes a stable `id` and registers lifecycle hooks through both typed and legacy hook APIs, so hook wiring survives registry refreshes that use either path.
 - Synchronized package, lockfile, and OpenClaw manifest version metadata for the 1.3.4 release.
 
 ## [1.3.3] — 2026-05-07

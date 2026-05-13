@@ -19,7 +19,8 @@
     ],
     "hooks": [
       "before_tool_call",
-      "before_prompt_build"
+      "before_prompt_build",
+      "before_model_resolve"
     ],
     "installPath": "~/.openclaw/plugins/clawthority",
     "postInstall": {
@@ -30,12 +31,14 @@
       "reads": [
         "data/bundles/active/",
         "data/bundles/proposals/",
+        "data/mode.json",
         "data/rules.json",
         "hitl-policy.yaml",
         "data/.installed"
       ],
       "writes": [
         "data/.installed",
+        "data/mode.json",
         "data/audit.jsonl",
         "data/budget.jsonl"
       ]
