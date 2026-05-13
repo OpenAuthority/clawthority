@@ -59,7 +59,7 @@
       "enum": ["open", "closed"],
       "required": false,
       "default": "open",
-      "description": "Install mode. `open` = implicit permit + critical-forbid safety net; `closed` = implicit deny, explicit permits required. Read once at activation; restart to change."
+      "description": "Initial install mode. `open` = implicit permit + critical-forbid safety net; `closed` = implicit deny, explicit permits required. Runtime switches can be applied by writing data/mode.json."
     },
     "CLAWTHORITY_RULES_FILE": {
       "type": "string",

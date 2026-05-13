@@ -40,7 +40,7 @@ export { PolicyEngine as CedarPolicyEngine } from "./policy/engine.js";
 export type { EvaluationDecision, EvaluationEffect } from "./policy/engine.js";
 export type { Rule, RuleContext, Resource, Effect, RateLimit } from "./policy/types.js";
 export { default as defaultRules, mergeRules, OPEN_MODE_RULES } from "./policy/rules.js";
-export { resolveMode, modeToDefaultEffect } from "./policy/mode.js";
+export { resolveMode, resolveModeValue, modeToDefaultEffect } from "./policy/mode.js";
 export type { ClawMode } from "./policy/mode.js";
 export { resolveFeatureFlags } from "./features.js";
 export type { FeatureFlags } from "./features.js";
@@ -162,7 +162,7 @@ import type { AutoPermitAddedEntry, AutoPermitDerivationSkippedEntry, AutoPermit
 import { PolicyEngine as CedarPolicyEngine } from "./policy/engine.js";
 import type { Rule, RuleContext } from "./policy/types.js";
 import defaultRules, { OPEN_MODE_RULES } from "./policy/rules.js";
-import { resolveMode, modeToDefaultEffect, type ClawMode } from "./policy/mode.js";
+import { resolveMode, resolveModeValue, modeToDefaultEffect, type ClawMode } from "./policy/mode.js";
 import { resolveFeatureFlags, type FeatureFlags } from "./features.js";
 import { startRulesWatcher, type WatcherHandle } from "./watcher.js";
 import { CoverageMap } from "./policy/coverage.js";
@@ -178,7 +178,7 @@ import { sendConsoleApprovalRequest } from "./hitl/console.js";
 import { explainCommand } from "./hitl/command-explainer.js";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve, dirname, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BUILD_VERSION, BUILD_COMMIT, BUILD_DIRTY, BUILD_AT } from "./build-info.js";
@@ -424,13 +424,44 @@ function detectPromptInjection(messages?: unknown[]): boolean {
  * - `closed`  — implicit deny. Ship the full {@link defaultRules}. User adds
  *               permit rules to open things up.
  *
- * Read once at module load from `CLAWTHORITY_MODE` env var. Default is `open`
- * so a fresh install works out-of-the-box without every tool call hitting an
- * implicit deny. Change requires a plugin restart.
+ * Initially read from data/mode.json when present, otherwise from
+ * `CLAWTHORITY_MODE`. The hot-reload watcher can switch it at runtime from
+ * data/mode.json and rebuild the engine atomically.
  */
-const MODE: ClawMode = resolveMode();
-const DEFAULT_EFFECT: 'permit' | 'forbid' = modeToDefaultEffect(MODE);
-const ACTIVE_RULES: Rule[] = MODE === 'open' ? OPEN_MODE_RULES : defaultRules;
+function resolveInitialMode(): ClawMode {
+  const envMode = resolveMode();
+  try {
+    const moduleDir = dirname(fileURLToPath(import.meta.url));
+    const modePath = resolve(moduleDir, "..", "data", "mode.json");
+    if (!existsSync(modePath)) return envMode;
+    const raw = readFileSync(modePath, "utf-8").trim();
+    if (raw.length === 0) return envMode;
+    const parsed: unknown = JSON.parse(raw);
+    const rawMode = typeof parsed === 'string'
+      ? parsed
+      : parsed !== null && typeof parsed === 'object' && 'mode' in parsed
+        ? (parsed as { mode?: unknown }).mode
+        : undefined;
+    return resolveModeValue(rawMode, 'data/mode.json');
+  } catch (err) {
+    console.warn("[plugin:clawthority] failed to read data/mode.json; using CLAWTHORITY_MODE:", err);
+    return envMode;
+  }
+}
+
+let activeMode: ClawMode = resolveInitialMode();
+
+function activeDefaultEffect(): 'permit' | 'forbid' {
+  return modeToDefaultEffect(activeMode);
+}
+
+function activeRules(): Rule[] {
+  return activeMode === 'open' ? OPEN_MODE_RULES : defaultRules;
+}
+
+function setActiveMode(mode: ClawMode): void {
+  activeMode = mode;
+}
 
 /**
  * Feature flags resolved once at module load.
@@ -439,8 +470,8 @@ const ACTIVE_RULES: Rule[] = MODE === 'open' ? OPEN_MODE_RULES : defaultRules;
 const FEATURES: FeatureFlags = resolveFeatureFlags();
 
 console.log(
-  `[clawthority] mode: ${MODE.toUpperCase()} (${
-    MODE === 'open'
+  `[clawthority] mode: ${activeMode.toUpperCase()} (${
+    activeMode === 'open'
       ? 'implicit permit; critical forbids enforced'
       : 'implicit deny; explicit permits required'
   })`
@@ -455,9 +486,9 @@ console.log(
  *  mode (fail-closed), `permit` in open mode (fail-open with a critical-forbid
  *  safety net). */
 const cedarEngineRef: { current: CedarPolicyEngine } = {
-  current: new CedarPolicyEngine({ defaultEffect: DEFAULT_EFFECT }),
+  current: new CedarPolicyEngine({ defaultEffect: activeDefaultEffect() }),
 };
-cedarEngineRef.current.addRules(ACTIVE_RULES);
+cedarEngineRef.current.addRules(activeRules());
 
 /**
  * Phase 2: CoverageMap tracks every (resource, name) pair evaluated by the
@@ -467,8 +498,8 @@ cedarEngineRef.current.addRules(ACTIVE_RULES);
 export const coverageMap = new CoverageMap();
 
 // Log compiled rules at startup
-console.log(`[clawthority] compiled rules (${ACTIVE_RULES.length}):`);
-for (const r of ACTIVE_RULES) {
+console.log(`[clawthority] compiled rules (${activeRules().length}):`);
+for (const r of activeRules()) {
   // Rules are either Cedar-style (resource + match) or Stage-2 (action_class).
   const target = r.action_class
     ? `action:${r.action_class}`
@@ -1785,7 +1816,7 @@ const beforeToolCallHandler: BeforeToolCallHandler = async ({ toolName, params, 
     agentId: identity.auditAgentId,
     channel: identity.auditChannel,
     verified: identity.verified,
-    mode: MODE,
+    mode: activeMode,
   } as const;
 
   // ── Build PipelineContext ─────────────────────────────────────────────────
@@ -2226,7 +2257,8 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
    * watchers, HITL, budget tracker) as a fire-and-forget Promise that logs
    * errors but never throws. This guarantees before_tool_call fires even on
    * the first tool call during startup, before async init completes — the
-   * Cedar engine is already populated at module load time with ACTIVE_RULES.
+   * Cedar engine is already populated at module load time with the active
+   * mode's baseline rules.
    */
   register(api: OpenclawPluginContext) {
     captureOpenClawRuntime(api);
@@ -2295,7 +2327,20 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
     console.log(`|  root:       ${displayRoot}`.padEnd(63) + "|");
     console.log("+--------------------------------------------------------------+");
 
-    rulesWatcher = startRulesWatcher(cedarEngineRef, 300, undefined, { defaultEffect: DEFAULT_EFFECT }, ACTIVE_RULES, coverageMap);
+    rulesWatcher = startRulesWatcher(
+      cedarEngineRef,
+      300,
+      undefined,
+      { defaultEffect: activeDefaultEffect() },
+      activeRules(),
+      coverageMap,
+      {
+        getMode: () => activeMode,
+        setMode: setActiveMode,
+        getBaseRules: activeRules,
+        getEngineOptions: () => ({ defaultEffect: activeDefaultEffect() }),
+      },
+    );
 
     // Load user-defined JSON rules from data/rules.json into the dedicated
     // JSON Cedar engine. Awaited so the engine is populated before the host
@@ -2375,7 +2420,7 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
       console.log(`|    - ${h} (disabled)`.padEnd(63) + "|");
     }
     console.log("+--------------------------------------------------------------+");
-    const modeLabel = MODE === 'open'
+    const modeLabel = activeMode === 'open'
       ? 'OPEN   (implicit permit; critical forbids enforced)'
       : 'CLOSED (implicit deny; explicit permits required)';
     console.log(`|  MODE: ${modeLabel.padEnd(54)}|`);
@@ -2684,7 +2729,7 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
     // "no operator forbid" — correct because an absent rules.json means no
     // operator-supplied constraints at all.
     logOpenModeRecommendation(
-      MODE,
+      activeMode,
       jsonRulesEngineRef.current?.rules ?? null,
       hitlConfigRef.current,
     );

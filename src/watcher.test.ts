@@ -2,8 +2,8 @@
  * Phase 1 unit tests — watcher.ts
  *
  * Covers:
- *   - startRulesWatcher creates chokidar watchers for TS rules and JSON rules
- *   - WatcherHandle.stop closes both watchers and clears timers
+ *   - startRulesWatcher creates chokidar watchers for TS rules, JSON rules, bundle, and mode
+ *   - WatcherHandle.stop closes all watchers and clears timers
  *   - Debounce behaviour for JSON rule change / add events
  *   - Initial JSON rules load updates engineRef when rules are present
  */
@@ -122,10 +122,10 @@ describe('startRulesWatcher', () => {
 
   // ── Watcher creation ────────────────────────────────────────────────────────
 
-  it('creates exactly three chokidar watchers', () => {
+  it('creates exactly four chokidar watchers', () => {
     startRulesWatcher(engineRef);
-    expect(mockWatch).toHaveBeenCalledTimes(3);
-    expect(createdWatchers).toHaveLength(3);
+    expect(mockWatch).toHaveBeenCalledTimes(4);
+    expect(createdWatchers).toHaveLength(4);
   });
 
   it('first watcher targets the policy/rules directory', () => {
@@ -144,6 +144,12 @@ describe('startRulesWatcher', () => {
     startRulesWatcher(engineRef);
     const [thirdPath] = mockWatch.mock.calls[2] as [string];
     expect(thirdPath).toMatch(/bundle\.json$/);
+  });
+
+  it('fourth watcher targets data/mode.json', () => {
+    startRulesWatcher(engineRef);
+    const [fourthPath] = mockWatch.mock.calls[3] as [string];
+    expect(fourthPath).toMatch(/mode\.json$/);
   });
 
   it('all watchers are configured with persistent:false and ignoreInitial:true', () => {
@@ -189,6 +195,7 @@ describe('startRulesWatcher', () => {
       expect(createdWatchers[0].close).toHaveBeenCalled();
       expect(createdWatchers[1].close).toHaveBeenCalled();
       expect(createdWatchers[2].close).toHaveBeenCalled();
+      expect(createdWatchers[3].close).toHaveBeenCalled();
     });
 
     it('returns a resolving Promise', async () => {
@@ -351,6 +358,46 @@ describe('startRulesWatcher', () => {
       onUnlink();
       vi.advanceTimersByTime(100);
 
+      expect(engineRef.current).not.toBe(before);
+    });
+  });
+
+  // ── Mode watcher events ────────────────────────────────────────────────────
+
+  describe('mode watcher change event', () => {
+    it('rebuilds engine with dynamic mode options after debounce', () => {
+      vi.useFakeTimers();
+      vi.mocked(existsSync).mockImplementation((path) => String(path).endsWith('mode.json'));
+      vi.mocked(readFileSync).mockImplementation((path) => (
+        String(path).endsWith('mode.json') ? JSON.stringify({ mode: 'closed' }) : '[]'
+      ));
+
+      let mode: 'open' | 'closed' = 'open';
+      startRulesWatcher(
+        engineRef,
+        100,
+        undefined,
+        { defaultEffect: 'permit' },
+        [],
+        undefined,
+        {
+          getMode: () => mode,
+          setMode: (next) => { mode = next; },
+          getBaseRules: () => mode === 'closed'
+            ? [{ effect: 'permit', action_class: 'filesystem.read' }]
+            : [],
+          getEngineOptions: () => ({ defaultEffect: mode === 'closed' ? 'forbid' : 'permit' }),
+        },
+      );
+
+      const modeWatcher = createdWatchers[3];
+      const onChange = getHandler(modeWatcher, 'change');
+      const before = engineRef.current;
+
+      onChange();
+      vi.advanceTimersByTime(100);
+
+      expect(mode).toBe('closed');
       expect(engineRef.current).not.toBe(before);
     });
   });

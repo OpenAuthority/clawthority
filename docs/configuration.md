@@ -676,12 +676,20 @@ Controls the plugin's policy posture at activation and the install-phase bypass 
 | Variable | Default | Description |
 |---|---|---|
 | `OPENAUTH_FORCE_ACTIVE` | _(unset)_ | Set to `'1'` to suppress the install-phase enforcement bypass. Without this, enforcement is suspended while `npm_lifecycle_event` is one of `install`, `preinstall`, `postinstall`, or `prepare`. **Must be set to `'1'` in all production deployments.** See [Operator Security Guide — F-01](operator-security-guide.md#f-01-openauth_force_active-configuration). |
-| `CLAWTHORITY_MODE` | `open` | `open` — implicit permit with a critical-forbid safety net (six action classes: `shell.exec`, `code.execute`, `payment.initiate`, `credential.read`, `credential.write`, `unknown_sensitive_action`). `closed` — implicit deny, user adds explicit `permit` rules. Any other value logs a warning and falls back to `open`. Case- and whitespace-insensitive. Read once at module load — **restart the plugin to change modes.** |
+| `CLAWTHORITY_MODE` | `open` | Initial mode. `open` — implicit permit with a critical-forbid safety net (six action classes: `shell.exec`, `code.execute`, `payment.initiate`, `credential.read`, `credential.write`, `credential.rotate`). `closed` — implicit deny, user adds explicit `permit` rules. Any other value logs a warning and falls back to `open`. Case- and whitespace-insensitive. |
 | `CLAWTHORITY_DISABLE_APPROVE_ALWAYS` | _(unset)_ | Set to `'1'` to hide the Approve Always button on every HITL channel (Telegram, Slack, console) and prevent creation of new session-scoped auto-permits. Existing entries in `data/auto-permits.json` continue to be honoured — only creation of new ones is blocked. Read once at module load — **restart the plugin to change.** |
 | `CLAWTHORITY_APPROVE_ALWAYS_AUTO_CONFIRM` | _(unset)_ | Set to `'1'` to skip the Save / Cancel confirmation step of the Approve Always flow. The derived permit pattern is saved immediately when the operator taps the Approve Always button. Use only when you trust the derivation algorithm in your environment. Read once at module load — **restart the plugin to change.** |
 | `CLAWTHORITY_HITL_MINIMAL` | _(unset)_ | Set to `'1'` to suppress the rich body sections (explainer summary, effects, warnings, intent-hint, command block) from HITL approval messages, falling back to the v1.2.x minimal style. Buttons (including Approve Always) continue to work — only the body collapses. Useful as a §16 rollback escape hatch when the command explainer produces confusing output. Read once at module load — **restart the plugin to change.** |
 
 Mode only affects Stage 2 policy evaluation and which default rule set is loaded. Stage 1 (capability gate, protected paths, HITL binding) fails closed in both modes regardless.
+
+To switch modes without restarting, write `data/mode.json` in the plugin root. The watcher reloads it within the normal debounce window and rebuilds the policy engine with the matching `defaultEffect` and baseline rules in a single swap:
+
+```json
+{ "mode": "closed" }
+```
+
+The file may also contain a JSON string such as `"open"`. When present, `data/mode.json` is also honored on the next startup; otherwise `CLAWTHORITY_MODE` supplies the initial mode. Deleting `data/mode.json` leaves the current runtime mode unchanged until the next explicit mode update or restart.
 
 #### Mode-to-rule-set mapping
 
