@@ -155,6 +155,12 @@
       "required": false,
       "default": 3201,
       "description": "Port the Slack interactive webhook server binds to when Slack HITL is enabled."
+    },
+    "SLACK_INTERACTION_HOST": {
+      "type": "string",
+      "required": false,
+      "default": "0.0.0.0",
+      "description": "Host/interface the Slack interactive webhook server binds to when Slack HITL is enabled."
     }
   },
   "configSchema": {
@@ -259,6 +265,11 @@
                 "type": "number",
                 "description": "Port for the Slack webhook interaction server",
                 "default": 3201
+              },
+              "interactionHost": {
+                "type": "string",
+                "description": "Host/interface for the Slack webhook interaction server",
+                "default": "0.0.0.0"
               }
             },
             "additionalProperties": false

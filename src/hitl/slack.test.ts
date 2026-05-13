@@ -23,6 +23,7 @@ describe('resolveSlackConfig', () => {
     delete process.env.SLACK_BOT_TOKEN;
     delete process.env.SLACK_CHANNEL_ID;
     delete process.env.SLACK_SIGNING_SECRET;
+    delete process.env.SLACK_INTERACTION_HOST;
     expect(resolveSlackConfig()).toBeNull();
     expect(resolveSlackConfig({})).toBeNull();
   });
@@ -32,11 +33,13 @@ describe('resolveSlackConfig', () => {
     delete process.env.SLACK_CHANNEL_ID;
     delete process.env.SLACK_SIGNING_SECRET;
     delete process.env.SLACK_INTERACTION_PORT;
+    delete process.env.SLACK_INTERACTION_HOST;
     const config: SlackConfig = {
       botToken: 'xoxb-cfg',
       channelId: 'C123',
       signingSecret: 'secret-cfg',
       interactionPort: 4000,
+      interactionHost: '127.0.0.1',
     };
     const result = resolveSlackConfig(config);
     expect(result).toEqual({
@@ -44,6 +47,7 @@ describe('resolveSlackConfig', () => {
       channelId: 'C123',
       signingSecret: 'secret-cfg',
       interactionPort: 4000,
+      interactionHost: '127.0.0.1',
     });
   });
 
@@ -52,11 +56,13 @@ describe('resolveSlackConfig', () => {
     process.env.SLACK_CHANNEL_ID = 'C999';
     process.env.SLACK_SIGNING_SECRET = 'secret-env';
     process.env.SLACK_INTERACTION_PORT = '5000';
+    process.env.SLACK_INTERACTION_HOST = '127.0.0.1';
     const config: SlackConfig = {
       botToken: 'xoxb-cfg',
       channelId: 'C123',
       signingSecret: 'secret-cfg',
       interactionPort: 4000,
+      interactionHost: '0.0.0.0',
     };
     const result = resolveSlackConfig(config);
     expect(result).toEqual({
@@ -64,6 +70,7 @@ describe('resolveSlackConfig', () => {
       channelId: 'C999',
       signingSecret: 'secret-env',
       interactionPort: 5000,
+      interactionHost: '127.0.0.1',
     });
   });
 
@@ -76,6 +83,7 @@ describe('resolveSlackConfig', () => {
 
   it('defaults interactionPort to 3201', () => {
     delete process.env.SLACK_INTERACTION_PORT;
+    delete process.env.SLACK_INTERACTION_HOST;
     const config: SlackConfig = {
       botToken: 'xoxb-test',
       channelId: 'C123',
@@ -83,13 +91,14 @@ describe('resolveSlackConfig', () => {
     };
     const result = resolveSlackConfig(config);
     expect(result?.interactionPort).toBe(3201);
+    expect(result?.interactionHost).toBe('0.0.0.0');
   });
 });
 
 // ─── sendSlackApprovalRequest ───────────────────────────────────────────────
 
 describe('sendSlackApprovalRequest', () => {
-  const config = { botToken: 'xoxb-test', channelId: 'C123', signingSecret: 'secret', interactionPort: 3201 };
+  const config = { botToken: 'xoxb-test', channelId: 'C123', signingSecret: 'secret', interactionPort: 3201, interactionHost: '0.0.0.0' };
   const opts = {
     token: 'abc12345',
     toolName: 'email.send',
@@ -313,7 +322,7 @@ describe('sendSlackApprovalRequest', () => {
 });
 
 describe('sendSlackConfirmation', () => {
-  const config = { botToken: 'xoxb-test', channelId: 'C123', signingSecret: 'secret', interactionPort: 3201 };
+  const config = { botToken: 'xoxb-test', channelId: 'C123', signingSecret: 'secret', interactionPort: 3201, interactionHost: '0.0.0.0' };
 
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn());
@@ -395,6 +404,7 @@ describe('verifySlackSignature', () => {
 
 describe('SlackInteractionServer', () => {
   const signingSecret = 'test-secret';
+  const host = '127.0.0.1';
   let server: SlackInteractionServer;
   let onAction: ReturnType<typeof vi.fn>;
   let port: number;
@@ -410,7 +420,7 @@ describe('SlackInteractionServer', () => {
     // runs test files in parallel workers; a hardcoded or randomly-chosen
     // port hits EADDRINUSE often enough to break CI flakily. The actual
     // bound port is read back via server.address() after start() resolves.
-    server = new SlackInteractionServer(0, signingSecret, onAction);
+    server = new SlackInteractionServer(0, signingSecret, onAction, host);
     await server.start();
     port = server.address().port;
   });
@@ -428,7 +438,7 @@ describe('SlackInteractionServer', () => {
     const ts = String(Math.floor(Date.now() / 1000));
     const sig = makeSignature(ts, body);
 
-    const res = await fetch(`http://localhost:${port}/slack/interactions`, {
+    const res = await fetch(`http://${host}:${port}/slack/interactions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -453,7 +463,7 @@ describe('SlackInteractionServer', () => {
     const ts = String(Math.floor(Date.now() / 1000));
     const sig = makeSignature(ts, body);
 
-    const res = await fetch(`http://localhost:${port}/slack/interactions`, {
+    const res = await fetch(`http://${host}:${port}/slack/interactions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -477,7 +487,7 @@ describe('SlackInteractionServer', () => {
     const ts = String(Math.floor(Date.now() / 1000));
     const sig = makeSignature(ts, body);
 
-    const res = await fetch(`http://localhost:${port}/slack/interactions`, {
+    const res = await fetch(`http://${host}:${port}/slack/interactions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -502,7 +512,7 @@ describe('SlackInteractionServer', () => {
     const ts = String(Math.floor(Date.now() / 1000));
     const sig = makeSignature(ts, body);
 
-    const res = await fetch(`http://localhost:${port}/slack/interactions`, {
+    const res = await fetch(`http://${host}:${port}/slack/interactions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -527,7 +537,7 @@ describe('SlackInteractionServer', () => {
     const ts = String(Math.floor(Date.now() / 1000));
     const sig = makeSignature(ts, body);
 
-    const res = await fetch(`http://localhost:${port}/slack/interactions`, {
+    const res = await fetch(`http://${host}:${port}/slack/interactions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -550,7 +560,7 @@ describe('SlackInteractionServer', () => {
     const body = `payload=${encodeURIComponent(payload)}`;
     const ts = String(Math.floor(Date.now() / 1000));
 
-    const res = await fetch(`http://localhost:${port}/slack/interactions`, {
+    const res = await fetch(`http://${host}:${port}/slack/interactions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -565,12 +575,12 @@ describe('SlackInteractionServer', () => {
   });
 
   it('returns 404 for non-interaction paths', async () => {
-    const res = await fetch(`http://localhost:${port}/other-path`, { method: 'POST' });
+    const res = await fetch(`http://${host}:${port}/other-path`, { method: 'POST' });
     expect(res.status).toBe(404);
   });
 
   it('returns 404 for GET on the interactions path', async () => {
-    const res = await fetch(`http://localhost:${port}/slack/interactions`, { method: 'GET' });
+    const res = await fetch(`http://${host}:${port}/slack/interactions`, { method: 'GET' });
     expect(res.status).toBe(404);
   });
 
@@ -581,7 +591,7 @@ describe('SlackInteractionServer', () => {
     const ts = String(Math.floor(Date.now() / 1000));
     const sig = makeSignature(ts, body);
 
-    const res = await fetch(`http://localhost:${port}/slack/interactions`, {
+    const res = await fetch(`http://${host}:${port}/slack/interactions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -601,7 +611,7 @@ describe('SlackInteractionServer', () => {
     const ts = String(Math.floor(Date.now() / 1000));
     const sig = makeSignature(ts, body);
 
-    const res = await fetch(`http://localhost:${port}/slack/interactions`, {
+    const res = await fetch(`http://${host}:${port}/slack/interactions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -620,12 +630,12 @@ describe('SlackInteractionServer', () => {
     // Already started in beforeEach, just verify stop works cleanly
     await server.stop();
     // Re-create for afterEach to not error
-    server = new SlackInteractionServer(port, signingSecret, onAction);
+    server = new SlackInteractionServer(port, signingSecret, onAction, host);
     await server.start();
   });
 
   it('stop() is a no-op when the server was never started', async () => {
-    const fresh = new SlackInteractionServer(port + 1, signingSecret, onAction);
+    const fresh = new SlackInteractionServer(port + 1, signingSecret, onAction, host);
     await expect(fresh.stop()).resolves.toBeUndefined();
   });
 
@@ -633,7 +643,7 @@ describe('SlackInteractionServer', () => {
     await server.stop();
     await expect(server.stop()).resolves.toBeUndefined();
     // Re-create for afterEach to not error
-    server = new SlackInteractionServer(port, signingSecret, onAction);
+    server = new SlackInteractionServer(port, signingSecret, onAction, host);
     await server.start();
   });
 });

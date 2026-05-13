@@ -2701,9 +2701,10 @@ const plugin: OpenclawPlugin & { register?: (api: OpenclawPluginContext) => void
               console.log(`[hitl-slack] unknown or expired token: ${token}`);
             }
           },
+          slackConfig.interactionHost,
         );
         await slackInteractionServer.start();
-        listeners.push(`Slack (port ${slackConfig.interactionPort})`);
+        listeners.push(`Slack (${slackConfig.interactionHost}:${slackConfig.interactionPort})`);
       }
 
       const listenerInfo = listeners.length > 0 ? `, listeners: ${listeners.join(', ')}` : ' (no channel listeners configured)';

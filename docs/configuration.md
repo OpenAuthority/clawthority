@@ -331,6 +331,7 @@ slack:
   channelId: ""
   signingSecret: ""
   interactionPort: 3201
+  interactionHost: "0.0.0.0"
 
 policies:
   - name: string                      # required, human-readable label
@@ -485,6 +486,7 @@ export SLACK_BOT_TOKEN="xoxb-..."
 export SLACK_CHANNEL_ID="C0123456789"          # channel ID, not name
 export SLACK_SIGNING_SECRET="your-signing-secret"
 export SLACK_INTERACTION_PORT="3201"           # optional, default is 3201
+export SLACK_INTERACTION_HOST="0.0.0.0"        # optional, default is 0.0.0.0
 ```
 
 To find a channel ID: right-click the channel in Slack → **View channel details** → scroll to the bottom.
@@ -504,7 +506,7 @@ policies:
 
 ### How the interaction server works
 
-The plugin starts an HTTP server on `SLACK_INTERACTION_PORT` when any HITL policy uses `channel: slack`. The server:
+The plugin starts an HTTP server on `SLACK_INTERACTION_HOST` and `SLACK_INTERACTION_PORT` when any HITL policy uses `channel: slack`. The server:
 
 - Listens on `/slack/interactions` for POST requests from Slack
 - Verifies every request using the `v0=` HMAC-SHA256 signing scheme
@@ -738,6 +740,7 @@ Revoking through the Telegram bot also clears in-memory session auto-approvals s
 | `SLACK_CHANNEL_ID` | — | Slack channel ID (not name). **Required** for Slack approvals. Takes precedence over `slack.channelId`. |
 | `SLACK_SIGNING_SECRET` | — | Slack Signing Secret for webhook verification. **Required** for Slack interaction server. Takes precedence over `slack.signingSecret`. |
 | `SLACK_INTERACTION_PORT` | `3201` | Port for the Slack webhook server. Takes precedence over `slack.interactionPort`. |
+| `SLACK_INTERACTION_HOST` | `0.0.0.0` | Host/interface for the Slack webhook server. Takes precedence over `slack.interactionHost`. |
 
 ### Budget tracking and enforcement
 
@@ -1050,6 +1053,7 @@ SLACK_BOT_TOKEN=<secret>
 SLACK_CHANNEL_ID=<secret>
 SLACK_SIGNING_SECRET=<secret>
 SLACK_INTERACTION_PORT=3201
+SLACK_INTERACTION_HOST=0.0.0.0
 ```
 
 ---

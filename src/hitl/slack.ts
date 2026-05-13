@@ -365,6 +365,7 @@ export class SlackInteractionServer {
     private readonly port: number,
     private readonly signingSecret: string,
     private readonly onAction: (command: SlackActionCommand, token: string) => void,
+    private readonly host = '0.0.0.0',
   ) {}
 
   start(): Promise<void> {
@@ -376,8 +377,8 @@ export class SlackInteractionServer {
         reject(err);
       });
 
-      this.server.listen(this.port, () => {
-        console.log(`[hitl-slack] interaction server listening on port ${this.address().port}`);
+      this.server.listen(this.port, this.host, () => {
+        console.log(`[hitl-slack] interaction server listening on ${this.host}:${this.address().port}`);
         resolve();
       });
     });

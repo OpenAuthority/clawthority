@@ -9,6 +9,7 @@
 import type { TelegramConfig, SlackConfig } from './types.js';
 
 const DEFAULT_INTERACTION_PORT = 3201;
+const DEFAULT_INTERACTION_HOST = '0.0.0.0';
 
 // ─── Telegram ─────────────────────────────────────────────────────────────────
 
@@ -37,6 +38,7 @@ export interface ResolvedSlackConfig {
   channelId: string;
   signingSecret: string;
   interactionPort: number;
+  interactionHost: string;
 }
 
 /**
@@ -55,6 +57,9 @@ export function resolveSlackConfig(
   const interactionPort = portStr
     ? parseInt(portStr, 10)
     : policyConfig?.interactionPort ?? DEFAULT_INTERACTION_PORT;
+  const interactionHost = process.env.SLACK_INTERACTION_HOST
+    ?? policyConfig?.interactionHost
+    ?? DEFAULT_INTERACTION_HOST;
 
-  return { botToken, channelId, signingSecret, interactionPort };
+  return { botToken, channelId, signingSecret, interactionPort, interactionHost };
 }
