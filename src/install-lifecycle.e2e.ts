@@ -27,7 +27,7 @@
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { exec as execCb } from 'node:child_process';
-import { rm, readFile, writeFile, access } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, writeFile, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -303,33 +303,26 @@ describe('install lifecycle', () => {
   it(
     'TC-IL-05: post-install.mjs writes marker file with valid ISO 8601 timestamp',
     async () => {
-      const realMarkerPath = join(repoRoot, 'data', '.installed');
-
-      // Snapshot the existing marker so we can restore it after the test.
-      const markerExisted = await fileExists(realMarkerPath);
-      const originalContent = markerExisted
-        ? await readFile(realMarkerPath, 'utf-8')
-        : null;
+      const installRoot = await mkdtemp(join(tmpdir(), 'clawthority-post-install-'));
+      const markerPath = join(installRoot, 'data', '.installed');
 
       try {
-        const { stdout } = await exec('node scripts/post-install.mjs', { cwd: repoRoot });
+        const { stdout } = await exec('node scripts/post-install.mjs', {
+          cwd: repoRoot,
+          env: { ...process.env, CLAWTHORITY_POST_INSTALL_ROOT: installRoot },
+        });
         expect(stdout).toContain('install complete');
 
-        expect(await fileExists(realMarkerPath)).toBe(true);
+        expect(await fileExists(markerPath)).toBe(true);
 
-        const content = await readFile(realMarkerPath, 'utf-8');
+        const content = await readFile(markerPath, 'utf-8');
         const timestamp = content.trim();
 
         // Content must be a single valid ISO 8601 timestamp.
         expect(timestamp).toBeTruthy();
         expect(new Date(timestamp).toISOString()).toBe(timestamp);
       } finally {
-        // Restore the pre-test marker state regardless of test outcome.
-        if (originalContent !== null) {
-          await writeFile(realMarkerPath, originalContent, 'utf-8');
-        } else {
-          await rm(realMarkerPath, { force: true });
-        }
+        await rm(installRoot, { force: true, recursive: true });
       }
     },
     15_000,
